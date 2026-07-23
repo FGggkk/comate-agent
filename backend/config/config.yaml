@@ -1,0 +1,26 @@
+app:
+  name: comate-agent
+  debug: true
+
+database:
+  url: "postgresql+asyncpg://postgres:comate_dev@localhost:5432/comate"
+
+email:
+  host: "smtp.qq.com"
+  port: 465
+  user: "${EMAIL_USER}"
+  pass: "${EMAIL_PASS}"
+  from: "伴行agent <${EMAIL_USER}>"
+
+model:
+  default:
+    provider: deepseek
+    model: "deepseek-chat"
+    api_key: "${DEEPSEEK_API_KEY}"
+    base_url: "https://api.deepseek.com"
+    stream: true
+
+jwt:
+  secret: "${JWT_SECRET}"
+  algorithm: HS256
+  expire_hours: 72

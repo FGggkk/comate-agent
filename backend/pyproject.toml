@@ -1,0 +1,24 @@
+[project]
+name = "comate-agent"
+version = "0.1.0"
+description = "伴行agent - AI emotional companion"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.30",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+    "httpx>=0.28",
+    "python-multipart>=0.0.18",
+    "pyyaml>=6.0",
+    "python-jose[cryptography]>=3.3",
+    "aiosmtplib>=4.0",
+    "alembic>=1.14",
+    "tenacity>=9.0",
+    "structlog>=25.1",
+]
+
+[tool.uv]
+dev-dependencies = []

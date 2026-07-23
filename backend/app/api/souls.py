@@ -1,0 +1,42 @@
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import get_current_user
+from app.db.session import get_db
+from app.services.soul_service import confirm_soul, get_templates, preview, recommend, seed_templates
+
+router = APIRouter(prefix="/api/souls", tags=["souls"])
+
+
+class RecommendRequest(BaseModel):
+    answers: list[dict]
+
+
+class PreviewRequest(BaseModel):
+    slug: str
+
+
+class ConfirmRequest(BaseModel):
+    template_id: str
+
+
+@router.get("/templates")
+async def api_get_templates(db: AsyncSession = Depends(get_db)):
+    await seed_templates(db)
+    return await get_templates(db)
+
+
+@router.post("/recommend")
+async def api_recommend(req: RecommendRequest):
+    return {"recommendations": recommend(req.answers)}
+
+
+@router.post("/preview")
+async def api_preview(req: PreviewRequest, db: AsyncSession = Depends(get_db)):
+    return {"messages": await preview(req.slug, db)}
+
+
+@router.post("/users/me/soul")
+async def api_confirm_soul(req: ConfirmRequest, db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
+    return await confirm_soul(user_id, req.template_id, db)
