@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 
     # Database
-    database_url: str = "postgresql+asyncpg://postgres:comate_dev@localhost:5432/comate"
+    database_url: str = "postgresql+asyncpg://postgres:${DB_PASSWORD}@49.233.163.93:5432/comate"
 
     # Email
     email_host: str = "smtp.qq.com"
@@ -65,7 +65,7 @@ class Settings(BaseSettings):
         return cls(
             app_name=raw.get("app", {}).get("name", "comate-agent"),
             debug=raw.get("app", {}).get("debug", False),
-            database_url=raw.get("database", {}).get("url", cls().database_url),
+            database_url=os.path.expandvars(raw.get("database", {}).get("url", cls().database_url)),
             email_host=raw.get("email", {}).get("host", cls().email_host),
             email_port=raw.get("email", {}).get("port", cls().email_port),
             email_user=os.path.expandvars(raw.get("email", {}).get("user", cls().email_user)),

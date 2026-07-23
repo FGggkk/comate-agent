@@ -3,7 +3,7 @@ app:
   debug: true
 
 database:
-  url: "postgresql+asyncpg://postgres:comate_dev@localhost:5432/comate"
+  url: "postgresql+asyncpg://postgres:${DB_PASSWORD}@49.233.163.93:5432/comate"
 
 email:
   host: "smtp.qq.com"
