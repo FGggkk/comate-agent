@@ -1,0 +1,341 @@
+$ npx skills@latest add mattpocock/skills -y
+[exit 0]
+
+[38;5;250m███████╗██╗  ██╗██╗██╗     ██╗     ███████╗[0m
+[38;5;248m██╔════╝██║ ██╔╝██║██║     ██║     ██╔════╝[0m
+[38;5;245m███████╗█████╔╝ ██║██║     ██║     ███████╗[0m
+[38;5;243m╚════██║██╔═██╗ ██║██║     ██║     ╚════██║[0m
+[38;5;240m███████║██║  ██╗██║███████╗███████╗███████║[0m
+[38;5;238m╚══════╝╚═╝  ╚═╝╚═╝╚══════╝╚══════╝╚══════╝[0m
+
+T  [46m[30m skills [39m[49m
+|
+|  [2mTip: use the --yes (-y) and --global (-g) flags to install without prompts.[22m
+[?25l|
+o  Source: https://github.com/mattpocock/skills.git
+[?25h[?25l|
+•  Cloning repository…[1G[Jo  Cloning repository…[1G[JO  Cloning repository…[1G[J0  Cloning repository…[1G[J•  Cloning repository…[1G[Jo  Cloning repository…[1G[JO  Cloning repository…[1G[J0  Cloning repository…[1G[J•  Cloning repository….[1G[Jo  Cloning repository….[1G[JO  Cloning repository….[1G[J0  Cloning repository….[1G[J•  Cloning repository….[1G[Jo  Cloning repository….[1G[JO  Cloning repository….[1G[J0  Cloning repository….[1G[J•  Cloning repository…..[1G[Jo  Cloning repository…..[1G[JO  Cloning repository…..[1G[J0  Cloning repository…..[1G[J•  Cloning repository…..[1G[Jo  Cloning repository…..[1G[JO  Cloning repository…..[1G[J0  Cloning repository…..[1G[J•  Cloning repository…...[1G[Jo  Cloning repository…...[1G[JO  Cloning repository…...[1G[J0  Cloning repository…...[1G[J•  Cloning repository…...[1G[Jo  Cloning repository…...[1G[JO  Cloning repository…...[1G[J0  Cloning repository…...[1G[J•  Cloning repository…...[1G[Jo  Cloning repository…[1G[JO  Cloning repository…[1G[J0  Cloning repository…[1G[J•  Cloning repository…[1G[Jo  Cloning repository…[1G[JO  Cloning repository…[1G[J0  Cloning repository…[1G[J•  Cloning repository…[1G[Jo  Cloning repository….[1G[JO  Cloning repository….[1G[J0  Cloning repository….[1G[J•  Cloning repository….[1G[Jo  Cloning repository….[1G[JO  Cloning repository….[1G[J0  Cloning repository….[1G[J•  Cloning repository….[1G[Jo  Cloning repository…..[1G[Jo  Repository cloned
+[?25h[?25l|
+[1G[J•  Discovering skills…[1G[Jo  Found [32m41[39m skills
+[?25h|
+•  Installing all 41 skills
+[?25l|
+[1G[Jo  75 agents
+[?25h|
+•  Installing to: [36mAiderDesk[39m, [36mAstrBot[39m, [36mAutohand Code CLI[39m, [36mAugment[39m, [36mIBM Bob[39m, [36mClaude Code[39m, [36mOpenClaw[39m, [36mCodeArts Agent[39m, [36mCodeBuddy[39m, [36mCodemaker[39m, [36mCode Studio[39m, [36mCodex[39m, [36mCommand Code[39m, [36mContinue[39m, [36mCortex Code[39m, [36mCrush[39m, [36mCursor[39m, [36mDevin for Terminal[39m, [36mDroid[39m, [36mForgeCode[39m, [36mGitHub Copilot[39m, [36mGoose[39m, [36mHermes Agent[39m, [36minference.sh[39m, [36mJazz[39m, [36mJunie[39m, [36miFlow CLI[39m, [36mKilo Code[39m, [36mKiro CLI[39m, [36mKode[39m, [36mLingma[39m, [36mMCPJam[39m, [36mMistral Vibe[39m, [36mMoxby[39m, [36mMux[39m, [36mOpenHands[39m, [36mOna[39m, [36mPi[39m, [36mQoder[39m, [36mQoder CN[39m, [36mQwen Code[39m, [36mReasonix[39m, [36mRovo Dev[39m, [36mRoo Code[39m, [36mTabnine CLI[39m, [36mTerramind[39m, [36mTinycloud[39m, [36mTrae[39m, [36mTrae CN[39m, [36mWindsurf[39m, [36mZencoder[39m, [36mZenflow[39m, [36mNeovate[39m, [36mPochi[39m, [36mAdaL[39m
+
+|
+o  Installation Summary -----------------------------------------------------+
+|                                                                            |
+|                                                                            |
+|  [1mMattpocock Skills[22m                                                         |
+|                                                                            |
+|  [36m.\.agents\skills\ask-matt[39m                                                 |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\code-review[39m                                              |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\codebase-design[39m                                          |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\diagnosing-bugs[39m                                          |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\domain-modeling[39m                                          |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\grill-with-docs[39m                                          |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\implement[39m                                                |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\improve-codebase-architecture[39m                            |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|    [33moverwrites:[39m Codex, Cursor, GitHub Copilot, Reasonix, Amp +13 more       |
+|                                                                            |
+|  [36m.\.agents\skills\prototype[39m                                                |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\research[39m                                                 |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\resolving-merge-conflicts[39m                                |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\setup-matt-pocock-skills[39m                                 |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|    [33moverwrites:[39m Codex, Cursor, GitHub Copilot, Reasonix, Amp +13 more       |
+|                                                                            |
+|  [36m.\.agents\skills\tdd[39m                                                      |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|    [33moverwrites:[39m Codex, Cursor, GitHub Copilot, Reasonix, Amp +13 more       |
+|                                                                            |
+|  [36m.\.agents\skills\to-spec[39m                                                  |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\to-tickets[39m                                               |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\triage[39m                                                   |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\wayfinder[39m                                                |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\grill-me[39m                                                 |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|    [33moverwrites:[39m Claude Code, Codex, Cursor, GitHub Copilot, Reasonix +14    |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\grilling[39m                                                 |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\handoff[39m                                                  |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|    [33moverwrites:[39m Codex, Cursor, GitHub Copilot, Reasonix, Amp +13 more       |
+|                                                                            |
+|  [36m.\.agents\skills\teach[39m                                                    |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|    [33moverwrites:[39m Codex, Cursor, GitHub Copilot, Reasonix, Amp +13 more       |
+|                                                                            |
+|  [36m.\.agents\skills\writing-great-skills[39m                                     |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [1mGeneral[22m                                                                   |
+|                                                                            |
+|  [36m.\.agents\skills\design-an-interface[39m                                      |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\qa[39m                                                       |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\request-refactor-plan[39m                                    |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\ubiquitous-language[39m                                      |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\batch-grill-me[39m                                           |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\claude-handoff[39m                                           |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\loop-me[39m                                                  |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\setup-ts-deep-modules[39m                                    |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\to-questionnaire[39m                                         |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\wizard[39m                                                   |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\writing-beats[39m                                            |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\writing-fragments[39m                                        |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\writing-shape[39m                                            |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\git-guardrails-claude-code[39m                               |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\migrate-to-shoehorn[39m                                      |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\scaffold-exercises[39m                                       |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\setup-pre-commit[39m                                         |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\edit-article[39m                                             |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
+|  [36m.\.agents\skills\obsidian-vault[39m                                           |
+|    [32muniversal:[39m Codex, Cursor, GitHub Copilot, Amp, Antigravity +12 more     |
+|    [2msymlink →[22m AiderDesk, AstrBot, Autohand Code CLI, Augment, IBM Bob +47   |
+|  more                                                                      |
+|                                                                            |
++----------------------------------------------------------------------------+
+|
+o  Security Risk Assessments ------------------------------------------------+
+|                                                                            |
+|                                 [2mGen[22m               [2mSocket[22m            [2mSnyk[22m   |
+|  [36mdesign-an-interface[39m            [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mqa[39m                             [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mrequest-refactor-plan[39m          [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mubiquitous-language[39m            [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mask-matt[39m                       [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mcode-review[39m                    [32mSafe[39m              [32m0 alerts[39m          [33mMed [39m   |
+|  [33mRisk[39m                                                                      |
+|  [36mcodebase-design[39m                [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mdiagnosing-bugs[39m                [32mSafe[39m              [32m0 alerts[39m          [31mHigh [39m  |
+|  [31mRisk[39m                                                                      |
+|  [36mdomain-modeling[39m                [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mgrill-with-docs[39m                [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mimplement[39m                      [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mimprove-codebase-architecture[39m  [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mprototype[39m                      [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mresearch[39m                       [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mresolving-merge-conflicts[39m      [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36msetup-matt-pocock-skills[39m       [32mSafe[39m              [32m0 alerts[39m          [33mMed [39m   |
+|  [33mRisk[39m                                                                      |
+|  [36mtdd[39m                            [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mto-spec[39m                        [32mSafe[39m              [31m1 alert[39m           [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mto-tickets[39m                     [32mSafe[39m              [32m0 alerts[39m          [33mMed [39m   |
+|  [33mRisk[39m                                                                      |
+|  [36mtriage[39m                         [32mSafe[39m              [32m0 alerts[39m          [33mMed [39m   |
+|  [33mRisk[39m                                                                      |
+|  [36mwayfinder[39m                      [32mSafe[39m              [32m0 alerts[39m          [33mMed [39m   |
+|  [33mRisk[39m                                                                      |
+|  [36mbatch-grill-me[39m                 [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mclaude-handoff[39m                 [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mloop-me[39m                        [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36msetup-ts-deep-modules[39m          [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mto-questionnaire[39m               [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mwizard[39m                         [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mwriting-beats[39m                  [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mwriting-fragments[39m              [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mwriting-shape[39m                  [32mSafe[39m              [32m0 alerts[39m          [31mHigh [39m  |
+|  [31mRisk[39m                                                                      |
+|  [36mgit-guardrails-claude-code[39m     [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mmigrate-to-shoehorn[39m            [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mscaffold-exercises[39m             [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36msetup-pre-commit[39m               [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36medit-article[39m                   [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mobsidian-vault[39m                 [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mgrill-me[39m                       [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mgrilling[39m                       [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mhandoff[39m                        [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mteach[39m                          [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|  [36mwriting-great-skills[39m           [32mSafe[39m              [32m0 alerts[39m          [32mLow [39m   |
+|  [32mRisk[39m                                                                      |
+|                                                                            |
+|  [2mDetails:[22m [2mhttps://skills.sh/mattpocock/skills[22m                              |
+|                                                                            |
++----------------------------------------------------------------------------+
+[?25l|
+[1G[J•  Installing skills…[1G[Jo  Installing skills…[1G[JO  Installing skills…[1G[J0  Installing skills…[1G[J•  Installing skills…[1G[Jo  Installing skills…[1G[JO  Installing skills…[1G[J0  Installing skills…[1G[J•  Installing skills….[1G[Jo  Installing skills….[1G[JO  Installing skills….[1G[J0  Installing skills….[1G[J•  Installing skills….[1G[Jo  Installing skills….[1G[JO  Installing skills….[1G[J0  Installing skills….[1G[J•  Installing skills…..[1G[Jo  Installing skills…..[1G[JO  Installing skills…..[1G[J0  Installing skills…..[1G[J•  Installing skills…..[1G[Jo  Installing skills…..[1G[JO  Installing skills…..[1G[J0  Installing skills…..[1G[J•  Installing skills…...[1G[Jo  Installing skills…...[1G[JO  Installing skills…...[1G[J0  Installing skills…...[1G[J•  Installing skills…...[1G[Jo  
+
+[… truncated 13802 chars …]
