@@ -7,9 +7,17 @@
       <div class="page-label">个人信息</div>
       <div style="display:flex;align-items:center;gap:14px;">
         <!-- 头像 -->
-        <div class="profile-avatar" :style="{ background: avatarGrad }">
-          {{ avatarLetter }}
+        <div class="profile-avatar-wrap" @click="triggerUpload">
+          <img v-if="userStore.avatarUrl" :src="userStore.avatarUrl" class="profile-avatar-img" />
+          <div v-else class="profile-avatar" :style="{ background: avatarGrad }">
+            {{ avatarLetter }}
+          </div>
+          <div class="profile-avatar-overlay">
+            <span v-if="uploading">上传中...</span>
+            <span v-else>更换头像</span>
+          </div>
         </div>
+        <input ref="fileInput" type="file" accept="image/*" style="display:none" @change="onFileSelect" />
         <div style="flex:1;">
           <div style="font-weight:600;font-size:15px;">{{ userStore.displayName }}</div>
           <div style="font-size:12px;color:var(--sub);">{{ userStore.email }}</div>
@@ -62,7 +70,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useUserStore } from '../stores/user'
-import { apiGetReminders, apiCreateReminder, apiDeleteReminder, apiGetProfile, apiUpdateProfile } from '../api/index'
+import { apiGetReminders, apiCreateReminder, apiDeleteReminder, apiGetProfile, apiUpdateProfile, apiUploadAvatar } from '../api/index'
 
 const userStore = useUserStore()
 const reminders = ref([])
@@ -70,7 +78,9 @@ const reminderContent = ref('')
 const reminderTime = ref('')
 const nicknameInput = ref(userStore.nickname || '')
 const saving = ref(false)
+const uploading = ref(false)
 const profileMsg = ref('')
+const fileInput = ref(null)
 
 const avatarColors = [
   'linear-gradient(135deg, #FFD0A8, #FF9F7A)',
@@ -131,15 +141,59 @@ async function createReminder() {
 
 async function deleteReminder(id) { await apiDeleteReminder(id); reminders.value = (await apiGetReminders()).reminders || [] }
 
+function triggerUpload() {
+  if (!uploading.value) fileInput.value?.click()
+}
+
+async function onFileSelect(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  uploading.value = true
+  profileMsg.value = ''
+  try {
+    const res = await apiUploadAvatar(file)
+    if (res.success) {
+      userStore.setProfile(userStore.nickname, res.avatar_url)
+      profileMsg.value = '头像已更新'
+    } else {
+      profileMsg.value = res.message || '上传失败'
+    }
+  } catch {
+    profileMsg.value = '上传失败，请检查后端和 COS 配置'
+  } finally {
+    uploading.value = false
+    e.target.value = ''
+    setTimeout(() => { profileMsg.value = '' }, 3000)
+  }
+}
+
 function formatTime(iso) { return iso ? new Date(iso).toLocaleString('zh-CN') : '' }
 function logout() { userStore.logout(); window.location.reload() }
 </script>
 
 <style scoped>
+.profile-avatar-wrap {
+  position: relative; width: 50px; height: 50px;
+  border-radius: 50%; cursor: pointer; flex-shrink: 0;
+  overflow: hidden;
+}
+.profile-avatar-wrap:hover .profile-avatar-overlay {
+  opacity: 1;
+}
+.profile-avatar-img {
+  width: 100%; height: 100%; object-fit: cover;
+  border-radius: 50%;
+}
 .profile-avatar {
   width: 50px; height: 50px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   font-size: 20px; color: #fff; font-weight: 700;
   flex-shrink: 0; box-shadow: 0 4px 12px rgba(0,0,0,.08);
+}
+.profile-avatar-overlay {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: rgba(0,0,0,.45); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; opacity: 0; transition: opacity .2s;
 }
 </style>

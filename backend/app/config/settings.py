@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     email_pass: str = ""
     email_from: str = "伴行agent <noreply@comate.ai>"
 
+    # COS - 腾讯云对象存储
+    cos_secret_id: str = ""
+    cos_secret_key: str = ""
+    cos_region: str = "ap-guangzhou"
+    cos_bucket: str = ""
+
     # Model - DeepSeek
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
@@ -71,6 +77,10 @@ class Settings(BaseSettings):
             email_user=os.path.expandvars(raw.get("email", {}).get("user", cls().email_user)),
             email_pass=os.path.expandvars(raw.get("email", {}).get("pass", cls().email_pass)),
             email_from=os.path.expandvars(raw.get("email", {}).get("from", cls().email_from)),
+            cos_secret_id=os.path.expandvars(raw.get("cos", {}).get("secret_id", cls().cos_secret_id)),
+            cos_secret_key=os.path.expandvars(raw.get("cos", {}).get("secret_key", cls().cos_secret_key)),
+            cos_region=raw.get("cos", {}).get("region", cls().cos_region),
+            cos_bucket=os.path.expandvars(raw.get("cos", {}).get("bucket", cls().cos_bucket)),
             deepseek_api_key=os.path.expandvars(raw.get("model", {}).get("default", {}).get("api_key", "")),
             deepseek_base_url=raw.get("model", {}).get("default", {}).get("base_url", cls().deepseek_base_url),
             deepseek_model=raw.get("model", {}).get("default", {}).get("model", cls().deepseek_model),

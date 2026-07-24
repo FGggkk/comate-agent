@@ -12,6 +12,12 @@ email:
   pass: "${EMAIL_PASS}"
   from: "伴行agent <${EMAIL_USER}>"
 
+cos:
+  secret_id: "${COS_SECRET_ID}"
+  secret_key: "${COS_SECRET_KEY}"
+  region: "${COS_REGION}"
+  bucket: "${COS_BUCKET}"
+
 model:
   default:
     provider: deepseek
