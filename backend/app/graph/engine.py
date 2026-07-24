@@ -1,8 +1,6 @@
 import asyncio
 from typing import AsyncGenerator
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.db.session import async_session_factory
 from app.graph.state import ChatState
 from app.graph.schemas import SSEEvent, done_event, error_event
@@ -57,7 +55,7 @@ async def run_engine(
         # 省略具体实现，v1 基本过滤
 
         # Step 7: 异步后处理（不阻塞，直接跑）
-        asyncio.create_task(_run_postprocess(state, db))
+        asyncio.create_task(_run_postprocess(state, db))  # db 参数保留但函数内新建 session
 
         # Step 8: 快捷按钮
         for event in await actions_node(state):
@@ -67,9 +65,10 @@ async def run_engine(
         yield done_event()
 
 
-async def _run_postprocess(state: ChatState, db: AsyncSession):
-    """后台异步执行后处理"""
+async def _run_postprocess(state: ChatState, _old_db=None):
+    """后台异步执行后处理（使用独立 DB session）"""
     try:
-        await postprocess_node(state, db)
-    except Exception:
-        pass  # 后处理失败不影响用户
+        async with async_session_factory() as db:
+            await postprocess_node(state, db)
+    except Exception as e:
+        print(f"[postprocess] 后处理失败: {e}")

@@ -4,6 +4,7 @@ from .memory import MemoryItem, ForbiddenTopic, PendingAnchor
 from .interview import InterviewSession, InterviewQuestion
 from .reminder import Reminder
 from .verification_code import VerificationCode
+from .conversation import Session, Message
 
 __all__ = [
     "User",
@@ -16,4 +17,6 @@ __all__ = [
     "InterviewQuestion",
     "Reminder",
     "VerificationCode",
+    "Session",
+    "Message",
 ]
