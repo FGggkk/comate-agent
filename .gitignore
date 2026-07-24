@@ -13,6 +13,7 @@ dist/
 
 # Env
 .env
+.env.*
 
 # IDE
 .vscode/
@@ -26,3 +27,8 @@ Thumbs.db
 
 # Project specific
 backend/config/.env
+backend/config/.env.*
+backend/config/.env copy.example
+backend/config/*.local
+backend/config/*copy*
+!backend/config/.env.example
