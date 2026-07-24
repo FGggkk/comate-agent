@@ -1,5 +1,3 @@
-<<<<<<< Updated upstream
-=======
 import os
 from pathlib import Path
 from typing import ClassVar
@@ -91,4 +89,3 @@ def get_settings() -> Settings:
         config_path = Path(__file__).parent.parent.parent / "config" / "config.yaml"
         _settings = Settings.from_yaml(config_path)
     return _settings
->>>>>>> Stashed changes

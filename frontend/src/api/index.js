@@ -69,6 +69,10 @@ export const apiStartInterview = (data) => post('/interview/start', data)
 export const apiAnswerQuestion = (id, answer) => post(`/interview/${id}/answer`, { answer })
 export const apiGetReport = (id) => get(`/interview/${id}/report`)
 
+// User Profile
+export const apiGetProfile = () => get('/user/me')
+export const apiUpdateProfile = (data) => put('/user/me', data)
+
 // Reminders
 export const apiCreateReminder = (content, remind_at) => post('/reminders', { content, remind_at })
 export const apiGetReminders = () => get('/reminders')
