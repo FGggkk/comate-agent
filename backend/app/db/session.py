@@ -5,7 +5,7 @@ from app.config.settings import get_settings
 
 settings = get_settings()
 
-engine = create_async_engine(settings.database_url, echo=settings.debug)
+engine = create_async_engine(settings.database_url, echo=settings.debug, pool_timeout=10, connect_args={"timeout": 10})
 async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
@@ -29,16 +29,31 @@ MIGRATION_SQL = [
 ]
 
 
+LOCK_ID = 20240724  # 迁移锁 ID（唯一整数）
+
+
 async def run_migrations():
-    """应用启动时自动执行数据库迁移"""
+    """应用启动时自动执行数据库迁移（10秒超时），多实例互斥"""
     try:
         async with engine.begin() as conn:
-            for stmt in MIGRATION_SQL:
-                try:
-                    await conn.execute(text(stmt))
-                    print(f"[migrate] OK: {stmt[:60]}")
-                except Exception as e:
-                    print(f"[migrate] SKIP ({e}): {stmt[:60]}")
-        print("[migrate] 数据库迁移完成")
+            # 尝试获取 advisory lock（非阻塞）
+            result = await conn.execute(text("SELECT pg_try_advisory_lock(:lock_id)"), {"lock_id": LOCK_ID})
+            acquired = result.scalar()
+            if not acquired:
+                print("[migrate] 迁移锁被其他实例占用，跳过迁移")
+                return
+
+            try:
+                await conn.execute(text("SET statement_timeout = '10s'"))
+                for stmt in MIGRATION_SQL:
+                    try:
+                        await conn.execute(text(stmt))
+                        print(f"[migrate] OK: {stmt[:60]}")
+                    except Exception as e:
+                        print(f"[migrate] SKIP ({e}): {stmt[:60]}")
+                print("[migrate] 数据库迁移完成")
+            finally:
+                await conn.execute(text("SELECT pg_advisory_unlock(:lock_id)"), {"lock_id": LOCK_ID})
+                print("[migrate] 迁移锁已释放")
     except Exception as e:
         print(f"[migrate] 迁移失败（可忽略）: {e}")
