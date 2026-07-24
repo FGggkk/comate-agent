@@ -6,6 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy import func as sa_func
 
+from sqlalchemy import text as sa_text
+
 from app.models.memory import ForbiddenTopic, MemoryItem, PendingAnchor
 from app.services.embedding_service import get_embedding
 
@@ -236,7 +238,7 @@ async def _extract_memory_summary(message: str, reply: str) -> str | None:
 
 要求：
 - 如果用户提到了身份、偏好、目标、经历、习惯等信息，用一句话概括
-- 如果没有值得记住的信息，返回空字符串
+- 如果没有值得记住的信息，输出空字符串
 - 只返回一句话，不要多余内容
 
 用户说：{message[:500]}
@@ -248,7 +250,9 @@ AI回复：{reply[:500]}
         async for chunk in gateway.stream(prompt, system="你是一个记忆提取助手，只提取客观事实，不做主观推断。"):
             full += chunk
         full = full.strip().strip('"').strip("'").strip()
-        if len(full) < 4 or "没有" in full[:10]:
+        # 过滤无意义回复
+        skip_words = ["没有值得记住的信息", "无值得记住", "未发现值得记忆", "未提到任何"]
+        if len(full) < 4 or any(w in full[:15] for w in skip_words):
             return None
         return full[:200]
     except Exception as e:
@@ -286,7 +290,67 @@ async def add_with_embedding(
     except Exception as e:
         print(f"[add_with_embedding] embedding 生成失败: {e}")
 
+    # 矛盾检测：新记忆与旧记忆冲突时清理旧记录
+    try:
+        await resolve_contradictions(user_id, summary, item.id, db)
+    except Exception as e:
+        print(f"[resolve_contradictions] 失败: {e}")
+
     return item
+
+
+async def resolve_contradictions(user_id: str, new_summary: str, new_item_id, db: AsyncSession):
+    """检测并清理与新记忆矛盾的旧记忆"""
+    # 1. 用语义搜索找到相似记忆
+    vec = await get_embedding(new_summary)
+    if not vec:
+        return
+
+    vec_literal = "[" + ",".join(str(v) for v in vec) + "]"
+    result = await db.execute(
+        sa_text("""
+            SELECT id, summary FROM memory_items
+            WHERE user_id = CAST(:uid AS uuid)
+              AND status = 'active'
+              AND id != CAST(:nid AS uuid)
+              AND embedding IS NOT NULL
+            ORDER BY embedding <=> CAST(:vec AS vector)
+            LIMIT 5
+        """),
+        {"uid": user_id, "nid": str(new_item_id), "vec": vec_literal},
+    )
+    candidates = result.fetchall()
+    if not candidates:
+        return
+
+    # 2. 用 LLM 判断是否有矛盾
+    from app.services.model_gateway import gateway
+    old_list = "\n".join(f"- {r.summary}" for r in candidates)
+    prompt = f"""判断新旧两条记忆是否矛盾（例如一个说喜欢，一个说不喜欢同一事物）。
+
+新记忆：{new_summary}
+
+旧记忆列表：
+{old_list}
+
+请输出矛盾的旧记忆序号（从1开始），没有矛盾则输出0。只输出数字。
+"""
+    try:
+        full = ""
+        async for chunk in gateway.stream(prompt, system="你是一个记忆对比助手，只判断是否矛盾。"):
+            full += chunk
+        result_num = full.strip().strip('"').strip("'")
+        idx = int(result_num)
+        if 1 <= idx <= len(candidates):
+            old_item = candidates[idx - 1]
+            await db.execute(
+                sa_text("UPDATE memory_items SET status='deleted' WHERE id = CAST(:id AS uuid)"),
+                {"id": str(old_item.id)},
+            )
+            await db.commit()
+            print(f"[resolve] 矛盾删除旧记忆: {old_item.summary[:40]}")
+    except (ValueError, IndexError, Exception) as e:
+        print(f"[resolve] LLM判断失败: {e}")
 
 
 async def update_anchors(user_id: str, message: str, reply: str, db: AsyncSession = None) -> None:

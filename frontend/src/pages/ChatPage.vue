@@ -59,7 +59,11 @@
             :class="['session-item', s.id === chatStore.currentSessionId ? 'active' : '']"
             @click="switchSession(s.id)">
             <div style="flex:1;overflow:hidden;">
-              <div class="session-title">{{ s.title }}</div>
+              <div style="display:flex;align-items:center;gap:4px;">
+                <input v-if="renamingSessionId === s.id" v-model="renameText" @keydown.enter="confirmRename(s)" @blur="confirmRename(s)" @click.stop class="session-rename-input" autofocus />
+                <div v-else class="session-title">{{ s.title }}</div>
+                <button v-if="renamingSessionId !== s.id" @click.stop="startRename(s)" class="session-rename-btn" title="重命名">✏️</button>
+              </div>
               <div class="session-time">{{ formatTime(s.updated_at) }}</div>
             </div>
             <button @click.stop="deleteSession(s.id)" class="session-del-btn" title="删除">🗑</button>
@@ -83,7 +87,7 @@
 
         <div v-for="(msg, i) in chatStore.messages" :key="i">
           <div v-if="shouldShowTimeSep(i)" class="day-tag">{{ formatTimeSep(msg.timestamp) }}</div>
-          <MessageBubble v-if="msg.type === 'text'" :role="msg.role" :content="msg.content" />
+          <MessageBubble v-if="msg.type === 'text'" :role="msg.role" :content="msg.content" @edit="startEdit(msg,i)" @delete="confirmDelete(msg,i)" />
           <MemoryCard v-else-if="msg.type === 'memory_card'" :summary="msg.summary" :layer="msg.layer" />
           <ActionButtons v-else-if="msg.type === 'actions'" :buttons="msg.buttons" @action="handleAction" />
         </div>
@@ -106,9 +110,18 @@
         </div>
       </div>
 
+      <!-- 编辑模式 -->
+      <div v-if="editingMsgIndex >= 0" class="edit-bar">
+        <div style="flex:1;display:flex;gap:6px;">
+          <input v-model="editingText" @keydown.enter="confirmEdit" class="form-input" style="flex:1;" placeholder="编辑消息..." autofocus />
+          <button @click="confirmEdit" class="btn-primary" style="width:auto;padding:10px 14px;font-size:13px;">发送</button>
+          <button @click="cancelEdit" style="padding:10px 14px;font-size:13px;color:var(--sub);">取消</button>
+        </div>
+      </div>
+
       <!-- 底部 -->
       <QuickBar :items="quickItems" />
-      <InputBar :disabled="chatStore.isStreaming" @send="handleSend" />
+      <InputBar v-if="editingMsgIndex < 0" :disabled="chatStore.isStreaming" @send="handleSend" />
     </div>
   </div>
 </template>
@@ -117,7 +130,7 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useUserStore } from '../stores/user'
-import { apiGetTemplates, apiPreview, apiConfirmSoul, apiSendMessage, apiListSessions, apiCreateSession, apiDeleteSession, apiGetMessages } from '../api/index'
+import { apiGetTemplates, apiPreview, apiConfirmSoul, apiSendMessage, apiListSessions, apiCreateSession, apiDeleteSession, apiGetMessages, apiEditMessage, apiDeleteMessage, apiUpdateSession } from '../api/index'
 import MessageBubble from '../components/MessageBubble.vue'
 import MemoryCard from '../components/MemoryCard.vue'
 import ActionButtons from '../components/ActionButtons.vue'
@@ -164,7 +177,7 @@ async function loadMessages(sessionId) {
     if (res.messages) {
       for (const m of res.messages) {
         if (m.type === 'text') {
-          chatStore.addMessage({ type: 'text', role: m.role, content: m.content })
+          chatStore.addMessage({ id: m.id, type: 'text', role: m.role, content: m.content })
         }
       }
     }
@@ -274,8 +287,9 @@ async function handleSend(text) {
   } catch { chatStore.addMessage({ type: 'text', role: 'agent', content: '嗯，我在听。能再多说一点吗？' }) }
   finally {
     chatStore.finishStream()
-    // 刷新会话列表
+    // 刷新会话列表 + 重新加载消息（获取 ID）
     loadSessions()
+    if (sessionId) loadMessages(sessionId)
     nextTick(() => scrollToBottom())
   }
 }
@@ -332,6 +346,70 @@ function formatTimeSep(ts) {
 }
 
 function scrollToBottom() { if (scrollRef.value) scrollRef.value.scrollTop = scrollRef.value.scrollHeight }
+
+// ── 消息编辑/删除 ──
+const editingMsgIndex = ref(-1)
+const editingText = ref('')
+
+function startEdit(msg, index) {
+  if (msg.role !== 'user') return
+  editingMsgIndex.value = index
+  editingText.value = msg.content
+}
+
+function cancelEdit() {
+  editingMsgIndex.value = -1
+  editingText.value = ''
+}
+
+async function confirmEdit() {
+  const msg = chatStore.messages[editingMsgIndex.value]
+  if (!msg || !editingText.value.trim()) return
+  const idx = editingMsgIndex.value
+  cancelEdit()
+  // 从 API 编辑（删除后续消息）
+  try {
+    await apiEditMessage(msg.id, editingText.value.trim())
+  } catch {}
+  // 重新加载会话
+  await loadMessages(chatStore.currentSessionId)
+  // 自动发送编辑后的消息
+  handleSend(editingText.value.trim())
+}
+
+async function confirmDelete(msg, index) {
+  if (!msg.id) return // 尚未保存的消息不能删除
+  if (!confirm('确定删除这条消息及其后的所有回复？')) return
+  try {
+    await apiDeleteMessage(msg.id)
+  } catch (e) {
+    console.error('delete error:', e)
+  }
+  await loadMessages(chatStore.currentSessionId)
+}
+
+// ── 会话重命名 ──
+const renamingSessionId = ref('')
+const renameText = ref('')
+
+function startRename(session) {
+  renamingSessionId.value = session.id
+  renameText.value = session.title
+}
+
+function cancelRename() {
+  renamingSessionId.value = ''
+  renameText.value = ''
+}
+
+async function confirmRename(session) {
+  if (!renameText.value.trim()) return
+  try {
+    await apiUpdateSession(session.id, { title: renameText.value.trim() })
+    session.title = renameText.value.trim()
+  } catch {}
+  cancelRename()
+}
 </script>
 
 <style scoped>
@@ -380,4 +458,15 @@ function scrollToBottom() { if (scrollRef.value) scrollRef.value.scrollTop = scr
 .session-time { font-size: 11px; color: var(--sub); margin-top: 1px; }
 .session-del-btn { font-size: 14px; padding: 4px; opacity: .4; }
 .session-del-btn:active { opacity: 1; }
+.session-rename-btn { font-size: 12px; padding: 2px; opacity: .3; flex-shrink:0; }
+.session-rename-btn:active { opacity: 1; }
+.edit-bar {
+  padding: 6px 12px; border-top: 1px solid var(--line);
+  background: var(--honey-soft); flex-shrink: 0;
+}
+.session-rename-input {
+  width: 100%; padding: 2px 6px; font-size: 14px; font-weight: 500;
+  border: 1.5px solid var(--honey); border-radius: 6px; outline: none;
+  background: var(--paper);
+}
 </style>

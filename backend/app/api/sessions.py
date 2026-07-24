@@ -69,6 +69,7 @@ async def update_session(
         return {"success": False, "message": "会话不存在"}
     if req.title is not None:
         session.title = req.title
+        session.title_auto_set = True  # 用户手动设置后不再自动覆盖
     await db.commit()
     return {"success": True, "title": session.title}
 

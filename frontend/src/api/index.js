@@ -93,6 +93,10 @@ export const apiUpdateSession = (id, data) => put(`/sessions/${id}`, data)
 export const apiDeleteSession = (id) => del(`/sessions/${id}`)
 export const apiGetMessages = (sessionId) => get(`/sessions/${sessionId}/messages`)
 
+// Messages
+export const apiEditMessage = (id, content) => put(`/messages/${id}`, { content })
+export const apiDeleteMessage = (id) => del(`/messages/${id}`)
+
 // Reminders
 export const apiCreateReminder = (content, remind_at) => post('/reminders', { content, remind_at })
 export const apiGetReminders = () => get('/reminders')

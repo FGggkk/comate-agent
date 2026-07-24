@@ -29,19 +29,12 @@ async def api_send(
     # 1. 自动创建或确认会话
     session_id = req.session_id
     if not session_id:
-        # 用首条消息的前 30 字作标题
-        title = req.message[:30] + ("..." if len(req.message) > 30 else "")
-        sess = Session(user_id=user_id, title=title)
+        sess = Session(user_id=user_id, title="新对话")
         db.add(sess)
         await db.commit()
         await db.refresh(sess)
         session_id = str(sess.id)
     else:
-        # 更新会话时间
-        await db.execute(
-            select(Session).where(Session.id == session_id, Session.user_id == user_id)
-        )
-        # 只更新时间戳
         await db.execute(
             sa_update(Session).where(Session.id == session_id).values(updated_at=datetime.now())
         )
@@ -63,6 +56,16 @@ async def api_send(
         if full_reply:
             agent_msg = Message(session_id=session_id, role="agent", content=full_reply)
             db.add(agent_msg)
+
+            # 首次完整对话后自动更新标题
+            sess_result = await db.execute(
+                select(Session).where(Session.id == session_id)
+            )
+            sess = sess_result.scalar_one_or_none()
+            if sess and not sess.title_auto_set and sess.title == "新对话":
+                auto_title = req.message[:30] + ("..." if len(req.message) > 30 else "")
+                sess.title = auto_title
+                sess.title_auto_set = True
             await db.commit()
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
