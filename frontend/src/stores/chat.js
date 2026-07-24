@@ -7,7 +7,7 @@ export const useChatStore = defineStore('chat', () => {
   const streamBuffer = ref('')
 
   function addMessage(msg) {
-    messages.value.push(msg)
+    messages.value.push({ ...msg, timestamp: Date.now() })
   }
 
   function setStreaming(val) {

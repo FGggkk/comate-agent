@@ -1,5 +1,3 @@
-<<<<<<< Updated upstream
-=======
 import os
 from pathlib import Path
 from typing import ClassVar
@@ -23,6 +21,18 @@ class Settings(BaseSettings):
     email_user: str = ""
     email_pass: str = ""
     email_from: str = "伴行agent <noreply@comate.ai>"
+
+    # COS - 腾讯云对象存储
+    cos_secret_id: str = ""
+    cos_secret_key: str = ""
+    cos_region: str = "ap-guangzhou"
+    cos_bucket: str = ""
+
+    # Embedding - 阿里云百炼
+    dashscope_api_key: str = ""
+    dashscope_workspace_id: str = ""
+    embedding_model: str = "text-embedding-v4"
+    embedding_dimensions: int = 1536
 
     # Model - DeepSeek
     deepseek_api_key: str = ""
@@ -73,6 +83,14 @@ class Settings(BaseSettings):
             email_user=os.path.expandvars(raw.get("email", {}).get("user", cls().email_user)),
             email_pass=os.path.expandvars(raw.get("email", {}).get("pass", cls().email_pass)),
             email_from=os.path.expandvars(raw.get("email", {}).get("from", cls().email_from)),
+            cos_secret_id=os.path.expandvars(raw.get("cos", {}).get("secret_id", cls().cos_secret_id)),
+            cos_secret_key=os.path.expandvars(raw.get("cos", {}).get("secret_key", cls().cos_secret_key)),
+            cos_region=os.path.expandvars(raw.get("cos", {}).get("region", cls().cos_region)),
+            cos_bucket=os.path.expandvars(raw.get("cos", {}).get("bucket", cls().cos_bucket)),
+            dashscope_api_key=os.path.expandvars(raw.get("embedding", {}).get("api_key", cls().dashscope_api_key)),
+            dashscope_workspace_id=os.path.expandvars(raw.get("embedding", {}).get("workspace_id", cls().dashscope_workspace_id)),
+            embedding_model=os.path.expandvars(raw.get("embedding", {}).get("model", cls().embedding_model)),
+            embedding_dimensions=raw.get("embedding", {}).get("dimensions", cls().embedding_dimensions),
             deepseek_api_key=os.path.expandvars(raw.get("model", {}).get("default", {}).get("api_key", "")),
             deepseek_base_url=raw.get("model", {}).get("default", {}).get("base_url", cls().deepseek_base_url),
             deepseek_model=raw.get("model", {}).get("default", {}).get("model", cls().deepseek_model),
@@ -91,4 +109,3 @@ def get_settings() -> Settings:
         config_path = Path(__file__).parent.parent.parent / "config" / "config.yaml"
         _settings = Settings.from_yaml(config_path)
     return _settings
->>>>>>> Stashed changes

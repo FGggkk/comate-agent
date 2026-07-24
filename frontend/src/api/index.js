@@ -69,6 +69,21 @@ export const apiStartInterview = (data) => post('/interview/start', data)
 export const apiAnswerQuestion = (id, answer) => post(`/interview/${id}/answer`, { answer })
 export const apiGetReport = (id) => get(`/interview/${id}/report`)
 
+// User Profile
+export const apiGetProfile = () => get('/user/me')
+export const apiUpdateProfile = (data) => put('/user/me', data)
+export const apiUploadAvatar = async (file) => {
+  const token = localStorage.getItem('comate_token')
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch('/api/user/avatar', {
+    method: 'POST',
+    headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+    body: form,
+  })
+  return res.json()
+}
+
 // Reminders
 export const apiCreateReminder = (content, remind_at) => post('/reminders', { content, remind_at })
 export const apiGetReminders = () => get('/reminders')
