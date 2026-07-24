@@ -23,9 +23,13 @@ export const useChatStore = defineStore('chat', () => {
 
   function appendToStream(text) {
     streamBuffer.value += text
-    const last = messages.value[messages.value.length - 1]
-    if (last && last.role === 'agent') {
-      last.content = streamBuffer.value
+    // 找到最后一个 agent 消息（可能被 memory_card 等隔开）
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      const m = messages.value[i]
+      if (m.role === 'agent') {
+        m.content = streamBuffer.value
+        break
+      }
     }
   }
 
