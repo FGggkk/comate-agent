@@ -263,6 +263,7 @@ async function handleSend(text) {
             chatStore.addMessage({ type: 'memory_card', summary: event.data.summary, layer: event.data.layer })
           } else if (event.type === 'text_chunk') {
             chatStore.appendToStream(event.data.text)
+            await new Promise(r => setTimeout(r, 0))
           } else if (event.type === 'action_buttons') {
             chatStore.addMessage({ type: 'actions', buttons: event.data.buttons })
           }
