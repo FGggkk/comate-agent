@@ -5,13 +5,20 @@ from app.config.settings import get_settings
 settings = get_settings()
 
 
+def _get_base_url() -> str:
+    """获取阿里云百炼兼容 OpenAI 的 base_url"""
+    if settings.dashscope_workspace_id:
+        return f"https://{settings.dashscope_workspace_id}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+    return "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+
 async def get_embedding(text: str) -> list[float] | None:
-    """调用阿里云百炼 text-embedding-v4 生成向量"""
-    if not settings.dashscope_api_key or not settings.dashscope_workspace_id:
-        print("[embedding] API Key 或 Workspace ID 未配置")
+    """调用阿里云百炼 text-embedding-v2 生成向量"""
+    if not settings.dashscope_api_key:
+        print("[embedding] API Key 未配置")
         return None
 
-    base_url = f"https://{settings.dashscope_workspace_id}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+    base_url = _get_base_url()
 
     async with httpx.AsyncClient(timeout=30) as client:
         try:
@@ -40,11 +47,11 @@ async def get_embeddings_batch(texts: list[str]) -> list[list[float]] | None:
     if not texts:
         return []
 
-    if not settings.dashscope_api_key or not settings.dashscope_workspace_id:
-        print("[embedding] API Key 或 Workspace ID 未配置")
+    if not settings.dashscope_api_key:
+        print("[embedding] API Key 未配置")
         return None
 
-    base_url = f"https://{settings.dashscope_workspace_id}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+    base_url = _get_base_url()
 
     async with httpx.AsyncClient(timeout=60) as client:
         try:

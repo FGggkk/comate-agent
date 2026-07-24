@@ -24,18 +24,19 @@ async def search(
     query_vec = await get_embedding(query)
     if query_vec:
         from sqlalchemy import text
+        vec_literal = "[" + ",".join(str(v) for v in query_vec) + "]"
         sql = text("""
             SELECT id, layer, memory_type, summary, content,
                    user_confirmed, is_inference, created_at,
-                   1 - (embedding <=> :query_vec::vector) AS score
+                   1 - (embedding <=> CAST(:query_vec AS vector)) AS score
             FROM memory_items
-            WHERE user_id = :user_id::uuid
+            WHERE user_id = CAST(:user_id AS uuid)
               AND status = 'active'
               AND embedding IS NOT NULL
-            ORDER BY embedding <=> :query_vec::vector
+            ORDER BY embedding <=> CAST(:query_vec AS vector)
             LIMIT :top_k
         """)
-        result = await db.execute(sql, {"query_vec": query_vec, "user_id": user_id, "top_k": top_k})
+        result = await db.execute(sql, {"query_vec": vec_literal, "user_id": user_id, "top_k": top_k})
         rows = result.fetchall()
         results = []
         for row in rows:
