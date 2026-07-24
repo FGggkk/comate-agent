@@ -47,13 +47,15 @@
     <div v-else style="display:flex;flex-direction:column;height:100%;">
       <!-- 消息区 -->
       <div ref="scrollRef" style="flex:1;overflow-y:auto;padding:8px 14px;">
-        <div class="day-tag">今天 · 晚上好呀</div>
+        <div v-if="chatStore.messages.length > 0" class="day-tag">{{ timeGreeting }}</div>
 
-        <div v-for="(msg, i) in chatStore.messages" :key="i">
+        <template v-for="(msg, i) in chatStore.messages" :key="i">
+          <!-- 时间分割：消息间隔超过 2 分钟 -->
+          <div v-if="shouldShowTimeSep(i)" class="day-tag">{{ formatTimeSep(msg.timestamp) }}</div>
           <MessageBubble v-if="msg.type === 'text'" :role="msg.role" :content="msg.content" />
           <MemoryCard v-else-if="msg.type === 'memory_card'" :summary="msg.summary" :layer="msg.layer" />
           <ActionButtons v-else-if="msg.type === 'actions'" :buttons="msg.buttons" @action="handleAction" />
-        </div>
+        </template>
 
         <StatusIndicator v-if="chatStore.isStreaming" />
 
@@ -81,7 +83,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useUserStore } from '../stores/user'
 import { apiGetTemplates, apiPreview, apiConfirmSoul, apiSendMessage } from '../api/index'
@@ -185,6 +187,31 @@ async function handleSend(text) {
     chatStore.finishStream()
     nextTick(() => scrollToBottom())
   }
+}
+
+const timeGreeting = computed(() => {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = now.getMonth() + 1
+  const d = now.getDate()
+  const h = String(now.getHours()).padStart(2, '0')
+  const min = String(now.getMinutes()).padStart(2, '0')
+  return `${y}年${m}月${d}日 ${h}:${min}`
+})
+
+function shouldShowTimeSep(i) {
+  if (i === 0) return false
+  const prev = chatStore.messages[i - 1]
+  const curr = chatStore.messages[i]
+  if (!prev.timestamp || !curr.timestamp) return false
+  return (curr.timestamp - prev.timestamp) > 120_000 // 2 分钟
+}
+
+function formatTimeSep(ts) {
+  const d = new Date(ts)
+  const h = String(d.getHours()).padStart(2, '0')
+  const m = String(d.getMinutes()).padStart(2, '0')
+  return `${h}:${m}`
 }
 
 function scrollToBottom() { if (scrollRef.value) scrollRef.value.scrollTop = scrollRef.value.scrollHeight }
