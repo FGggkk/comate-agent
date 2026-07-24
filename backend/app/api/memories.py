@@ -12,6 +12,7 @@ router = APIRouter(prefix="/api/memories", tags=["memories"])
 class UpdateMemoryRequest(BaseModel):
     summary: str | None = None
     content: dict | None = None
+    user_confirmed: bool | None = None
 
 
 class AddForbiddenRequest(BaseModel):
@@ -31,6 +32,8 @@ async def api_update_memory(item_id: str, req: UpdateMemoryRequest, db: AsyncSes
         data["summary"] = req.summary
     if req.content is not None:
         data["content"] = req.content
+    if req.user_confirmed is not None:
+        data["user_confirmed"] = req.user_confirmed
     return await memory_service.update_item(item_id, data, db)
 
 

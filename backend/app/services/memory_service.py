@@ -4,7 +4,10 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import func as sa_func
+
 from app.models.memory import ForbiddenTopic, MemoryItem, PendingAnchor
+from app.services.embedding_service import get_embedding
 
 
 async def search(
@@ -13,21 +16,61 @@ async def search(
     top_k: int = 5,
     db: AsyncSession = None,
 ) -> list[dict]:
-    """混合检索记忆 + 禁区过滤"""
+    """语义检索 + 关键词兜底 + 禁区过滤"""
+    forbidden = await get_forbidden(user_id, db)
+    forbidden_words = {f.topic_summary.lower() for f in forbidden}
+
+    # 1. 尝试 pgvector 语义搜索
+    query_vec = await get_embedding(query)
+    if query_vec:
+        from sqlalchemy import text
+        sql = text("""
+            SELECT id, layer, memory_type, summary, content,
+                   user_confirmed, is_inference, created_at,
+                   1 - (embedding <=> :query_vec::vector) AS score
+            FROM memory_items
+            WHERE user_id = :user_id::uuid
+              AND status = 'active'
+              AND embedding IS NOT NULL
+            ORDER BY embedding <=> :query_vec::vector
+            LIMIT :top_k
+        """)
+        result = await db.execute(sql, {"query_vec": query_vec, "user_id": user_id, "top_k": top_k})
+        rows = result.fetchall()
+        results = []
+        for row in rows:
+            # 禁区过滤
+            summary_lower = (row.summary or "").lower()
+            if any(fw in summary_lower for fw in forbidden_words):
+                continue
+            results.append({
+                "id": str(row.id),
+                "layer": row.layer,
+                "memory_type": row.memory_type or "general",
+                "summary": row.summary,
+                "content": row.content,
+                "user_confirmed": row.user_confirmed,
+                "is_inference": row.is_inference,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "score": float(row.score) if row.score else 0,
+            })
+        if results:
+            return results[:top_k]
+
+    # 2. 兜底：ILIKE 关键词模糊匹配
     result = await db.execute(
         select(MemoryItem).where(
             MemoryItem.user_id == user_id,
             MemoryItem.status == "active",
-        ).order_by(MemoryItem.created_at.desc()).limit(top_k * 3)
+        ).order_by(MemoryItem.created_at.desc()).limit(50)
     )
     items = result.scalars().all()
 
-    # 关键词简单评分
     keywords = set(query.lower().split())
     scored = []
     for item in items:
         score = 0.0
-        summary_lower = item.summary.lower()
+        summary_lower = (item.summary or "").lower()
         for kw in keywords:
             if kw in summary_lower:
                 score += 0.3
@@ -35,18 +78,15 @@ async def search(
             score += 0.2
         if item.layer == "co_created":
             score += 0.1
-        scored.append((score, item))
+        if score > 0:
+            scored.append((score, item))
 
     scored.sort(key=lambda x: x[0], reverse=True)
 
-    # 获取禁区话题
-    forbidden = await get_forbidden(user_id, db)
-    forbidden_words = {f.topic_summary.lower() for f in forbidden}
-
     results = []
     for score, item in scored[:top_k]:
-        # 禁区过滤
-        if any(fw in item.summary.lower() for fw in forbidden_words):
+        summary_lower = (item.summary or "").lower()
+        if any(fw in summary_lower for fw in forbidden_words):
             continue
         results.append(_item_to_dict(item))
 
@@ -171,29 +211,81 @@ def _item_to_dict(item: MemoryItem) -> dict:
 
 
 async def extract_candidates(user_id: str, message: str, reply: str, db: AsyncSession = None) -> list[dict]:
-    """对话后抽取记忆候选（简化版关键词匹配）"""
-    candidates = []
-    keywords = {
-        "喜欢": ("preference", "喜欢"),
-        "目标": ("goal", "目标"),
-        "打算": ("goal", "打算"),
-        "下个月": ("goal", "下个月"),
-        "下周": ("goal", "下周"),
-        "工作": ("identity", "工作"),
-        "学校": ("identity", "学校"),
-    }
+    """对话后用 LLM 提取记忆点，生成 embedding 并保存到数据库"""
+    # 用 LLM 提取
+    summary = await _extract_memory_summary(message, reply)
+    if not summary:
+        return []
 
-    for kw, (mtype, label) in keywords.items():
-        if kw in message:
-            candidates.append({
-                "layer": "co_created",
-                "memory_type": mtype,
-                "summary": message,
-                "requires_confirmation": True,
-            })
-            break
+    # 保存到数据库 + 生成 embedding
+    await add_with_embedding(user_id, "co_created", summary, {
+        "source_message": message[:200],
+        "source_reply": reply[:200],
+        "requires_confirmation": True,
+    }, db=db)
 
-    return candidates
+    return [{"summary": summary, "layer": "co_created"}]
+
+
+async def _extract_memory_summary(message: str, reply: str) -> str | None:
+    """调用 LLM 从对话中提取值得记住的信息"""
+    from app.services.model_gateway import gateway
+
+    prompt = f"""从以下对话中，提取用户值得记住的个人信息。
+
+要求：
+- 如果用户提到了身份、偏好、目标、经历、习惯等信息，用一句话概括
+- 如果没有值得记住的信息，返回空字符串
+- 只返回一句话，不要多余内容
+
+用户说：{message[:500]}
+AI回复：{reply[:500]}
+"""
+
+    try:
+        full = ""
+        async for chunk in gateway.stream(prompt, system="你是一个记忆提取助手，只提取客观事实，不做主观推断。"):
+            full += chunk
+        full = full.strip().strip('"').strip("'").strip()
+        if len(full) < 4 or "没有" in full[:10]:
+            return None
+        return full[:200]
+    except Exception as e:
+        print(f"[extract_candidates] LLM 调用失败: {e}")
+        return None
+
+
+async def add_with_embedding(
+    user_id: str,
+    layer: str,
+    summary: str,
+    content: dict = None,
+    db: AsyncSession = None,
+) -> MemoryItem | None:
+    """保存记忆并异步生成 embedding"""
+    item = MemoryItem(
+        user_id=user_id,
+        layer=layer,
+        summary=summary,
+        content=content or {},
+        source_type="user_input",
+        user_confirmed=(layer != "tacit"),
+        is_inference=(layer == "tacit"),
+    )
+    db.add(item)
+    await db.commit()
+    await db.refresh(item)
+
+    # 异步生成 embedding
+    try:
+        vec = await get_embedding(summary)
+        if vec:
+            item.embedding = vec
+            await db.commit()
+    except Exception as e:
+        print(f"[add_with_embedding] embedding 生成失败: {e}")
+
+    return item
 
 
 async def update_anchors(user_id: str, message: str, reply: str, db: AsyncSession = None) -> None:

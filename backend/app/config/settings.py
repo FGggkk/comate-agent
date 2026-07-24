@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     cos_region: str = "ap-guangzhou"
     cos_bucket: str = ""
 
+    # Embedding - 阿里云百炼
+    dashscope_api_key: str = ""
+    dashscope_workspace_id: str = ""
+    embedding_model: str = "text-embedding-v4"
+    embedding_dimensions: int = 1536
+
     # Model - DeepSeek
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
@@ -81,6 +87,10 @@ class Settings(BaseSettings):
             cos_secret_key=os.path.expandvars(raw.get("cos", {}).get("secret_key", cls().cos_secret_key)),
             cos_region=os.path.expandvars(raw.get("cos", {}).get("region", cls().cos_region)),
             cos_bucket=os.path.expandvars(raw.get("cos", {}).get("bucket", cls().cos_bucket)),
+            dashscope_api_key=os.path.expandvars(raw.get("embedding", {}).get("api_key", cls().dashscope_api_key)),
+            dashscope_workspace_id=os.path.expandvars(raw.get("embedding", {}).get("workspace_id", cls().dashscope_workspace_id)),
+            embedding_model=os.path.expandvars(raw.get("embedding", {}).get("model", cls().embedding_model)),
+            embedding_dimensions=raw.get("embedding", {}).get("dimensions", cls().embedding_dimensions),
             deepseek_api_key=os.path.expandvars(raw.get("model", {}).get("default", {}).get("api_key", "")),
             deepseek_base_url=raw.get("model", {}).get("default", {}).get("base_url", cls().deepseek_base_url),
             deepseek_model=raw.get("model", {}).get("default", {}).get("model", cls().deepseek_model),

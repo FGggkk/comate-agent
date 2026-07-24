@@ -49,13 +49,12 @@
       <div ref="scrollRef" style="flex:1;overflow-y:auto;padding:8px 14px;">
         <div v-if="chatStore.messages.length > 0" class="day-tag">{{ timeGreeting }}</div>
 
-        <template v-for="(msg, i) in chatStore.messages" :key="i">
-          <!-- 时间分割：消息间隔超过 2 分钟 -->
+        <div v-for="(msg, i) in chatStore.messages" :key="i">
           <div v-if="shouldShowTimeSep(i)" class="day-tag">{{ formatTimeSep(msg.timestamp) }}</div>
           <MessageBubble v-if="msg.type === 'text'" :role="msg.role" :content="msg.content" />
           <MemoryCard v-else-if="msg.type === 'memory_card'" :summary="msg.summary" :layer="msg.layer" />
           <ActionButtons v-else-if="msg.type === 'actions'" :buttons="msg.buttons" @action="handleAction" />
-        </template>
+        </div>
 
         <StatusIndicator v-if="chatStore.isStreaming" />
 

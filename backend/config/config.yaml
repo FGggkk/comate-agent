@@ -18,6 +18,12 @@ cos:
   region: "${COS_REGION}"
   bucket: "${COS_BUCKET}"
 
+embedding:
+  api_key: "${DASHSCOPE_API_KEY}"
+  workspace_id: "${DASHSCOPE_WORKSPACE_ID}"
+  model: "${EMBEDDING_MODEL}"
+  dimensions: 1536
+
 model:
   default:
     provider: deepseek
