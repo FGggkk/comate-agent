@@ -32,25 +32,6 @@ MIGRATION_SQL = [
 LOCK_ID = 20240724  # 迁移锁 ID（唯一整数）
 
 
-COLUMN_CHECKS = {
-    "users.nickname": "SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='nickname'",
-    "users.avatar_url": "SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='avatar_url'",
-    "memory_items.embedding": "SELECT 1 FROM information_schema.columns WHERE table_name='memory_items' AND column_name='embedding'",
-    "sessions.title_auto_set": "SELECT 1 FROM information_schema.columns WHERE table_name='sessions' AND column_name='title_auto_set'",
-}
-
-
-async def _column_exists(conn, check_key: str) -> bool:
-    sql = COLUMN_CHECKS.get(check_key)
-    if not sql:
-        return False
-    try:
-        r = await conn.execute(text(sql))
-        return r.scalar() == 1
-    except Exception:
-        return False
-
-
 async def run_migrations():
     """应用启动时自动执行数据库迁移（10秒超时），多实例互斥"""
     try:
@@ -65,15 +46,6 @@ async def run_migrations():
             try:
                 await conn.execute(text("SET statement_timeout = '10s'"))
                 for stmt in MIGRATION_SQL:
-                    # 如果列已存在则跳过 ALTER TABLE，避免锁冲突
-                    should_skip = False
-                    for key in COLUMN_CHECKS:
-                        if key.split(".")[-1] in stmt and await _column_exists(conn, key):
-                            should_skip = True
-                            break
-                    if should_skip:
-                        print(f"[migrate] SKIP (列已存在): {stmt[:60]}")
-                        continue
                     try:
                         await conn.execute(text(stmt))
                         print(f"[migrate] OK: {stmt[:60]}")
