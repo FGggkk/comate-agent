@@ -97,7 +97,9 @@ onMounted(async () => {
       userStore.setProfile(res.user.nickname, res.user.avatar_url)
       nicknameInput.value = res.user.nickname || ''
     }
-  } catch {}
+  } catch (e) {
+    console.error('loadProfile error:', e)
+  }
 })
 
 async function saveProfile() {
@@ -111,8 +113,9 @@ async function saveProfile() {
     } else {
       profileMsg.value = res.message || '保存失败'
     }
-  } catch {
-    profileMsg.value = '网络错误'
+  } catch (e) {
+    profileMsg.value = '网络错误，请检查后端是否启动'
+    console.error('saveProfile error:', e)
   } finally {
     saving.value = false
     setTimeout(() => { profileMsg.value = '' }, 2000)
