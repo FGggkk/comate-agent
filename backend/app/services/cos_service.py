@@ -39,7 +39,7 @@ def upload_avatar(file_bytes: bytes, filename: str, user_id: str) -> str | None:
     # 构造路径: avatars/{user_id}/{timestamp}_{uuid}.{ext}
     ts = datetime.now().strftime("%Y%m%d%H%M%S")
     uid = uuid.uuid4().hex[:8]
-    key = f"avatars/{user_id}/{ts}_{uid}.{ext}"
+    key = f"avatars/comate/{user_id}/{ts}_{uid}.{ext}"
 
     try:
         resp = client.put_object(
