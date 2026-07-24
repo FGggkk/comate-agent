@@ -47,12 +47,14 @@ export const apiPreview = (slug) => post('/souls/preview', { slug })
 export const apiConfirmSoul = (template_id) => post('/souls/users/me/soul', { template_id })
 
 // Chat
-export function apiSendMessage(message) {
+export function apiSendMessage(message, sessionId) {
   const token = localStorage.getItem('comate_token')
+  const body = { message }
+  if (sessionId) body.session_id = sessionId
   return fetch('/api/chat/send', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify(body),
   })
 }
 
@@ -83,6 +85,13 @@ export const apiUploadAvatar = async (file) => {
   })
   return res.json()
 }
+
+// Sessions
+export const apiListSessions = () => get('/sessions')
+export const apiCreateSession = (title) => post('/sessions', { title })
+export const apiUpdateSession = (id, data) => put(`/sessions/${id}`, data)
+export const apiDeleteSession = (id) => del(`/sessions/${id}`)
+export const apiGetMessages = (sessionId) => get(`/sessions/${sessionId}/messages`)
 
 // Reminders
 export const apiCreateReminder = (content, remind_at) => post('/reminders', { content, remind_at })
