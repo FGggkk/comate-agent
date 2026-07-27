@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -16,6 +16,7 @@ class InterviewSession(Base):
     resume_text: Mapped[str] = mapped_column(Text, default="")
     target_role: Mapped[str] = mapped_column(String(255), default="")
     target_company: Mapped[str] = mapped_column(String(255), default="")
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="in_progress")  # in_progress / completed
     round_number: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -31,5 +32,7 @@ class InterviewQuestion(Base):
     question_text: Mapped[str] = mapped_column(Text, nullable=False)
     user_answer: Mapped[str | None] = mapped_column(Text, nullable=True)
     evaluation: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="pending")  # pending / answered / resolved
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

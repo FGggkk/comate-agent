@@ -13,11 +13,13 @@ _session_locks: dict[str, str] = {}
 
 
 async def start_session(user_id: str, resume: str, target_role: str, company: str, db: AsyncSession) -> dict:
+    title = target_role or company or "面试"
     session = InterviewSession(
         user_id=user_id,
         resume_text=resume,
         target_role=target_role,
         target_company=company,
+        title=title,
         round_number=1,
     )
     db.add(session)
@@ -33,8 +35,9 @@ async def start_session(user_id: str, resume: str, target_role: str, company: st
 
 
 async def stream_answer(session_id: str, answer: str, db: AsyncSession) -> AsyncGenerator[dict, None]:
-    if _session_locks.get(session_id) in ("thinking", "evaluating"):
-        yield {"type": "error", "data": {"message": "正在评估中，请稍后"}}
+    """仅保存回答，不做评估"""
+    if _session_locks.get(session_id) == "evaluating":
+        yield {"type": "error", "data": {"message": "正在处理中，请稍后"}}
         return
     _session_locks[session_id] = "thinking"
 
@@ -45,24 +48,11 @@ async def stream_answer(session_id: str, answer: str, db: AsyncSession) -> Async
             return
 
         q.user_answer = answer
-        _session_locks[session_id] = "evaluating"
-
-        yield {"type": "thinking", "data": {"label": "正在分析您的回答…"}}
-        eval_text = ""
-        try:
-            async for chunk in _stream_with_retry(_evaluate_answer_stream(q.question_text, answer)):
-                if chunk:
-                    eval_text += chunk
-                    yield {"type": "eval_chunk", "data": {"text": chunk}}
-        except Exception as e:
-            yield {"type": "eval_chunk", "data": {"text": f"\n\n[评估异常]"}}
-
-        q.evaluation = eval_text
         q.status = "resolved"
         await db.commit()
         _session_locks[session_id] = "feedback_done"
 
-        yield {"type": "eval_done", "data": {"can_next": True, "can_end": True}}
+        yield {"type": "answer_saved", "data": {"can_next": True, "can_end": True}}
 
     finally:
         pass
@@ -93,6 +83,7 @@ async def next_question(session_id: str, db: AsyncSession) -> AsyncGenerator[dic
             if session.round_number < 3:
                 session.round_number += 1
                 await db.commit()
+                yield {"type": "round_change", "data": {"round": session.round_number}}
             else:
                 session.status = "completed"
                 session.completed_at = datetime.now(timezone.utc)
@@ -114,7 +105,7 @@ async def next_question(session_id: str, db: AsyncSession) -> AsyncGenerator[dic
 
 
 async def end_interview(session_id: str, db: AsyncSession) -> dict:
-    """主动结束面试，生成总结"""
+    """主动结束面试，批量评估所有已回答的问题并打分"""
     session = await db.execute(select(InterviewSession).where(InterviewSession.id == session_id))
     session = session.scalar_one()
 
@@ -129,12 +120,29 @@ async def end_interview(session_id: str, db: AsyncSession) -> dict:
     )
     questions = result.scalars().all()
     answered = [q for q in questions if q.status == "resolved"]
-    total = len(questions)
+
+    # 批量评估所有已回答的问题
+    evaluations = await _batch_evaluate(answered)
+
+    total_score = 0
+    total_max = 0
+    for q, ev in zip(answered, evaluations):
+        q.evaluation = ev.get("comment", "")
+        q.score = ev.get("score", 0)
+        q.max_score = ev.get("max_score", 10)
+        total_score += q.score
+        total_max += q.max_score
+    await db.commit()
+
+    overall = round(total_score / total_max * 100) if total_max > 0 else 0
 
     return {
         "success": True,
+        "overall_score": overall,
+        "total_score": total_score,
+        "total_max": total_max,
         "summary": {
-            "total_questions": total,
+            "total_questions": len(questions),
             "answered": len(answered),
             "target_role": session.target_role,
             "target_company": session.target_company,
@@ -147,10 +155,54 @@ async def end_interview(session_id: str, db: AsyncSession) -> dict:
                 "question": q.question_text,
                 "answer": q.user_answer or "",
                 "evaluation": q.evaluation or "",
+                "score": getattr(q, "score", 0),
+                "max_score": getattr(q, "max_score", 10),
             }
             for q in questions
         ],
     }
+
+
+async def _batch_evaluate(questions: list) -> list[dict]:
+    """批量评估所有问题，返回每题得分和评语"""
+    if not questions:
+        return []
+
+    qa_list = "\n\n".join(
+        f"问题{i+1}（权重：根据问题重要程度，满分在5-20分之间）：\n题目：{q.question_text}\n回答：{q.user_answer}"
+        for i, q in enumerate(questions)
+    )
+
+    prompt = f"""你是面试评分专家。请评估以下面试回答，按每题独立打分。
+
+要求：
+1. 每题按重要程度给一个满分（5-20分之间），重要的问题满分高
+2. 根据回答质量给一个实际得分
+3. 用一两句话说明得分点和扣分点
+4. 输出格式为JSON数组，不要其他内容
+
+{qa_list}
+
+输出格式（严格JSON数组）：
+[
+  {{
+    "score": 8,
+    "max_score": 10,
+    "comment": "得分点：... 扣分点：..."
+  }}
+]"""
+
+    try:
+        full = ""
+        async for chunk in gateway.stream(prompt):
+            full += chunk
+        import json
+        full = full.strip().strip("```json").strip("```").strip()
+        results = json.loads(full)
+        return results if isinstance(results, list) else []
+    except Exception as e:
+        print(f"[batch_evaluate] 失败: {e}")
+        return [{"score": 0, "max_score": 10, "comment": "评估失败"} for _ in questions]
 
 
 async def get_report(session_id: str, db: AsyncSession) -> dict:
@@ -230,16 +282,32 @@ async def _evaluate_answer_stream(question: str, answer: str) -> AsyncGenerator[
 
 
 async def _generate_question_stream(session: InterviewSession, db: AsyncSession) -> AsyncGenerator[str, None]:
+    # 获取之前所有 Q&A 上下文
+    prev_qa = await db.execute(
+        select(InterviewQuestion).where(
+            InterviewQuestion.session_id == session.id,
+        ).order_by(InterviewQuestion.created_at.asc()).limit(10)
+    )
+    prev_questions = prev_qa.scalars().all()
+    context = "\n".join(
+        f"之前问题：{q.question_text}\n候选人回答：{q.user_answer or '（未回答）'}"
+        for q in prev_questions if q.user_answer
+    )
+
     prompt = f"""你是一个面试官，正在面试{session.target_role}岗位（{session.target_company}）。
 简历：{session.resume_text}
 
-第 {session.round_number} 轮面试。请只出一道题，不要出多道。"""
+面试历史：
+{context if context else '（面试刚开始）'}
+
+第 {session.round_number} 轮面试。请只出一道题，不要出多道。
+要求：基于前面的对话自然延续，不要重复已问过的问题，让整场面试像真实对话一样连贯。"""
     if session.round_number == 1:
-        prompt += "\n请从自我介绍或项目经验开始。"
+        prompt += "\n从简单的自我介绍或项目经历切入。"
     elif session.round_number == 2:
-        prompt += "\n出更有深度的问题，考察技术深度。"
+        prompt += "\n根据上一轮的回答深入追问，考察技术深度和项目细节。"
     else:
-        prompt += "\n压力面试，出一道有挑战性的场景题。"
+        prompt += "\n基于前两轮表现，出一道综合性的场景题，考察决策能力和综合素养。"
 
     reply_buffer = ""
     async for chunk in gateway.stream(prompt):

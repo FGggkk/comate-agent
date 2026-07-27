@@ -26,7 +26,7 @@
         <div v-for="s in history.slice(0,3)" :key="s.id" class="page-card" style="margin-top:6px;padding:10px 12px;cursor:pointer;" @click="viewHistory(s.id)">
           <div style="display:flex;justify-content:space-between;align-items:center;">
             <div>
-              <div style="font-weight:600;font-size:14px;">{{ s.target_role || '未命名' }}</div>
+              <div style="font-weight:600;font-size:14px;">{{ s.title || s.target_role || '未命名' }}</div>
               <div style="font-size:12px;color:var(--sub);">{{ s.target_company }} · 第{{ s.round_number }}/3轮 · {{ s.status === 'completed' ? '已完成' : '进行中' }}</div>
             </div>
             <span style="font-size:11px;color:var(--sub);">{{ formatTime(s.created_at) }}</span>
@@ -46,9 +46,15 @@
         <div v-for="s in history" :key="s.id" class="page-card" style="margin-top:6px;padding:10px 12px;">
           <div style="display:flex;justify-content:space-between;align-items:center;">
             <div style="flex:1;cursor:pointer;" @click="viewHistory(s.id)">
-              <div style="font-weight:600;font-size:14px;">{{ s.target_role || '未命名' }}</div>
+              <div style="font-weight:600;font-size:14px;">
+                <template v-if="renamingId === s.id">
+                  <input v-model="renameText" @keydown.enter="confirmRename(s)" @blur="confirmRename(s)" class="form-input" style="font-size:14px;padding:2px 6px;" autofocus />
+                </template>
+                <template v-else>{{ s.title || s.target_role || '未命名' }}</template>
+              </div>
               <div style="font-size:12px;color:var(--sub);">{{ s.target_company }} · 第{{ s.round_number }}/3轮 · {{ s.status === 'completed' ? '已完成' : '进行中' }} · {{ formatTime(s.created_at) }}</div>
             </div>
+            <button @click.stop="startRename(s)" style="font-size:14px;padding:4px 6px;opacity:.4;">✏️</button>
             <button @click.stop="deleteHistory(s.id)" style="font-size:14px;padding:4px 8px;color:var(--berry);opacity:.5;">🗑</button>
           </div>
         </div>
@@ -73,10 +79,13 @@
         <div v-html="renderMd(currentQuestion)"></div>
       </div>
 
-      <!-- 思考条 -->
-      <div v-if="state === 'thinking' || state === 'evaluating'" class="thinking-bar">
-        <div class="thinking-pulse"></div>
-        <div class="thinking-text">{{ thinkingLabel }}</div>
+      <!-- 轮次切换横幅 -->
+      <div v-if="roundBanner" class="round-banner">{{ roundBanner }}</div>
+
+      <!-- 进度条（loading/thinking/evaluating 状态） -->
+      <div v-if="state === 'loading' || state === 'thinking' || state === 'evaluating'" class="progress-wrap">
+        <div class="progress-bar"><div class="progress-fill" :style="{width: progress + '%'}"></div></div>
+        <div class="progress-label">{{ state === 'loading' ? '正在准备面试…' : thinkingLabel }}</div>
         <button v-if="state === 'evaluating'" @click="cancelStream" class="thinking-cancel">取消</button>
       </div>
 
@@ -116,9 +125,12 @@
         <button v-if="state === 'error'" @click="retryAnswer" style="margin-top:4px;font-size:12px;color:var(--sprout);">重试</button>
       </div>
 
-      <!-- 报告 -->
       <div v-if="report" style="margin-top:16px;">
         <div class="page-label">面试报告</div>
+        <div v-if="report.overall_score !== undefined" style="text-align:center;padding:12px 0;font-size:24px;font-weight:700;color:var(--honey-deep);">
+          总分：{{ report.overall_score }}/100
+          <div style="font-size:13px;font-weight:400;color:var(--sub);">共 {{ report.questions.filter(q=>q.answer).length }} 题回答</div>
+        </div>
         <div v-for="(q, idx) in report.questions" :key="idx" class="page-card" style="margin-top:8px;padding:12px;">
           <div style="font-size:14px;font-weight:600;margin-bottom:4px;" v-html="renderMd(q.question)"></div>
           <div style="font-size:12px;color:var(--sub);margin-bottom:4px;">
@@ -133,6 +145,11 @@
               <button @click="startEditAnswer(q, idx)" style="font-size:11px;color:var(--honey);margin-left:6px;">编辑</button>
             </template>
           </div>
+          <div v-if="q.score !== undefined" style="font-size:12px;margin-bottom:4px;">
+            <span :style="{color: q.score/q.max_score >= 0.7 ? 'var(--sprout)' : q.score/q.max_score >= 0.4 ? 'var(--honey-deep)' : 'var(--berry)'}">
+              {{ q.score }}/{{ q.max_score }}分
+            </span>
+          </div>
           <div style="font-size:12px;color:var(--ink-soft);" v-html="renderMd(q.evaluation)"></div>
         </div>
         <button @click="resetInterview" style="width:100%;margin-top:12px;padding:10px;border-radius:var(--r-sm);border:1.5px solid var(--line);font-size:14px;color:var(--ink-soft);">再来一次</button>
@@ -144,7 +161,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { marked } from 'marked'
-import { apiStartInterview, apiAnswerQuestionStream, apiGetReport, apiListInterviews, apiNextQuestion, apiEndInterview, apiEditInterviewAnswer, apiDeleteInterview } from '../api/index'
+import { apiStartInterview, apiAnswerQuestionStream, apiGetReport, apiListInterviews, apiNextQuestion, apiEndInterview, apiEditInterviewAnswer, apiDeleteInterview, apiRenameInterview } from '../api/index'
 
 function renderMd(text) {
   if (!text) return ''
@@ -164,9 +181,14 @@ const report = ref(null)
 const streamEval = ref('')
 const errorMsg = ref('')
 const thinkingLabel = ref('')
+const progress = ref(0)
+let progressTimer = null
 const history = ref([])
 const showEndConfirm = ref(false)
 const showAllHistory = ref(false)
+const roundBanner = ref('')
+const renamingId = ref('')
+const renameText = ref('')
 const editingAnswerIdx = ref(-1)
 const editingAnswerText = ref('')
 
@@ -200,7 +222,22 @@ async function deleteHistory(id) {
   } catch {}
 }
 
+function startRename(s) {
+  renamingId.value = s.id
+  renameText.value = s.title || s.target_role || ''
+}
+
+async function confirmRename(s) {
+  if (!renameText.value.trim()) { renamingId.value = ''; return }
+  try {
+    const res = await apiRenameInterview(s.id, renameText.value.trim())
+    if (res.success) { s.title = renameText.value.trim() }
+  } catch {}
+  renamingId.value = ''
+}
+
 async function startInterview() {
+  startProgress()
   state.value = 'loading'
   errorMsg.value = ''
   try {
@@ -221,6 +258,7 @@ async function submitAnswer() {
   answer.value = ''
 
   abortController = new AbortController()
+  startProgress()
   state.value = 'thinking'
   thinkingLabel.value = '正在分析您的回答…'
 
@@ -250,12 +288,12 @@ async function submitAnswer() {
           if (event.type === 'thinking') {
             thinkingLabel.value = event.data.label || '正在思考…'
             state.value = 'thinking'
-          } else if (event.type === 'eval_chunk') {
-            state.value = 'evaluating'
-            streamEval.value += event.data.text || ''
-          } else if (event.type === 'eval_done') {
-            lastEvaluation.value = streamEval.value
+          } else if (event.type === 'answer_saved') {
             state.value = 'feedback_done'
+          } else if (event.type === 'round_change') {
+            currentRound.value = event.data.round
+            roundBanner.value = `第 ${event.data.round} 轮面试开始`
+            setTimeout(() => roundBanner.value = '', 3000)
           } else if (event.type === 'question') {
             currentRound.value = event.data.round
             currentQuestion.value = event.data.text
@@ -285,6 +323,7 @@ async function submitAnswer() {
 }
 
 async function nextQuestion() {
+  startProgress()
   state.value = 'thinking'
   thinkingLabel.value = '正在准备下一题…'
   try {
@@ -305,6 +344,10 @@ async function nextQuestion() {
           const event = JSON.parse(line.slice(6))
           if (event.type === 'thinking') {
             thinkingLabel.value = event.data.label || '正在准备…'
+          } else if (event.type === 'round_change') {
+            currentRound.value = event.data.round
+            roundBanner.value = `第 ${event.data.round} 轮面试开始`
+            setTimeout(() => roundBanner.value = '', 3000)
           } else if (event.type === 'question') {
             currentRound.value = event.data.round
             currentQuestion.value = event.data.text
@@ -336,6 +379,7 @@ function confirmEnd() {
 
 async function doEnd() {
   showEndConfirm.value = false
+  startProgress()
   state.value = 'loading'
   try {
     const res = await apiEndInterview(sessionId.value)
@@ -348,6 +392,26 @@ async function doEnd() {
   } catch {
     errorMsg.value = '结束失败，请重试'
     state.value = 'error'
+  }
+}
+
+function startProgress() {
+  progress.value = 0
+  if (progressTimer) clearInterval(progressTimer)
+  progressTimer = setInterval(() => {
+    if (progress.value < 95) {
+      // 前80%快一些，后面越来越慢
+      const step = progress.value < 50 ? 3 : progress.value < 80 ? 1.5 : 0.3
+      progress.value = Math.min(progress.value + step, 99)
+    }
+  }, 200)
+}
+
+function stopProgress() {
+  progress.value = 100
+  if (progressTimer) {
+    clearInterval(progressTimer)
+    progressTimer = null
   }
 }
 
@@ -442,6 +506,27 @@ function formatTime(iso) {
 .thinking-cancel {
   font-size: 12px; padding: 4px 10px; border-radius: var(--r-sm);
   color: var(--berry); border: 1px solid var(--berry); background: transparent;
+}
+.round-banner {
+  text-align: center; padding: 10px; margin: 8px 0;
+  background: var(--honey-soft); border-radius: var(--r-md);
+  font-size: 15px; font-weight: 700; color: var(--honey-deep);
+  animation: fadeIn .3s ease;
+}
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+.progress-wrap {
+  margin-top: 12px; padding: 12px 14px;
+  background: var(--honey-soft); border-radius: var(--r-md);
+}
+.progress-bar {
+  height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin-bottom: 6px;
+}
+.progress-fill {
+  height: 100%; background: var(--honey); border-radius: 3px;
+  transition: width .2s ease;
+}
+.progress-label {
+  font-size: 12px; color: var(--ink-soft); text-align: center;
 }
 .interview-eval {
   border-left: 3px solid var(--sprout); padding-left: 10px;

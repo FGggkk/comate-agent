@@ -79,6 +79,7 @@ export const apiNextQuestion = (id) => {
 export const apiEndInterview = (id) => post(`/interview/${id}/end`, {})
 export const apiEditInterviewAnswer = (sessionId, questionId, answer) => put(`/interview/${sessionId}/answer`, { question_id: questionId, answer })
 export const apiDeleteInterview = (id) => del(`/interview/${id}`)
+export const apiRenameInterview = (id, title) => put(`/interview/${id}`, { title })
 
 export const apiAnswerQuestionStream = (id, answer) => {
   const token = localStorage.getItem('comate_token')

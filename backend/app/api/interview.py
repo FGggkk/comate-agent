@@ -34,6 +34,9 @@ class EditAnswerRequest(BaseModel):
     question_id: str
     answer: str
 
+class RenameRequest(BaseModel):
+    title: str
+
 
 def _sse(event_type: str, data: dict) -> str:
     payload = {
@@ -94,6 +97,7 @@ async def api_list_sessions(db: AsyncSession = Depends(get_db), user_id: str = D
                 "id": str(s.id),
                 "target_role": s.target_role,
                 "target_company": s.target_company,
+                "title": s.title or "",
                 "status": s.status,
                 "round_number": s.round_number,
                 "created_at": s.created_at.isoformat() if s.created_at else None,
@@ -101,6 +105,25 @@ async def api_list_sessions(db: AsyncSession = Depends(get_db), user_id: str = D
             for s in sessions
         ]
     }
+
+
+@router.put("/{session_id}")
+async def api_rename(
+    session_id: str,
+    req: RenameRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+):
+    """重命名面试记录"""
+    from sqlalchemy import select, update
+    from app.models.interview import InterviewSession
+    r = await db.execute(select(InterviewSession).where(InterviewSession.id == session_id, InterviewSession.user_id == user_id))
+    s = r.scalar_one_or_none()
+    if not s:
+        return {"success": False}
+    s.title = req.title
+    await db.commit()
+    return {"success": True, "title": req.title}
 
 
 @router.delete("/{session_id}")
