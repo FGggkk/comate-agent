@@ -51,16 +51,18 @@
             <strong>{{ ownedCount ? '点击小球切换当前风格' : '还没有获得人设' }}</strong>
           </div>
         </div>
-        <div v-if="ownedSouls.length" class="owned-list">
-          <button
-            v-for="item in ownedSouls"
-            :key="item.id"
-            :class="['owned-item', item.active ? 'active' : '']"
-            @click="inject(item)"
-          >
-            <SoulOrb :template="item" size="sm" :active="item.active" />
-            <span>{{ item.name }}</span>
-          </button>
+        <div v-if="ownedSouls.length" class="owned-scroll">
+          <div class="owned-list" aria-label="已获得人设小球列表">
+            <button
+              v-for="item in ownedSouls"
+              :key="item.id"
+              :class="['owned-item', item.active ? 'active' : '']"
+              @click="inject(item)"
+            >
+              <SoulOrb :template="item" size="sm" :active="item.active" />
+              <span>{{ item.name }}</span>
+            </button>
+          </div>
         </div>
         <div v-else class="empty-state">点击上方按钮，先抽取一个人设小球。</div>
       </section>
@@ -297,14 +299,53 @@ async function inject(item) {
 .section-head strong {
   font-size: 14px;
 }
+.owned-scroll {
+  position: relative;
+  margin: 0 -4px;
+  overflow: hidden;
+}
+.owned-scroll::before,
+.owned-scroll::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 12px;
+  z-index: 1;
+  width: 18px;
+  pointer-events: none;
+}
+.owned-scroll::before {
+  left: 0;
+  background: linear-gradient(90deg, rgba(255,255,255,.9), rgba(255,255,255,0));
+}
+.owned-scroll::after {
+  right: 0;
+  background: linear-gradient(270deg, rgba(255,255,255,.9), rgba(255,255,255,0));
+}
 .owned-list {
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  padding: 4px 0;
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,143,110,.72) rgba(245,229,205,.72);
+  padding: 4px 18px 12px 4px;
+}
+.owned-list::-webkit-scrollbar {
+  height: 6px;
+}
+.owned-list::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: rgba(245,229,205,.72);
+}
+.owned-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: linear-gradient(90deg, #FFB78A, #FF8F6E);
 }
 .owned-item {
-  min-width: 92px;
+  flex: 0 0 92px;
   height: 88px;
   border-radius: 16px;
   border: 1px solid var(--line);
@@ -317,6 +358,7 @@ async function inject(item) {
   color: var(--ink-soft);
   font-size: 12px;
   font-weight: 600;
+  scroll-snap-align: start;
 }
 .owned-item.active {
   color: var(--honey-deep);
