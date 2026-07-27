@@ -120,7 +120,7 @@
       </div>
 
       <!-- 底部 -->
-      <QuickBar :items="quickItems" />
+      <QuickBar :items="quickItems" @action="handleQuickAction" />
       <InputBar v-if="editingMsgIndex < 0" :disabled="chatStore.isStreaming" @send="handleSend" />
     </div>
   </div>
@@ -228,7 +228,26 @@ function formatTime(iso) {
   return `${d.getMonth()+1}月${d.getDate()}日`
 }
 
+function formatTimeSep(ts) {
+  const d = new Date(ts)
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
+}
+
+function shouldShowTimeSep(i) {
+  if (i === 0) return false
+  const prev = chatStore.messages[i - 1]
+  const curr = chatStore.messages[i]
+  if (!prev.timestamp || !curr.timestamp) return false
+  return (curr.timestamp - prev.timestamp) > 120000
+}
+
 // ── 对话 ──
+
+function handleQuickAction(action) {
+  if (action === 'analyze') handleSend('帮我分析一下')
+  else if (action === 'remind') emit('tab-change', 'settings')
+  else if (action === 'interview') emit('tab-change', 'interview')
+}
 
 function handleAction(action) {
   if (action === 'interview') emit('tab-change', 'interview')
@@ -331,19 +350,6 @@ const timeGreeting = computed(() => {
   const now = new Date()
   return `${now.getFullYear()}年${now.getMonth()+1}月${now.getDate()}日 ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`
 })
-
-function shouldShowTimeSep(i) {
-  if (i === 0) return false
-  const prev = chatStore.messages[i - 1]
-  const curr = chatStore.messages[i]
-  if (!prev.timestamp || !curr.timestamp) return false
-  return (curr.timestamp - prev.timestamp) > 120000
-}
-
-function formatTimeSep(ts) {
-  const d = new Date(ts)
-  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
-}
 
 function scrollToBottom() { if (scrollRef.value) scrollRef.value.scrollTop = scrollRef.value.scrollHeight }
 

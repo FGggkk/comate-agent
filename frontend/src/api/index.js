@@ -69,6 +69,25 @@ export const apiFulfillAnchor = (id) => post(`/memories/anchor/${id}/fulfill`, {
 // Interview
 export const apiStartInterview = (data) => post('/interview/start', data)
 export const apiAnswerQuestion = (id, answer) => post(`/interview/${id}/answer`, { answer })
+export const apiListInterviews = () => get('/interview')
+export const apiNextQuestion = (id) => {
+  const token = localStorage.getItem('comate_token')
+  const headers = { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  return fetch(`/api/interview/${id}/next`, { method: 'POST', headers })
+}
+export const apiEndInterview = (id) => post(`/interview/${id}/end`, {})
+
+export const apiAnswerQuestionStream = (id, answer) => {
+  const token = localStorage.getItem('comate_token')
+  const headers = { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  return fetch(`/api/interview/${id}/answer/stream`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ answer }),
+  })
+}
 export const apiGetReport = (id) => get(`/interview/${id}/report`)
 
 // User Profile
