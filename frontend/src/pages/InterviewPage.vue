@@ -58,10 +58,17 @@
                 </template>
                 <template v-else>{{ s.title || s.target_role || '未命名' }}</template>
               </div>
-              <div style="font-size:12px;color:var(--sub);">{{ s.target_company }} · 第{{ s.round_number }}/3轮 · {{ s.status === 'completed' ? '已完成' : '进行中' }} · {{ formatTime(s.created_at) }}</div>
+              <div style="font-size:12px;color:var(--sub);">
+                {{ s.target_company }} · 第{{ s.round_number }}/3轮
+                <span :style="{color: s.status === 'completed' ? 'var(--sprout)' : 'var(--honey-deep)'}">{{ s.status === 'completed' ? '✅ 已完成' : '⏳ 进行中' }}</span>
+              </div>
             </div>
-            <button @click.stop="startRename(s)" style="font-size:14px;padding:4px 6px;opacity:.4;">✏️</button>
-            <button @click.stop="deleteHistory(s.id)" style="font-size:14px;padding:4px 8px;color:var(--berry);opacity:.5;">🗑</button>
+            <div style="display:flex;gap:4px;align-items:center;">
+              <button @click.stop="startRename(s)" style="font-size:14px;padding:4px 6px;opacity:.4;">✏️</button>
+              <button v-if="s.status === 'completed'" @click.stop="showEval(s)" class="hist-btn" style="color:var(--sprout);">📄 评价</button>
+              <button v-else @click.stop="viewHistory(s.id)" class="hist-btn" style="color:var(--honey-deep);">继续 →</button>
+              <button @click.stop="deleteHistory(s.id)" style="font-size:14px;padding:4px 8px;color:var(--berry);opacity:.5;">🗑</button>
+            </div>
           </div>
         </div>
         <div v-if="history.length === 0" style="text-align:center;font-size:13px;color:var(--sub);padding:20px;">暂无记录</div>
@@ -210,9 +217,18 @@ async function loadHistory() {
 
 async function viewHistory(id) {
   try {
-    report.value = await apiGetReport(id)
+    const data = await apiGetReport(id)
     sessionId.value = id
-    statusText.value = '历史记录'
+    currentRound.value = data.rounds_completed || 1
+    statusText.value = '进行中'
+    currentQuestion.value = ''
+    streamEval.value = ''
+    state.value = 'idle'
+    // 找到第一个未回答的问题
+    if (data.questions && data.questions.length > 0) {
+      const pending = data.questions.find(q => !q.answer || q.status === 'pending')
+      if (pending) currentQuestion.value = pending.question
+    }
   } catch {}
 }
 
@@ -461,11 +477,19 @@ function cancelEditAnswer() {
 
 async function saveAnswer(q, idx) {
   if (!editingAnswerText.value.trim()) return
-  q.answer = editingAnswerText.value.trim()
+  const newText = editingAnswerText.value.trim()
   editingAnswerIdx.value = -1
-  // 保存到后端
   try {
-    await apiEditInterviewAnswer(sessionId.value, q.id, q.answer)
+    const res = await apiEditInterviewAnswer(sessionId.value, q.id, newText)
+    if (res.status === 'in_progress' && res.next_question) {
+      // 进行中：后续题目已删除，直接出新题
+      currentQuestion.value = res.next_question
+      streamEval.value = ''
+      state.value = 'idle'
+    } else if (res.status === 'completed' && res.report) {
+      // 已完成：评价已重新生成
+      // 刷新评价报告
+    }
   } catch {}
 }
 
