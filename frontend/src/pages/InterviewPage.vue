@@ -23,13 +23,19 @@
       <!-- 历史记录（最近3条） -->
       <div v-if="!showAllHistory && history.length > 0" style="margin-top:20px;">
         <div class="page-label">历史面试</div>
-        <div v-for="s in history.slice(0,3)" :key="s.id" class="page-card" style="margin-top:6px;padding:10px 12px;cursor:pointer;" @click="viewHistory(s.id)">
+        <div v-for="s in history.slice(0,3)" :key="s.id" class="page-card" style="margin-top:6px;padding:10px 12px;">
           <div style="display:flex;justify-content:space-between;align-items:center;">
-            <div>
+            <div style="flex:1;cursor:pointer;" @click="s.status === 'completed' ? showEval(s) : viewHistory(s.id)">
               <div style="font-weight:600;font-size:14px;">{{ s.title || s.target_role || '未命名' }}</div>
-              <div style="font-size:12px;color:var(--sub);">{{ s.target_company }} · 第{{ s.round_number }}/3轮 · {{ s.status === 'completed' ? '已完成' : '进行中' }}</div>
+              <div style="font-size:12px;color:var(--sub);">
+                {{ s.target_company }} · 第{{ s.round_number }}/3轮
+                <span :style="{color: s.status === 'completed' ? 'var(--sprout)' : 'var(--honey-deep)'}">{{ s.status === 'completed' ? '✅ 已完成' : '⏳ 进行中' }}</span>
+              </div>
             </div>
-            <span style="font-size:11px;color:var(--sub);">{{ formatTime(s.created_at) }}</span>
+            <div style="display:flex;gap:4px;">
+              <button v-if="s.status === 'completed'" @click.stop="showEval(s)" class="hist-btn" style="color:var(--sprout);">📄 评价</button>
+              <button v-else @click.stop="viewHistory(s.id)" class="hist-btn" style="color:var(--honey-deep);">继续 →</button>
+            </div>
           </div>
         </div>
         <div v-if="history.length > 3" style="text-align:center;margin-top:8px;">
@@ -45,10 +51,10 @@
         </div>
         <div v-for="s in history" :key="s.id" class="page-card" style="margin-top:6px;padding:10px 12px;">
           <div style="display:flex;justify-content:space-between;align-items:center;">
-            <div style="flex:1;cursor:pointer;" @click="viewHistory(s.id)">
+            <div style="flex:1;cursor:pointer;" @click="renamingId !== s.id && viewHistory(s.id)">
               <div style="font-weight:600;font-size:14px;">
                 <template v-if="renamingId === s.id">
-                  <input v-model="renameText" @keydown.enter="confirmRename(s)" @blur="confirmRename(s)" class="form-input" style="font-size:14px;padding:2px 6px;" autofocus />
+                  <input v-model="renameText" @keydown.enter="confirmRename(s)" @blur="confirmRename(s)" @click.stop class="form-input" style="font-size:14px;padding:2px 6px;" autofocus />
                 </template>
                 <template v-else>{{ s.title || s.target_role || '未命名' }}</template>
               </div>
@@ -125,34 +131,31 @@
         <button v-if="state === 'error'" @click="retryAnswer" style="margin-top:4px;font-size:12px;color:var(--sprout);">重试</button>
       </div>
 
-      <div v-if="report" style="margin-top:16px;">
-        <div class="page-label">面试报告</div>
-        <div v-if="report.overall_score !== undefined" style="text-align:center;padding:12px 0;font-size:24px;font-weight:700;color:var(--honey-deep);">
-          总分：{{ report.overall_score }}/100
-          <div style="font-size:13px;font-weight:400;color:var(--sub);">共 {{ report.questions.filter(q=>q.answer).length }} 题回答</div>
-        </div>
-        <div v-for="(q, idx) in report.questions" :key="idx" class="page-card" style="margin-top:8px;padding:12px;">
-          <div style="font-size:14px;font-weight:600;margin-bottom:4px;" v-html="renderMd(q.question)"></div>
-          <div style="font-size:12px;color:var(--sub);margin-bottom:4px;">
-            回答：
-            <template v-if="editingAnswerIdx === idx">
-              <textarea v-model="editingAnswerText" rows="2" class="form-input" style="resize:none;font-size:12px;" />
-              <button @click="saveAnswer(q, idx)" class="btn-primary" style="width:auto;padding:4px 12px;font-size:11px;margin-top:4px;">保存</button>
-              <button @click="cancelEditAnswer" style="padding:4px 12px;font-size:11px;color:var(--sub);margin-left:6px;">取消</button>
-            </template>
-            <template v-else>
-              {{ q.answer }}
-              <button @click="startEditAnswer(q, idx)" style="font-size:11px;color:var(--honey);margin-left:6px;">编辑</button>
-            </template>
+      <!-- 评价报告覆盖层 -->
+      <div v-if="evalReport" class="dialog-overlay" @click="closeEval">
+        <div class="dialog-box eval-box" @click.stop>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <div class="page-label" style="margin:0;">面试评价报告</div>
+            <button @click="closeEval" style="font-size:18px;padding:4px;color:var(--sub);">✕</button>
           </div>
-          <div v-if="q.score !== undefined" style="font-size:12px;margin-bottom:4px;">
-            <span :style="{color: q.score/q.max_score >= 0.7 ? 'var(--sprout)' : q.score/q.max_score >= 0.4 ? 'var(--honey-deep)' : 'var(--berry)'}">
-              {{ q.score }}/{{ q.max_score }}分
-            </span>
+          <div v-if="evalReport.overall_score !== undefined" style="text-align:center;padding:8px 0 16px;">
+            <span style="font-size:28px;font-weight:700;color:var(--honey-deep);">{{ evalReport.overall_score }}/100</span>
+            <div style="font-size:12px;color:var(--sub);">共 {{ evalReport.questions ? evalReport.questions.length : 0 }} 题</div>
+            <div v-if="evalReport.report_generated_at" style="font-size:11px;color:var(--sub);margin-top:4px;">更新于 {{ formatTime(evalReport.report_generated_at) }}</div>
           </div>
-          <div style="font-size:12px;color:var(--ink-soft);" v-html="renderMd(q.evaluation)"></div>
+          <div style="max-height:60vh;overflow-y:auto;">
+            <div v-for="(q, idx) in evalReport.questions || []" :key="idx" class="page-card" style="margin-top:8px;padding:10px;">
+              <div style="font-size:13px;font-weight:600;margin-bottom:4px;" v-html="renderMd(q.question)"></div>
+              <div style="font-size:11px;color:var(--sub);margin-bottom:4px;">回答：{{ q.answer }}</div>
+              <div v-if="q.score !== undefined" style="font-size:12px;margin-bottom:2px;">
+                <span :style="{color: q.score/q.max_score >= 0.7 ? 'var(--sprout)' : q.score/q.max_score >= 0.4 ? 'var(--honey-deep)' : 'var(--berry)'}">
+                  {{ q.score }}/{{ q.max_score }}分
+                </span>
+              </div>
+              <div style="font-size:11px;color:var(--ink-soft);" v-html="renderMd(q.evaluation)"></div>
+            </div>
+          </div>
         </div>
-        <button @click="resetInterview" style="width:100%;margin-top:12px;padding:10px;border-radius:var(--r-sm);border:1.5px solid var(--line);font-size:14px;color:var(--ink-soft);">再来一次</button>
       </div>
     </div>
   </div>
@@ -187,6 +190,7 @@ const history = ref([])
 const showEndConfirm = ref(false)
 const showAllHistory = ref(false)
 const roundBanner = ref('')
+const evalReport = ref(null)
 const renamingId = ref('')
 const renameText = ref('')
 const editingAnswerIdx = ref(-1)
@@ -213,6 +217,17 @@ async function viewHistory(id) {
 }
 
 onMounted(loadHistory)
+
+async function showEval(session) {
+  try {
+    const res = await apiGetReport(session.id)
+    evalReport.value = res
+  } catch {}
+}
+
+function closeEval() {
+  evalReport.value = null
+}
 
 async function deleteHistory(id) {
   if (!confirm('确定删除此面试记录？')) return
@@ -483,6 +498,12 @@ function formatTime(iso) {
   display: flex; align-items: center; justify-content: center;
   background: rgba(0,0,0,.3);
 }
+.eval-box {
+  width: 600px; max-width: 92vw; max-height: 80vh;
+  padding: 16px 20px; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.hist-btn { font-size: 11px; padding: 4px 8px; border-radius: var(--r-sm); }
 .dialog-box {
   background: var(--card); border-radius: var(--r-lg);
   padding: 20px 24px; width: 320px; max-width: 90vw;

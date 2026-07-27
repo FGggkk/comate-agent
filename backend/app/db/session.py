@@ -29,6 +29,9 @@ MIGRATION_SQL = [
     "ALTER TABLE interview_sessions ADD COLUMN IF NOT EXISTS title VARCHAR(255)",
     "ALTER TABLE interview_questions ADD COLUMN IF NOT EXISTS score INTEGER",
     "ALTER TABLE interview_questions ADD COLUMN IF NOT EXISTS max_score INTEGER",
+    "ALTER TABLE interview_sessions ADD COLUMN IF NOT EXISTS report_version INTEGER DEFAULT 0",
+    "ALTER TABLE interview_sessions ADD COLUMN IF NOT EXISTS report_generated_at TIMESTAMPTZ",
+    "ALTER TABLE interview_questions ADD COLUMN IF NOT EXISTS answer_version INTEGER DEFAULT 0",
 ]
 
 
