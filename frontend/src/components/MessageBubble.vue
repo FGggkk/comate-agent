@@ -2,7 +2,7 @@
   <div :class="role === 'user' ? 'msg-user' : 'msg-bot'">
     <SoulOrb v-if="role === 'agent'" :template="soul || {}" size="xs" class="message-soul-orb" />
     <div style="position:relative;" @mouseenter="hover=true" @mouseleave="hover=false">
-      <div :class="role === 'user' ? 'bubble-user' : 'bubble-bot'">{{ content }}</div>
+      <div :class="role === 'user' ? 'bubble-user' : 'bubble-bot'" v-html="role === 'user' ? content : renderMd(content)"></div>
       <!-- 用户消息 hover 操作 -->
       <div v-if="role === 'user' && hover" class="msg-actions">
         <button @click="$emit('edit', content)" class="msg-action-btn">编辑</button>
@@ -14,7 +14,13 @@
 
 <script setup>
 import { ref } from 'vue'
+import { marked } from 'marked'
 import SoulOrb from './SoulOrb.vue'
+
+function renderMd(text) {
+  if (!text) return ''
+  return marked.parse(text)
+}
 
 defineProps({
   role: String,
