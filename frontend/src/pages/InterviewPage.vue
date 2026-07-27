@@ -20,10 +20,10 @@
         {{ state === 'loading' ? '准备中...' : '开始模拟面试' }}
       </button>
 
-      <!-- 历史记录 -->
-      <div v-if="history.length > 0" style="margin-top:20px;">
+      <!-- 历史记录（最近3条） -->
+      <div v-if="!showAllHistory && history.length > 0" style="margin-top:20px;">
         <div class="page-label">历史面试</div>
-        <div v-for="s in history" :key="s.id" class="page-card" style="margin-top:6px;padding:10px 12px;cursor:pointer;" @click="viewHistory(s.id)">
+        <div v-for="s in history.slice(0,3)" :key="s.id" class="page-card" style="margin-top:6px;padding:10px 12px;cursor:pointer;" @click="viewHistory(s.id)">
           <div style="display:flex;justify-content:space-between;align-items:center;">
             <div>
               <div style="font-weight:600;font-size:14px;">{{ s.target_role || '未命名' }}</div>
@@ -32,11 +32,36 @@
             <span style="font-size:11px;color:var(--sub);">{{ formatTime(s.created_at) }}</span>
           </div>
         </div>
+        <div v-if="history.length > 3" style="text-align:center;margin-top:8px;">
+          <button @click="showAllHistory = true" style="font-size:13px;color:var(--honey);padding:6px 16px;border:1px solid var(--honey-soft);border-radius:var(--r-sm);">查看全部 {{ history.length }} 条</button>
+        </div>
+      </div>
+
+      <!-- 全部历史记录管理 -->
+      <div v-if="showAllHistory" style="margin-top:20px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <button @click="showAllHistory = false" style="font-size:18px;padding:4px;color:var(--ink-soft);">←</button>
+          <div class="page-label" style="margin:0;">历史面试（{{ history.length }}）</div>
+        </div>
+        <div v-for="s in history" :key="s.id" class="page-card" style="margin-top:6px;padding:10px 12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div style="flex:1;cursor:pointer;" @click="viewHistory(s.id)">
+              <div style="font-weight:600;font-size:14px;">{{ s.target_role || '未命名' }}</div>
+              <div style="font-size:12px;color:var(--sub);">{{ s.target_company }} · 第{{ s.round_number }}/3轮 · {{ s.status === 'completed' ? '已完成' : '进行中' }} · {{ formatTime(s.created_at) }}</div>
+            </div>
+            <button @click.stop="deleteHistory(s.id)" style="font-size:14px;padding:4px 8px;color:var(--berry);opacity:.5;">🗑</button>
+          </div>
+        </div>
+        <div v-if="history.length === 0" style="text-align:center;font-size:13px;color:var(--sub);padding:20px;">暂无记录</div>
       </div>
     </div>
 
     <!-- 面试中 -->
     <div v-else class="page-card">
+      <!-- 返回按钮（历史记录模式） -->
+      <div v-if="statusText === '历史记录'" style="margin-bottom:10px;">
+        <button @click="backToHistory" style="font-size:20px;padding:4px 8px;color:var(--ink-soft);">← 返回</button>
+      </div>
       <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--sub);margin-bottom:12px;">
         <span>第 {{ currentRound }} / 3 轮</span>
         <span>{{ statusText }}</span>
@@ -96,7 +121,18 @@
         <div class="page-label">面试报告</div>
         <div v-for="(q, idx) in report.questions" :key="idx" class="page-card" style="margin-top:8px;padding:12px;">
           <div style="font-size:14px;font-weight:600;margin-bottom:4px;" v-html="renderMd(q.question)"></div>
-          <div style="font-size:12px;color:var(--sub);margin-bottom:4px;">回答：{{ q.answer }}</div>
+          <div style="font-size:12px;color:var(--sub);margin-bottom:4px;">
+            回答：
+            <template v-if="editingAnswerIdx === idx">
+              <textarea v-model="editingAnswerText" rows="2" class="form-input" style="resize:none;font-size:12px;" />
+              <button @click="saveAnswer(q, idx)" class="btn-primary" style="width:auto;padding:4px 12px;font-size:11px;margin-top:4px;">保存</button>
+              <button @click="cancelEditAnswer" style="padding:4px 12px;font-size:11px;color:var(--sub);margin-left:6px;">取消</button>
+            </template>
+            <template v-else>
+              {{ q.answer }}
+              <button @click="startEditAnswer(q, idx)" style="font-size:11px;color:var(--honey);margin-left:6px;">编辑</button>
+            </template>
+          </div>
           <div style="font-size:12px;color:var(--ink-soft);" v-html="renderMd(q.evaluation)"></div>
         </div>
         <button @click="resetInterview" style="width:100%;margin-top:12px;padding:10px;border-radius:var(--r-sm);border:1.5px solid var(--line);font-size:14px;color:var(--ink-soft);">再来一次</button>
@@ -108,7 +144,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { marked } from 'marked'
-import { apiStartInterview, apiAnswerQuestionStream, apiGetReport, apiListInterviews, apiNextQuestion, apiEndInterview } from '../api/index'
+import { apiStartInterview, apiAnswerQuestionStream, apiGetReport, apiListInterviews, apiNextQuestion, apiEndInterview, apiEditInterviewAnswer, apiDeleteInterview } from '../api/index'
 
 function renderMd(text) {
   if (!text) return ''
@@ -130,6 +166,9 @@ const errorMsg = ref('')
 const thinkingLabel = ref('')
 const history = ref([])
 const showEndConfirm = ref(false)
+const showAllHistory = ref(false)
+const editingAnswerIdx = ref(-1)
+const editingAnswerText = ref('')
 
 // 状态机：idle | loading | thinking | evaluating | done | error
 const state = ref('idle')
@@ -152,6 +191,14 @@ async function viewHistory(id) {
 }
 
 onMounted(loadHistory)
+
+async function deleteHistory(id) {
+  if (!confirm('确定删除此面试记录？')) return
+  try {
+    const res = await apiDeleteInterview(id)
+    if (res.success) history.value = history.value.filter(s => s.id !== id)
+  } catch {}
+}
 
 async function startInterview() {
   state.value = 'loading'
@@ -317,10 +364,36 @@ function retryAnswer() {
   answer.value = streamEval.value ? '' : answer.value
 }
 
+function backToHistory() {
+  sessionId.value = ''; currentQuestion.value = ''; lastEvaluation.value = ''
+  report.value = null; statusText.value = ''; currentRound.value = 1
+  streamEval.value = ''; errorMsg.value = ''; editingAnswerIdx.value = -1
+  state.value = 'idle'
+}
+
+function startEditAnswer(q, idx) {
+  editingAnswerIdx.value = idx
+  editingAnswerText.value = q.answer || ''
+}
+
+function cancelEditAnswer() {
+  editingAnswerIdx.value = -1
+}
+
+async function saveAnswer(q, idx) {
+  if (!editingAnswerText.value.trim()) return
+  q.answer = editingAnswerText.value.trim()
+  editingAnswerIdx.value = -1
+  // 保存到后端
+  try {
+    await apiEditInterviewAnswer(sessionId.value, q.id, q.answer)
+  } catch {}
+}
+
 function resetInterview() {
   sessionId.value = ''; currentQuestion.value = ''; lastEvaluation.value = ''
   report.value = null; statusText.value = ''; currentRound.value = 1
-  streamEval.value = ''; errorMsg.value = ''
+  streamEval.value = ''; errorMsg.value = ''; editingAnswerIdx.value = -1
   state.value = 'idle'
   loadHistory()
 }

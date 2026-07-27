@@ -77,6 +77,8 @@ export const apiNextQuestion = (id) => {
   return fetch(`/api/interview/${id}/next`, { method: 'POST', headers })
 }
 export const apiEndInterview = (id) => post(`/interview/${id}/end`, {})
+export const apiEditInterviewAnswer = (sessionId, questionId, answer) => put(`/interview/${sessionId}/answer`, { question_id: questionId, answer })
+export const apiDeleteInterview = (id) => del(`/interview/${id}`)
 
 export const apiAnswerQuestionStream = (id, answer) => {
   const token = localStorage.getItem('comate_token')

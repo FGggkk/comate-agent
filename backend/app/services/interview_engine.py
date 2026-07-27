@@ -142,6 +142,7 @@ async def end_interview(session_id: str, db: AsyncSession) -> dict:
         },
         "questions": [
             {
+                "id": str(q.id),
                 "round": q.round_number,
                 "question": q.question_text,
                 "answer": q.user_answer or "",
@@ -169,6 +170,7 @@ async def get_report(session_id: str, db: AsyncSession) -> dict:
         "rounds_completed": session.round_number,
         "questions": [
             {
+                "id": str(q.id),
                 "round": q.round_number,
                 "question": q.question_text,
                 "answer": q.user_answer,

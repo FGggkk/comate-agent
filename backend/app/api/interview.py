@@ -30,6 +30,10 @@ class StartRequest(BaseModel):
 class AnswerRequest(BaseModel):
     answer: str
 
+class EditAnswerRequest(BaseModel):
+    question_id: str
+    answer: str
+
 
 def _sse(event_type: str, data: dict) -> str:
     payload = {
@@ -97,6 +101,45 @@ async def api_list_sessions(db: AsyncSession = Depends(get_db), user_id: str = D
             for s in sessions
         ]
     }
+
+
+@router.delete("/{session_id}")
+async def api_delete_session(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+):
+    """删除面试记录"""
+    from sqlalchemy import select, delete as sa_delete
+    from app.models.interview import InterviewSession, InterviewQuestion
+    sess = await db.execute(select(InterviewSession).where(InterviewSession.id == session_id, InterviewSession.user_id == user_id))
+    if not sess.scalar_one_or_none():
+        return {"success": False, "message": "无权操作"}
+    await db.execute(sa_delete(InterviewQuestion).where(InterviewQuestion.session_id == session_id))
+    await db.execute(sa_delete(InterviewSession).where(InterviewSession.id == session_id))
+    await db.commit()
+    return {"success": True}
+
+
+@router.put("/{session_id}/answer")
+async def api_edit_answer(
+    session_id: str,
+    req: EditAnswerRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+):
+    """编辑历史面试的回答"""
+    from sqlalchemy import select, update
+    from app.models.interview import InterviewQuestion, InterviewSession
+    # 验证会话归属
+    sess = await db.execute(select(InterviewSession).where(InterviewSession.id == session_id, InterviewSession.user_id == user_id))
+    if not sess.scalar_one_or_none():
+        return {"success": False, "message": "无权操作"}
+    await db.execute(
+        update(InterviewQuestion).where(InterviewQuestion.id == req.question_id).values(user_answer=req.answer)
+    )
+    await db.commit()
+    return {"success": True}
 
 
 @router.get("/{session_id}/report")
