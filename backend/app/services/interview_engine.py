@@ -169,37 +169,32 @@ async def _batch_evaluate(questions: list) -> list[dict]:
         return []
 
     qa_list = "\n\n".join(
-        f"问题{i+1}（权重：根据问题重要程度，满分在5-20分之间）：\n题目：{q.question_text}\n回答：{q.user_answer}"
+        f"问题{i+1}：\n题目：{q.question_text}\n回答：{q.user_answer}"
         for i, q in enumerate(questions)
     )
 
-    prompt = f"""你是面试评分专家。请评估以下面试回答，按每题独立打分。
+    prompt = f"""评估下面的面试回答，每题独立评分。
 
-要求：
-1. 每题按重要程度给一个满分（5-20分之间），重要的问题满分高
-2. 根据回答质量给一个实际得分
-3. 用一两句话说明得分点和扣分点
-4. 输出格式为JSON数组，不要其他内容
+每题输出格式：得分/满分 评语
+满分根据题目重要程度在5-20分之间。
 
 {qa_list}
 
-输出格式（严格JSON数组）：
-[
-  {{
-    "score": 8,
-    "max_score": 10,
-    "comment": "得分点：... 扣分点：..."
-  }}
-]"""
+输出JSON数组：
+[{{"score": 8, "max_score": 10, "comment": "得分点... 扣分点..."}}]"""
 
     try:
-        full = ""
-        async for chunk in gateway.stream(prompt):
-            full += chunk
+        async with asyncio.timeout(45):
+            full = ""
+            async for chunk in gateway.stream(prompt):
+                full += chunk
         import json
         full = full.strip().strip("```json").strip("```").strip()
         results = json.loads(full)
         return results if isinstance(results, list) else []
+    except asyncio.TimeoutError:
+        print("[batch_evaluate] 超时")
+        return [{"score": 5, "max_score": 10, "comment": "评估超时，默认给分。"} for _ in questions]
     except Exception as e:
         print(f"[batch_evaluate] 失败: {e}")
         return [{"score": 0, "max_score": 10, "comment": "评估失败"} for _ in questions]

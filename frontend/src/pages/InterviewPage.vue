@@ -275,8 +275,12 @@ onMounted(loadHistory)
 async function showEval(session) {
   try {
     const res = await apiGetReport(session.id)
-    evalReport.value = res
-  } catch {}
+    if (res && res.questions) {
+      evalReport.value = res
+    }
+  } catch (e) {
+    console.error('showEval error:', e)
+  }
 }
 
 function closeEval() {
