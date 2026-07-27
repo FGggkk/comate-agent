@@ -23,13 +23,26 @@
       <!-- 历史记录（最近3条） -->
       <div v-if="!showAllHistory && history.length > 0" style="margin-top:20px;">
         <div class="page-label">历史面试</div>
-        <div v-for="s in history.slice(0,3)" :key="s.id" class="page-card" style="margin-top:6px;padding:10px 12px;cursor:pointer;" @click="viewHistory(s.id)">
+        <div v-for="s in history.slice(0,3)" :key="s.id" class="page-card" style="margin-top:6px;padding:10px 12px;">
           <div style="display:flex;justify-content:space-between;align-items:center;">
-            <div>
-              <div style="font-weight:600;font-size:14px;">{{ s.title || s.target_role || '未命名' }}</div>
-              <div style="font-size:12px;color:var(--sub);">{{ s.target_company }} · 第{{ s.round_number }}/3轮 · {{ s.status === 'completed' ? '已完成' : '进行中' }}</div>
+            <div style="flex:1;cursor:pointer;" @click="renamingId !== s.id && (s.status === 'completed' ? showEval(s) : viewHistory(s.id))">
+              <div style="font-weight:600;font-size:14px;">
+                <template v-if="renamingId === s.id">
+                  <input v-model="renameText" @keydown.enter="confirmRename(s)" @blur="confirmRename(s)" @click.stop class="form-input" style="font-size:14px;padding:2px 6px;" autofocus />
+                </template>
+                <template v-else>{{ s.title || s.target_role || '未命名' }}</template>
+              </div>
+              <div style="font-size:12px;color:var(--sub);">
+                {{ s.target_company }} · 第{{ s.round_number }}/3轮
+                <span :style="{color: s.status === 'completed' ? 'var(--sprout)' : 'var(--honey-deep)'}">{{ s.status === 'completed' ? '✅ 已完成' : '⏳ 进行中' }}</span>
+              </div>
             </div>
-            <span style="font-size:11px;color:var(--sub);">{{ formatTime(s.created_at) }}</span>
+            <div style="display:flex;gap:4px;align-items:center;">
+              <button @click.stop="startRename(s)" style="font-size:14px;padding:4px 6px;opacity:.4;">✏️</button>
+              <button v-if="s.status === 'completed'" @click.stop="showEval(s)" class="hist-btn" style="color:var(--sprout);">📄 评价</button>
+              <button v-else @click.stop="viewHistory(s.id)" class="hist-btn" style="color:var(--honey-deep);">继续 →</button>
+              <button @click.stop="deleteHistory(s.id)" style="font-size:14px;padding:4px 8px;color:var(--berry);opacity:.5;">🗑</button>
+            </div>
           </div>
         </div>
         <div v-if="history.length > 3" style="text-align:center;margin-top:8px;">
@@ -45,17 +58,24 @@
         </div>
         <div v-for="s in history" :key="s.id" class="page-card" style="margin-top:6px;padding:10px 12px;">
           <div style="display:flex;justify-content:space-between;align-items:center;">
-            <div style="flex:1;cursor:pointer;" @click="viewHistory(s.id)">
+            <div style="flex:1;cursor:pointer;" @click="renamingId !== s.id && viewHistory(s.id)">
               <div style="font-weight:600;font-size:14px;">
                 <template v-if="renamingId === s.id">
-                  <input v-model="renameText" @keydown.enter="confirmRename(s)" @blur="confirmRename(s)" class="form-input" style="font-size:14px;padding:2px 6px;" autofocus />
+                  <input v-model="renameText" @keydown.enter="confirmRename(s)" @blur="confirmRename(s)" @click.stop class="form-input" style="font-size:14px;padding:2px 6px;" autofocus />
                 </template>
                 <template v-else>{{ s.title || s.target_role || '未命名' }}</template>
               </div>
-              <div style="font-size:12px;color:var(--sub);">{{ s.target_company }} · 第{{ s.round_number }}/3轮 · {{ s.status === 'completed' ? '已完成' : '进行中' }} · {{ formatTime(s.created_at) }}</div>
+              <div style="font-size:12px;color:var(--sub);">
+                {{ s.target_company }} · 第{{ s.round_number }}/3轮
+                <span :style="{color: s.status === 'completed' ? 'var(--sprout)' : 'var(--honey-deep)'}">{{ s.status === 'completed' ? '✅ 已完成' : '⏳ 进行中' }}</span>
+              </div>
             </div>
-            <button @click.stop="startRename(s)" style="font-size:14px;padding:4px 6px;opacity:.4;">✏️</button>
-            <button @click.stop="deleteHistory(s.id)" style="font-size:14px;padding:4px 8px;color:var(--berry);opacity:.5;">🗑</button>
+            <div style="display:flex;gap:4px;align-items:center;">
+              <button @click.stop="startRename(s)" style="font-size:14px;padding:4px 6px;opacity:.4;">✏️</button>
+              <button v-if="s.status === 'completed'" @click.stop="showEval(s)" class="hist-btn" style="color:var(--sprout);">📄 评价</button>
+              <button v-else @click.stop="viewHistory(s.id)" class="hist-btn" style="color:var(--honey-deep);">继续 →</button>
+              <button @click.stop="deleteHistory(s.id)" style="font-size:14px;padding:4px 8px;color:var(--berry);opacity:.5;">🗑</button>
+            </div>
           </div>
         </div>
         <div v-if="history.length === 0" style="text-align:center;font-size:13px;color:var(--sub);padding:20px;">暂无记录</div>
@@ -64,16 +84,37 @@
 
     <!-- 面试中 -->
     <div v-else class="page-card">
-      <!-- 返回按钮（历史记录模式） -->
-      <div v-if="statusText === '历史记录'" style="margin-bottom:10px;">
+      <!-- 返回按钮 -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
         <button @click="backToHistory" style="font-size:20px;padding:4px 8px;color:var(--ink-soft);">← 返回</button>
+        <button @click="confirmEnd" style="font-size:12px;padding:4px 10px;border-radius:var(--r-sm);border:1px solid var(--berry);color:var(--berry);">结束面试</button>
       </div>
       <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--sub);margin-bottom:12px;">
         <span>第 {{ currentRound }} / 3 轮</span>
         <span>{{ statusText }}</span>
       </div>
 
-      <!-- 题目 -->
+      <!-- 历史问答 -->
+      <div v-if="qaHistory.length > 0" style="margin-bottom:12px;">
+        <div class="page-label" style="margin:0 0 6px;">历史回答</div>
+        <div v-for="(qa, idx) in qaHistory" :key="idx" class="page-card" style="padding:8px 10px;margin-top:4px;">
+          <div style="font-size:12px;font-weight:600;margin-bottom:2px;">Q{{ idx+1 }}: <span v-html="renderMd(qa.question)"></span></div>
+          <div style="font-size:11px;color:var(--sub);">
+            回答：
+            <template v-if="editingQA === idx">
+              <textarea v-model="editingQAText" rows="2" class="form-input" style="resize:none;font-size:11px;" />
+              <button @click="saveQA(qa, idx)" class="btn-primary" style="width:auto;padding:2px 10px;font-size:11px;margin-top:2px;">保存</button>
+              <button @click="cancelEditQA" style="padding:2px 10px;font-size:11px;color:var(--sub);">取消</button>
+            </template>
+            <template v-else>
+              {{ qa.answer }}
+              <button @click="startEditQA(qa, idx)" style="font-size:10px;color:var(--honey);margin-left:4px;">编辑</button>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- 当前题目 -->
       <div v-if="currentQuestion" class="interview-q">
         <div style="font-size:13px;font-weight:600;margin-bottom:6px;">面试官：</div>
         <div v-html="renderMd(currentQuestion)"></div>
@@ -82,10 +123,13 @@
       <!-- 轮次切换横幅 -->
       <div v-if="roundBanner" class="round-banner">{{ roundBanner }}</div>
 
-      <!-- 进度条（loading/thinking/evaluating 状态） -->
-      <div v-if="state === 'loading' || state === 'thinking' || state === 'evaluating'" class="progress-wrap">
-        <div class="progress-bar"><div class="progress-fill" :style="{width: progress + '%'}"></div></div>
-        <div class="progress-label">{{ state === 'loading' ? '正在准备面试…' : thinkingLabel }}</div>
+      <!-- 圆形进度条 -->
+      <div v-if="state === 'loading' || state === 'thinking' || state === 'evaluating'" class="progress-wrap" style="display:flex;align-items:center;gap:12px;">
+        <div class="spinner"><svg viewBox="0 0 36 36"><path class="spinner-bg" d="M18 2a16 16 0 1 1 0 32 16 16 0 1 1 0-32"/><path class="spinner-fill" :stroke-dasharray="progress + ', 100'" d="M18 2a16 16 0 1 1 0 32 16 16 0 1 1 0-32"/></svg></div>
+        <div style="flex:1;">
+          <div class="progress-label" style="text-align:left;">{{ state === 'loading' ? '正在准备面试…' : thinkingLabel }}</div>
+          <div style="font-size:11px;color:var(--sub);">{{ Math.round(progress) }}%</div>
+        </div>
         <button v-if="state === 'evaluating'" @click="cancelStream" class="thinking-cancel">取消</button>
       </div>
 
@@ -125,34 +169,32 @@
         <button v-if="state === 'error'" @click="retryAnswer" style="margin-top:4px;font-size:12px;color:var(--sprout);">重试</button>
       </div>
 
-      <div v-if="report" style="margin-top:16px;">
-        <div class="page-label">面试报告</div>
-        <div v-if="report.overall_score !== undefined" style="text-align:center;padding:12px 0;font-size:24px;font-weight:700;color:var(--honey-deep);">
-          总分：{{ report.overall_score }}/100
-          <div style="font-size:13px;font-weight:400;color:var(--sub);">共 {{ report.questions.filter(q=>q.answer).length }} 题回答</div>
+    </div>
+
+    <!-- 评价报告覆盖层（放在最外层，不受 v-if/v-else 影响） -->
+    <div v-if="evalReport" class="dialog-overlay" @click="closeEval">
+      <div class="dialog-box eval-box" @click.stop>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+          <div class="page-label" style="margin:0;">面试评价报告</div>
+          <button @click="closeEval" style="font-size:18px;padding:4px;color:var(--sub);">✕</button>
         </div>
-        <div v-for="(q, idx) in report.questions" :key="idx" class="page-card" style="margin-top:8px;padding:12px;">
-          <div style="font-size:14px;font-weight:600;margin-bottom:4px;" v-html="renderMd(q.question)"></div>
-          <div style="font-size:12px;color:var(--sub);margin-bottom:4px;">
-            回答：
-            <template v-if="editingAnswerIdx === idx">
-              <textarea v-model="editingAnswerText" rows="2" class="form-input" style="resize:none;font-size:12px;" />
-              <button @click="saveAnswer(q, idx)" class="btn-primary" style="width:auto;padding:4px 12px;font-size:11px;margin-top:4px;">保存</button>
-              <button @click="cancelEditAnswer" style="padding:4px 12px;font-size:11px;color:var(--sub);margin-left:6px;">取消</button>
-            </template>
-            <template v-else>
-              {{ q.answer }}
-              <button @click="startEditAnswer(q, idx)" style="font-size:11px;color:var(--honey);margin-left:6px;">编辑</button>
-            </template>
-          </div>
-          <div v-if="q.score !== undefined" style="font-size:12px;margin-bottom:4px;">
-            <span :style="{color: q.score/q.max_score >= 0.7 ? 'var(--sprout)' : q.score/q.max_score >= 0.4 ? 'var(--honey-deep)' : 'var(--berry)'}">
-              {{ q.score }}/{{ q.max_score }}分
-            </span>
-          </div>
-          <div style="font-size:12px;color:var(--ink-soft);" v-html="renderMd(q.evaluation)"></div>
+        <div v-if="evalReport.overall_score !== undefined" style="text-align:center;padding:8px 0 16px;">
+          <span style="font-size:28px;font-weight:700;color:var(--honey-deep);">{{ evalReport.overall_score }}/100</span>
+          <div style="font-size:12px;color:var(--sub);">共 {{ evalReport.questions ? evalReport.questions.length : 0 }} 题</div>
+          <div v-if="evalReport.report_generated_at" style="font-size:11px;color:var(--sub);margin-top:4px;">更新于 {{ formatTime(evalReport.report_generated_at) }}</div>
         </div>
-        <button @click="resetInterview" style="width:100%;margin-top:12px;padding:10px;border-radius:var(--r-sm);border:1.5px solid var(--line);font-size:14px;color:var(--ink-soft);">再来一次</button>
+        <div style="max-height:60vh;overflow-y:auto;">
+          <div v-for="(q, idx) in evalReport.questions || []" :key="idx" class="page-card" style="margin-top:8px;padding:10px;">
+            <div style="font-size:13px;font-weight:600;margin-bottom:4px;" v-html="renderMd(q.question)"></div>
+            <div style="font-size:11px;color:var(--sub);margin-bottom:4px;">回答：{{ q.answer }}</div>
+            <div v-if="q.score !== undefined" style="font-size:12px;margin-bottom:2px;">
+              <span :style="{color: q.score/q.max_score >= 0.7 ? 'var(--sprout)' : q.score/q.max_score >= 0.4 ? 'var(--honey-deep)' : 'var(--berry)'}">
+                {{ q.score }}/{{ q.max_score }}分
+              </span>
+            </div>
+            <div style="font-size:11px;color:var(--ink-soft);" v-html="renderMd(q.evaluation)"></div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -187,6 +229,10 @@ const history = ref([])
 const showEndConfirm = ref(false)
 const showAllHistory = ref(false)
 const roundBanner = ref('')
+const evalReport = ref(null)
+const qaHistory = ref([])
+const editingQA = ref(-1)
+const editingQAText = ref('')
 const renamingId = ref('')
 const renameText = ref('')
 const editingAnswerIdx = ref(-1)
@@ -206,13 +252,41 @@ async function loadHistory() {
 
 async function viewHistory(id) {
   try {
-    report.value = await apiGetReport(id)
+    const data = await apiGetReport(id)
     sessionId.value = id
-    statusText.value = '历史记录'
+    currentRound.value = data.rounds_completed || 1
+    statusText.value = '进行中'
+    currentQuestion.value = ''
+    streamEval.value = ''
+    state.value = 'idle'
+    qaHistory.value = []
+    if (data.questions && data.questions.length > 0) {
+      // 已回答的问题显示为历史
+      const answered = data.questions.filter(q => q.answer)
+      qaHistory.value = answered
+      // 第一个未回答的作为当前问题
+      const pending = data.questions.find(q => !q.answer)
+      if (pending) currentQuestion.value = pending.question
+    }
   } catch {}
 }
 
 onMounted(loadHistory)
+
+async function showEval(session) {
+  try {
+    const res = await apiGetReport(session.id)
+    if (res && res.questions) {
+      evalReport.value = res
+    }
+  } catch (e) {
+    console.error('showEval error:', e)
+  }
+}
+
+function closeEval() {
+  evalReport.value = null
+}
 
 async function deleteHistory(id) {
   if (!confirm('确定删除此面试记录？')) return
@@ -234,6 +308,34 @@ async function confirmRename(s) {
     if (res.success) { s.title = renameText.value.trim() }
   } catch {}
   renamingId.value = ''
+}
+
+function startEditQA(qa, idx) {
+  editingQA.value = idx
+  editingQAText.value = qa.answer || ''
+}
+
+function cancelEditQA() {
+  editingQA.value = -1
+}
+
+async function saveQA(qa, idx) {
+  if (!editingQAText.value.trim()) return
+  const newText = editingQAText.value.trim()
+  editingQA.value = -1
+  try {
+    const res = await apiEditInterviewAnswer(sessionId.value, qa.id, newText)
+    qa.answer = newText
+    if (res.status === 'in_progress') {
+      // 删除后续历史
+      qaHistory.value = qaHistory.value.slice(0, idx + 1)
+      if (res.next_question) {
+        currentQuestion.value = res.next_question
+        streamEval.value = ''
+        state.value = 'idle'
+      }
+    }
+  } catch {}
 }
 
 async function startInterview() {
@@ -384,7 +486,7 @@ async function doEnd() {
   try {
     const res = await apiEndInterview(sessionId.value)
     if (res.success) {
-      report.value = res
+      evalReport.value = res
       currentQuestion.value = ''
       statusText.value = '已结束'
       state.value = 'idle'
@@ -432,6 +534,7 @@ function backToHistory() {
   sessionId.value = ''; currentQuestion.value = ''; lastEvaluation.value = ''
   report.value = null; statusText.value = ''; currentRound.value = 1
   streamEval.value = ''; errorMsg.value = ''; editingAnswerIdx.value = -1
+  qaHistory.value = []; editingQA.value = -1
   state.value = 'idle'
 }
 
@@ -446,11 +549,19 @@ function cancelEditAnswer() {
 
 async function saveAnswer(q, idx) {
   if (!editingAnswerText.value.trim()) return
-  q.answer = editingAnswerText.value.trim()
+  const newText = editingAnswerText.value.trim()
   editingAnswerIdx.value = -1
-  // 保存到后端
   try {
-    await apiEditInterviewAnswer(sessionId.value, q.id, q.answer)
+    const res = await apiEditInterviewAnswer(sessionId.value, q.id, newText)
+    if (res.status === 'in_progress' && res.next_question) {
+      // 进行中：后续题目已删除，直接出新题
+      currentQuestion.value = res.next_question
+      streamEval.value = ''
+      state.value = 'idle'
+    } else if (res.status === 'completed' && res.report) {
+      // 已完成：评价已重新生成
+      // 刷新评价报告
+    }
   } catch {}
 }
 
@@ -483,6 +594,12 @@ function formatTime(iso) {
   display: flex; align-items: center; justify-content: center;
   background: rgba(0,0,0,.3);
 }
+.eval-box {
+  width: 600px; max-width: 92vw; max-height: 80vh;
+  padding: 16px 20px; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.hist-btn { font-size: 11px; padding: 4px 8px; border-radius: var(--r-sm); }
 .dialog-box {
   background: var(--card); border-radius: var(--r-lg);
   padding: 20px 24px; width: 320px; max-width: 90vw;
@@ -514,6 +631,10 @@ function formatTime(iso) {
   animation: fadeIn .3s ease;
 }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+.spinner { width: 40px; height: 40px; flex-shrink: 0; }
+.spinner svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.spinner-bg { fill: none; stroke: var(--line); stroke-width: 3; }
+.spinner-fill { fill: none; stroke: var(--honey); stroke-width: 3; stroke-linecap: round; transition: stroke-dasharray .3s ease; }
 .progress-wrap {
   margin-top: 12px; padding: 12px 14px;
   background: var(--honey-soft); border-radius: var(--r-md);

@@ -169,40 +169,147 @@ async def _batch_evaluate(questions: list) -> list[dict]:
         return []
 
     qa_list = "\n\n".join(
-        f"问题{i+1}（权重：根据问题重要程度，满分在5-20分之间）：\n题目：{q.question_text}\n回答：{q.user_answer}"
+        f"问题{i+1}：\n题目：{q.question_text}\n回答：{q.user_answer}"
         for i, q in enumerate(questions)
     )
 
-    prompt = f"""你是面试评分专家。请评估以下面试回答，按每题独立打分。
+    prompt = f"""评估下面的面试回答，每题独立评分。
 
-要求：
-1. 每题按重要程度给一个满分（5-20分之间），重要的问题满分高
-2. 根据回答质量给一个实际得分
-3. 用一两句话说明得分点和扣分点
-4. 输出格式为JSON数组，不要其他内容
+每题输出格式：得分/满分 评语
+满分根据题目重要程度在5-20分之间。
 
 {qa_list}
 
-输出格式（严格JSON数组）：
-[
-  {{
-    "score": 8,
-    "max_score": 10,
-    "comment": "得分点：... 扣分点：..."
-  }}
-]"""
+输出JSON数组：
+[{{"score": 8, "max_score": 10, "comment": "得分点... 扣分点..."}}]"""
 
     try:
-        full = ""
-        async for chunk in gateway.stream(prompt):
-            full += chunk
+        async with asyncio.timeout(45):
+            full = ""
+            async for chunk in gateway.stream(prompt):
+                full += chunk
         import json
         full = full.strip().strip("```json").strip("```").strip()
         results = json.loads(full)
         return results if isinstance(results, list) else []
+    except asyncio.TimeoutError:
+        print("[batch_evaluate] 超时")
+        return [{"score": 5, "max_score": 10, "comment": "评估超时，默认给分。"} for _ in questions]
     except Exception as e:
         print(f"[batch_evaluate] 失败: {e}")
         return [{"score": 0, "max_score": 10, "comment": "评估失败"} for _ in questions]
+
+
+async def edit_answer(session_id: str, question_id: str, new_answer: str, db: AsyncSession) -> dict:
+    """编辑回答，分状态处理"""
+    from sqlalchemy import delete as sa_delete
+
+    session = await db.execute(select(InterviewSession).where(InterviewSession.id == session_id))
+    session = session.scalar_one()
+
+    q = await db.execute(select(InterviewQuestion).where(InterviewQuestion.id == question_id, InterviewQuestion.session_id == session_id))
+    q = q.scalar_one_or_none()
+    if not q:
+        return {"success": False, "message": "问题不存在"}
+
+    q.user_answer = new_answer
+    q.answer_version += 1
+    q.evaluation = None
+    q.score = None
+    q.max_score = None
+
+    if session.status == "in_progress":
+        # 删除该题之后所有问题和回答
+        await db.execute(
+            sa_delete(InterviewQuestion).where(
+                InterviewQuestion.session_id == session_id,
+                InterviewQuestion.created_at > q.created_at,
+            )
+        )
+        # 清空后续轮次回退
+        session.round_number = q.round_number
+        await db.commit()
+
+        # 重新生成下一题
+        next_q_text = ""
+        async for chunk in _stream_with_retry(_generate_question_stream(session, db)):
+            next_q_text += chunk
+
+        return {
+            "success": True,
+            "status": "in_progress",
+            "edited_question": {"id": str(q.id), "answer": q.user_answer},
+            "next_question": next_q_text,
+        }
+    else:
+        # 已完成 — 仅更新答案，触发重新生成评价
+        await db.commit()
+        report = await regenerate_report(session_id, db)
+        return {
+            "success": True,
+            "status": "completed",
+            "edited_question": {"id": str(q.id), "answer": q.user_answer},
+            "report": report,
+        }
+
+
+async def regenerate_report(session_id: str, db: AsyncSession) -> dict:
+    """重新生成完整评价文档"""
+    session = await db.execute(select(InterviewSession).where(InterviewSession.id == session_id))
+    session = session.scalar_one()
+
+    questions = await db.execute(
+        select(InterviewQuestion).where(
+            InterviewQuestion.session_id == session_id,
+        ).order_by(InterviewQuestion.round_number, InterviewQuestion.created_at)
+    )
+    questions = questions.scalars().all()
+    answered = [q for q in questions if q.status == "resolved" and q.user_answer]
+
+    # 清空旧评分
+    for q in questions:
+        q.evaluation = None
+        q.score = None
+        q.max_score = None
+
+    # 批量评估
+    evaluations = await _batch_evaluate(answered)
+
+    total_score = 0
+    total_max = 0
+    for q, ev in zip(answered, evaluations):
+        q.evaluation = ev.get("comment", "")
+        q.score = ev.get("score", 0)
+        q.max_score = ev.get("max_score", 10)
+        total_score += q.score
+        total_max += q.max_score
+
+    from datetime import timezone
+    session.report_version += 1
+    session.report_generated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    overall = round(total_score / total_max * 100) if total_max > 0 else 0
+
+    return {
+        "overall_score": overall,
+        "total_score": total_score,
+        "total_max": total_max,
+        "report_version": session.report_version,
+        "report_generated_at": session.report_generated_at.isoformat() if session.report_generated_at else None,
+        "questions": [
+            {
+                "id": str(q.id),
+                "round": q.round_number,
+                "question": q.question_text,
+                "answer": q.user_answer or "",
+                "evaluation": q.evaluation or "",
+                "score": q.score or 0,
+                "max_score": q.max_score or 10,
+            }
+            for q in answered
+        ],
+    }
 
 
 async def get_report(session_id: str, db: AsyncSession) -> dict:
@@ -214,12 +321,22 @@ async def get_report(session_id: str, db: AsyncSession) -> dict:
         ).order_by(InterviewQuestion.round_number, InterviewQuestion.created_at)
     )
     questions = result.scalars().all()
+    answered = [q for q in questions if q.status == "resolved" and q.user_answer]
+    total_score = sum(q.score or 0 for q in answered)
+    total_max = sum(q.max_score or 10 for q in answered)
+    overall = round(total_score / total_max * 100) if total_max > 0 else 0
     return {
         "session_id": str(session.id),
         "target_role": session.target_role,
         "target_company": session.target_company,
+        "title": session.title or "",
         "status": session.status,
         "rounds_completed": session.round_number,
+        "overall_score": overall,
+        "total_score": total_score,
+        "total_max": total_max,
+        "report_version": session.report_version,
+        "report_generated_at": session.report_generated_at.isoformat() if session.report_generated_at else None,
         "questions": [
             {
                 "id": str(q.id),
@@ -227,6 +344,8 @@ async def get_report(session_id: str, db: AsyncSession) -> dict:
                 "question": q.question_text,
                 "answer": q.user_answer,
                 "evaluation": q.evaluation,
+                "score": q.score,
+                "max_score": q.max_score,
                 "status": q.status,
             }
             for q in questions

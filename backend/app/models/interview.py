@@ -19,6 +19,8 @@ class InterviewSession(Base):
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="in_progress")  # in_progress / completed
     round_number: Mapped[int] = mapped_column(Integer, default=1)
+    report_version: Mapped[int] = mapped_column(Integer, default=0)
+    report_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -34,5 +36,6 @@ class InterviewQuestion(Base):
     evaluation: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string
     score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     max_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    answer_version: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(16), default="pending")  # pending / answered / resolved
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

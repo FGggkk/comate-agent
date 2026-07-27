@@ -11,6 +11,7 @@ from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.services.interview_engine import (
     answer_question,
+    edit_answer,
     end_interview,
     get_report,
     next_question,
@@ -36,6 +37,9 @@ class EditAnswerRequest(BaseModel):
 
 class RenameRequest(BaseModel):
     title: str
+
+class EditAnswerBody(BaseModel):
+    new_answer: str
 
 
 def _sse(event_type: str, data: dict) -> str:
@@ -105,6 +109,18 @@ async def api_list_sessions(db: AsyncSession = Depends(get_db), user_id: str = D
             for s in sessions
         ]
     }
+
+
+@router.put("/{session_id}/answer/{question_id}")
+async def api_edit_answer(
+    session_id: str,
+    question_id: str,
+    req: EditAnswerBody,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+):
+    """编辑回答（进行中/已完成分状态处理）"""
+    return await edit_answer(session_id, question_id, req.new_answer, db)
 
 
 @router.put("/{session_id}")
