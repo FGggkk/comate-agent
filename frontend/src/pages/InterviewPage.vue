@@ -25,16 +25,23 @@
         <div class="page-label">历史面试</div>
         <div v-for="s in history.slice(0,3)" :key="s.id" class="page-card" style="margin-top:6px;padding:10px 12px;">
           <div style="display:flex;justify-content:space-between;align-items:center;">
-            <div style="flex:1;cursor:pointer;" @click="s.status === 'completed' ? showEval(s) : viewHistory(s.id)">
-              <div style="font-weight:600;font-size:14px;">{{ s.title || s.target_role || '未命名' }}</div>
+            <div style="flex:1;cursor:pointer;" @click="renamingId !== s.id && (s.status === 'completed' ? showEval(s) : viewHistory(s.id))">
+              <div style="font-weight:600;font-size:14px;">
+                <template v-if="renamingId === s.id">
+                  <input v-model="renameText" @keydown.enter="confirmRename(s)" @blur="confirmRename(s)" @click.stop class="form-input" style="font-size:14px;padding:2px 6px;" autofocus />
+                </template>
+                <template v-else>{{ s.title || s.target_role || '未命名' }}</template>
+              </div>
               <div style="font-size:12px;color:var(--sub);">
                 {{ s.target_company }} · 第{{ s.round_number }}/3轮
                 <span :style="{color: s.status === 'completed' ? 'var(--sprout)' : 'var(--honey-deep)'}">{{ s.status === 'completed' ? '✅ 已完成' : '⏳ 进行中' }}</span>
               </div>
             </div>
-            <div style="display:flex;gap:4px;">
+            <div style="display:flex;gap:4px;align-items:center;">
+              <button @click.stop="startRename(s)" style="font-size:14px;padding:4px 6px;opacity:.4;">✏️</button>
               <button v-if="s.status === 'completed'" @click.stop="showEval(s)" class="hist-btn" style="color:var(--sprout);">📄 评价</button>
               <button v-else @click.stop="viewHistory(s.id)" class="hist-btn" style="color:var(--honey-deep);">继续 →</button>
+              <button @click.stop="deleteHistory(s.id)" style="font-size:14px;padding:4px 8px;color:var(--berry);opacity:.5;">🗑</button>
             </div>
           </div>
         </div>
