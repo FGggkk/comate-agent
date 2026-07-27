@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
@@ -19,5 +19,5 @@ class User(Base):
     nickname: Mapped[str | None] = mapped_column(String(64), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     onboarding_status: Mapped[str] = mapped_column(String(32), default="none")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

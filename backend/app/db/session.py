@@ -26,12 +26,20 @@ MIGRATION_SQL = [
     "CREATE TABLE IF NOT EXISTS messages (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), session_id UUID NOT NULL REFERENCES sessions(id), role VARCHAR(16) NOT NULL, content TEXT NOT NULL, msg_type VARCHAR(32) DEFAULT 'text', metadata_ TEXT, created_at TIMESTAMPTZ DEFAULT NOW())",
     "CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)",
     "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS title_auto_set BOOLEAN DEFAULT FALSE",
+
     "CREATE TABLE IF NOT EXISTS user_soul_inventory (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, template_id UUID NOT NULL REFERENCES soul_templates(id), source VARCHAR(32) NOT NULL DEFAULT 'draw', status VARCHAR(16) NOT NULL DEFAULT 'owned', acquired_at TIMESTAMPTZ DEFAULT NOW(), UNIQUE (user_id, template_id))",
     "CREATE INDEX IF NOT EXISTS idx_user_soul_inventory_user_id ON user_soul_inventory(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_user_soul_inventory_template_id ON user_soul_inventory(template_id)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_souls_one_active_per_user ON user_souls(user_id) WHERE status = 'active'",
-]
 
+    "ALTER TABLE interview_sessions ADD COLUMN IF NOT EXISTS title VARCHAR(255)",
+    "ALTER TABLE interview_questions ADD COLUMN IF NOT EXISTS score INTEGER",
+    "ALTER TABLE interview_questions ADD COLUMN IF NOT EXISTS max_score INTEGER",
+    "ALTER TABLE interview_sessions ADD COLUMN IF NOT EXISTS report_version INTEGER DEFAULT 0",
+    "ALTER TABLE interview_sessions ADD COLUMN IF NOT EXISTS report_generated_at TIMESTAMPTZ",
+    "ALTER TABLE interview_questions ADD COLUMN IF NOT EXISTS answer_version INTEGER DEFAULT 0",
+
+]
 
 LOCK_ID = 20240724  # 迁移锁 ID（唯一整数）
 

@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
@@ -16,4 +16,4 @@ class Reminder(Base):
     content: Mapped[str] = mapped_column(String(500), nullable=False)
     remind_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     triggered: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
