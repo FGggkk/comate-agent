@@ -35,14 +35,34 @@
 
     <!-- SOUL -->
     <div class="page-card">
-      <div class="page-label">当前风格</div>
-      <div style="display:flex;align-items:center;gap:10px;">
-        <div class="companion" style="--s:40px;"><div class="companion-body"><span class="companion-eye l"></span><span class="companion-eye r"></span><span class="companion-cheek l"></span><span class="companion-cheek r"></span><span class="companion-mouth"></span></div><div class="companion-sprout"><span class="companion-sprout-r"></span></div></div>
-        <div>
-          <div style="font-weight:600;">温柔陪伴型</div>
-          <div style="font-size:12px;color:var(--sub);">温和、耐心</div>
-        </div>
+      <div class="style-head">
+        <div class="page-label">当前风格</div>
+        <button class="style-manage" @click="$emit('open-persona')">管理</button>
       </div>
+      <button class="current-style" @click="$emit('open-persona')">
+        <SoulOrb :template="currentSoul || {}" size="sm" :active="!!currentSoul" />
+        <div class="current-style-copy">
+          <div>{{ currentSoul?.name || '还未注入人设' }}</div>
+          <p>{{ currentSoul?.orb?.tone || '抽取小球后，可以切换伴行风格' }}</p>
+        </div>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path d="M9 18l6-6-6-6" />
+        </svg>
+      </button>
+      <div v-if="ownedSouls.length" class="style-orbs">
+        <button
+          v-for="item in ownedSouls"
+          :key="item.id"
+          :class="['style-orb-btn', item.active ? 'active' : '']"
+          :disabled="switchingSoulId === item.id"
+          @click="switchSoul(item)"
+        >
+          <SoulOrb :template="item" size="sm" :active="item.active" />
+          <span>{{ item.name }}</span>
+        </button>
+      </div>
+      <div v-else class="style-empty">还没有获得人设小球</div>
+      <p v-if="soulMsg" class="style-msg">{{ soulMsg }}</p>
     </div>
 
     <!-- 提醒 -->
@@ -68,9 +88,24 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useUserStore } from '../stores/user'
-import { apiGetReminders, apiCreateReminder, apiDeleteReminder, apiGetProfile, apiUpdateProfile, apiUploadAvatar } from '../api/index'
+import SoulOrb from '../components/SoulOrb.vue'
+import {
+  apiGetReminders,
+  apiCreateReminder,
+  apiDeleteReminder,
+  apiGetProfile,
+  apiUpdateProfile,
+  apiUploadAvatar,
+  apiGetSoulInventory,
+  apiInjectSoul,
+} from '../api/index'
+
+const props = defineProps({
+  refreshKey: { type: Number, default: 0 },
+})
+const emit = defineEmits(['open-persona', 'soul-changed'])
 
 const userStore = useUserStore()
 const reminders = ref([])
@@ -81,6 +116,9 @@ const saving = ref(false)
 const uploading = ref(false)
 const profileMsg = ref('')
 const fileInput = ref(null)
+const soulInventory = ref({ templates: [], current: null, owned_count: 0, total_count: 5 })
+const soulMsg = ref('')
+const switchingSoulId = ref('')
 
 const avatarColors = [
   'linear-gradient(135deg, #FFD0A8, #FF9F7A)',
@@ -97,6 +135,8 @@ const avatarGrad = computed(() => {
 const avatarLetter = computed(() => {
   return (userStore.displayName || 'U')[0].toUpperCase()
 })
+const ownedSouls = computed(() => (soulInventory.value.templates || []).filter((item) => item.owned))
+const currentSoul = computed(() => soulInventory.value.current || ownedSouls.value.find((item) => item.active) || null)
 
 onMounted(async () => {
   reminders.value = (await apiGetReminders()).reminders || []
@@ -110,7 +150,40 @@ onMounted(async () => {
   } catch (e) {
     console.error('loadProfile error:', e)
   }
+  await loadSoulInventory()
 })
+watch(() => props.refreshKey, loadSoulInventory)
+
+async function loadSoulInventory() {
+  try {
+    const res = await apiGetSoulInventory()
+    if (res.templates) soulInventory.value = res
+  } catch (e) {
+    console.error('loadSoulInventory error:', e)
+  }
+}
+
+async function switchSoul(item) {
+  if (!item?.owned || item.active || switchingSoulId.value) return
+  switchingSoulId.value = item.id
+  soulMsg.value = ''
+  try {
+    const res = await apiInjectSoul(item.id)
+    if (res.success && res.inventory) {
+      soulInventory.value = res.inventory
+      soulMsg.value = '已切换当前风格'
+      emit('soul-changed')
+    } else {
+      soulMsg.value = res.message || '切换失败'
+    }
+  } catch (e) {
+    console.error('switchSoul error:', e)
+    soulMsg.value = '切换失败，请稍后再试'
+  } finally {
+    switchingSoulId.value = ''
+    setTimeout(() => { soulMsg.value = '' }, 1800)
+  }
+}
 
 async function saveProfile() {
   saving.value = true
@@ -195,5 +268,98 @@ function logout() { userStore.logout(); window.location.reload() }
   background: rgba(0,0,0,.45); color: #fff;
   display: flex; align-items: center; justify-content: center;
   font-size: 11px; opacity: 0; transition: opacity .2s;
+}
+.style-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.style-manage {
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--honey-soft);
+  color: var(--honey-deep);
+  font-size: 12px;
+  font-weight: 700;
+}
+.current-style {
+  width: 100%;
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 44px 1fr 18px;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+}
+.current-style-copy {
+  min-width: 0;
+}
+.current-style-copy div {
+  font-weight: 700;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.current-style-copy p {
+  color: var(--sub);
+  font-size: 12px;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.current-style svg {
+  width: 18px;
+  height: 18px;
+  color: var(--hint);
+  stroke-width: 2.4;
+}
+.style-orbs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-top: 10px;
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.style-orb-btn {
+  min-width: 76px;
+  height: 78px;
+  border-radius: 15px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,.64);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 700;
+}
+.style-orb-btn.active {
+  color: var(--honey-deep);
+  border-color: rgba(255,143,110,.45);
+  background: var(--honey-soft);
+}
+.style-orb-btn span {
+  max-width: 66px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.style-empty {
+  padding-top: 10px;
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
+  color: var(--sub);
+  font-size: 13px;
+}
+.style-msg {
+  color: var(--honey-deep);
+  font-size: 12px;
+  margin-top: 8px;
 }
 </style>

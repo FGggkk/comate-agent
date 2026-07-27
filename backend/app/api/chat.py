@@ -11,6 +11,7 @@ from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.graph.engine import run_engine
 from app.models.conversation import Message, Session
+from app.services.soul_service import get_inventory
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -26,6 +27,12 @@ async def api_send(
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    soul_snapshot = None
+    try:
+        soul_snapshot = (await get_inventory(user_id, db)).get("current")
+    except Exception as e:
+        print(f"[chat] load soul snapshot failed: {e}")
+
     # 1. 自动创建或确认会话
     session_id = req.session_id
     if not session_id:
@@ -46,6 +53,8 @@ async def api_send(
 
     async def event_stream():
         full_reply = ""
+        if soul_snapshot:
+            yield f"data: {json.dumps({'type': 'soul_snapshot', 'data': soul_snapshot}, ensure_ascii=False)}\n\n"
         async for event in run_engine(user_id, req.message, session_id):
             # 收集回复文本
             if event.type == "text_chunk":
@@ -54,7 +63,13 @@ async def api_send(
 
         # 3. 消息流结束后保存 agent 回复
         if full_reply:
-            agent_msg = Message(session_id=session_id, role="agent", content=full_reply)
+            metadata = {"soul": soul_snapshot} if soul_snapshot else None
+            agent_msg = Message(
+                session_id=session_id,
+                role="agent",
+                content=full_reply,
+                metadata_=json.dumps(metadata, ensure_ascii=False) if metadata else None,
+            )
             db.add(agent_msg)
 
             # 首次完整对话后自动更新标题

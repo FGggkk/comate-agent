@@ -1,3 +1,5 @@
+import json
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import select, delete, update
@@ -8,6 +10,16 @@ from app.api.deps import get_current_user
 from app.models.conversation import Session, Message
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
+
+
+def parse_message_metadata(raw: str | None) -> dict:
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except json.JSONDecodeError:
+        return {}
 
 
 class CreateSessionRequest(BaseModel):
@@ -116,6 +128,7 @@ async def get_messages(
                 "role": m.role,
                 "content": m.content,
                 "type": m.msg_type,
+                "metadata": parse_message_metadata(m.metadata_),
                 "created_at": m.created_at.isoformat() if m.created_at else None,
             }
             for m in messages

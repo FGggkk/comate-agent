@@ -33,7 +33,7 @@
       <div v-else-if="onboardingStep === 'preview'">
         <h3 style="font-size:16px;font-weight:600;margin-bottom:12px;">预览：{{ selectedTemplate?.name }}</h3>
         <div v-for="(msg, i) in previewMessages" :key="i">
-          <MessageBubble :role="msg.role" :content="msg.content" />
+          <MessageBubble :role="msg.role" :content="msg.content" :soul="selectedTemplate" />
         </div>
         <div style="display:flex;gap:10px;margin-top:14px;">
           <button @click="onboardingStep = 'select'" style="flex:1;padding:10px;border-radius:var(--r-sm);border:1.5px solid var(--line);font-size:14px;color:var(--ink-soft);background:var(--card);">换一个</button>
@@ -87,7 +87,14 @@
 
         <div v-for="(msg, i) in chatStore.messages" :key="i">
           <div v-if="shouldShowTimeSep(i)" class="day-tag">{{ formatTimeSep(msg.timestamp) }}</div>
-          <MessageBubble v-if="msg.type === 'text'" :role="msg.role" :content="msg.content" @edit="startEdit(msg,i)" @delete="confirmDelete(msg,i)" />
+          <MessageBubble
+            v-if="msg.type === 'text'"
+            :role="msg.role"
+            :content="msg.content"
+            :soul="msg.soul || {}"
+            @edit="startEdit(msg,i)"
+            @delete="confirmDelete(msg,i)"
+          />
           <MemoryCard v-else-if="msg.type === 'memory_card'" :summary="msg.summary" :layer="msg.layer" />
           <ActionButtons v-else-if="msg.type === 'actions'" :buttons="msg.buttons" @action="handleAction" />
         </div>
@@ -96,16 +103,9 @@
 
         <!-- 空状态 -->
         <div v-if="chatStore.messages.length === 0 && !chatStore.isStreaming" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;">
-          <div :class="['companion', 'hero', heroSquished ? 'squish' : 'bob']" @click="squishHero" style="--s:80px;">
-            <div class="companion-body">
-              <span class="companion-eye l"></span>
-              <span class="companion-eye r"></span>
-              <span class="companion-cheek l"></span>
-              <span class="companion-cheek r"></span>
-              <span class="companion-mouth"></span>
-            </div>
-            <div class="companion-sprout"><span class="companion-sprout-r"></span></div>
-          </div>
+          <button :class="['chat-hero-orb', heroSquished ? 'squish' : '']" @click="squishHero" aria-label="戳一下伴行">
+            <SoulOrb :template="activeSoul || {}" size="lg" />
+          </button>
           <div style="font-size:12px;color:#A89C88;margin-top:10px;background:rgba(255,255,255,.6);padding:5px 13px;border-radius:14px;">戳一下试试 👆</div>
         </div>
       </div>
@@ -130,13 +130,18 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useUserStore } from '../stores/user'
-import { apiGetTemplates, apiPreview, apiConfirmSoul, apiSendMessage, apiListSessions, apiCreateSession, apiDeleteSession, apiGetMessages, apiEditMessage, apiDeleteMessage, apiUpdateSession } from '../api/index'
+import { apiGetTemplates, apiPreview, apiConfirmSoul, apiSendMessage, apiListSessions, apiCreateSession, apiDeleteSession, apiGetMessages, apiEditMessage, apiDeleteMessage, apiUpdateSession, apiGetSoulInventory } from '../api/index'
 import MessageBubble from '../components/MessageBubble.vue'
 import MemoryCard from '../components/MemoryCard.vue'
 import ActionButtons from '../components/ActionButtons.vue'
 import StatusIndicator from '../components/StatusIndicator.vue'
 import InputBar from '../components/InputBar.vue'
 import QuickBar from '../components/QuickBar.vue'
+import SoulOrb from '../components/SoulOrb.vue'
+
+const props = defineProps({
+  currentSoul: { type: Object, default: null },
+})
 
 const chatStore = useChatStore()
 const userStore = useUserStore()
@@ -147,6 +152,7 @@ const templates = ref([])
 const selectedTemplate = ref(null)
 const previewMessages = ref([])
 const heroSquished = ref(false)
+const activeSoul = computed(() => props.currentSoul || null)
 const quickItems = [
   { label: '🔍 帮我分析', action: 'analyze' },
   { label: '📌 设定提醒', action: 'remind' },
@@ -160,6 +166,19 @@ function squishHero() {
   setTimeout(() => { heroSquished.value = false }, 450)
 }
 
+function snapshotSoul(soul) {
+  return soul ? JSON.parse(JSON.stringify(soul)) : null
+}
+
+async function getReplySoulSnapshot() {
+  try {
+    const res = await apiGetSoulInventory()
+    return snapshotSoul(res.current || activeSoul.value)
+  } catch {
+    return snapshotSoul(activeSoul.value)
+  }
+}
+
 // ── 会话管理 ──
 
 async function loadSessions() {
@@ -171,13 +190,25 @@ async function loadSessions() {
 
 async function loadMessages(sessionId) {
   if (!sessionId) return
+  const soulByMessageId = new Map(
+    chatStore.messages
+      .filter((m) => m.id && m.soul)
+      .map((m) => [m.id, m.soul])
+  )
   chatStore.clearHistory()
   try {
     const res = await apiGetMessages(sessionId)
     if (res.messages) {
       for (const m of res.messages) {
         if (m.type === 'text') {
-          chatStore.addMessage({ id: m.id, type: 'text', role: m.role, content: m.content })
+          chatStore.addMessage({
+            id: m.id,
+            type: 'text',
+            role: m.role,
+            content: m.content,
+            soul: m.metadata?.soul || soulByMessageId.get(m.id) || null,
+            timestamp: m.created_at ? new Date(m.created_at).getTime() : undefined,
+          })
         }
       }
     }
@@ -267,14 +298,15 @@ async function handleSend(text) {
     }
   }
 
+  const replySoul = await getReplySoulSnapshot()
   chatStore.addMessage({ type: 'text', role: 'user', content: text })
   chatStore.setStreaming(true)
-  chatStore.addMessage({ type: 'text', role: 'agent', content: '' })
+  chatStore.addMessage({ type: 'text', role: 'agent', content: '', soul: replySoul })
   try {
     const response = await apiSendMessage(text, sessionId)
     if (!response.ok) {
       const err = await response.json().catch(() => ({}))
-      chatStore.addMessage({ type: 'text', role: 'agent', content: err.detail || '请求失败，请重新登录' })
+      chatStore.addMessage({ type: 'text', role: 'agent', content: err.detail || '请求失败，请重新登录', soul: replySoul })
       chatStore.finishStream()
       return
     }
@@ -291,7 +323,9 @@ async function handleSend(text) {
         if (!line.startsWith('data: ')) continue
         try {
           const event = JSON.parse(line.slice(6))
-          if (event.type === 'memory_card') {
+          if (event.type === 'soul_snapshot') {
+            chatStore.setLastAgentSoul(snapshotSoul(event.data))
+          } else if (event.type === 'memory_card') {
             chatStore.addMessage({ type: 'memory_card', summary: event.data.summary, layer: event.data.layer })
           } else if (event.type === 'text_chunk') {
             chatStore.appendToStream(event.data.text)
@@ -303,12 +337,11 @@ async function handleSend(text) {
       }
       nextTick(() => scrollToBottom())
     }
-  } catch { chatStore.addMessage({ type: 'text', role: 'agent', content: '嗯，我在听。能再多说一点吗？' }) }
+  } catch { chatStore.addMessage({ type: 'text', role: 'agent', content: '嗯，我在听。能再多说一点吗？', soul: replySoul }) }
   finally {
     chatStore.finishStream()
-    // 刷新会话列表 + 重新加载消息（获取 ID）
+    // 刷新会话列表；保留当前页面消息快照，避免新回复刚生成就被历史重载冲掉。
     loadSessions()
-    if (sessionId) loadMessages(sessionId)
     nextTick(() => scrollToBottom())
   }
 }
@@ -474,5 +507,26 @@ async function confirmRename(session) {
   width: 100%; padding: 2px 6px; font-size: 14px; font-weight: 500;
   border: 1.5px solid var(--honey); border-radius: 6px; outline: none;
   background: var(--paper);
+}
+.chat-hero-orb {
+  width: 96px;
+  height: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: chat-hero-bob 3.2s ease-in-out infinite;
+}
+.chat-hero-orb.squish {
+  animation: chat-hero-squish .45s cubic-bezier(.34,1.56,.64,1);
+}
+@keyframes chat-hero-bob {
+  0%,100% { transform: translateY(0) rotate(-1.5deg); }
+  50% { transform: translateY(-5px) rotate(1.5deg); }
+}
+@keyframes chat-hero-squish {
+  0% { transform: scale(1,1); }
+  30% { transform: scale(1.12,.84); }
+  55% { transform: scale(.94,1.08); }
+  100% { transform: scale(1,1); }
 }
 </style>

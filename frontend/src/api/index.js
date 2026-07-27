@@ -45,6 +45,9 @@ export const apiGetTemplates = () => get('/souls/templates')
 export const apiRecommend = (answers) => post('/souls/recommend', { answers })
 export const apiPreview = (slug) => post('/souls/preview', { slug })
 export const apiConfirmSoul = (template_id) => post('/souls/users/me/soul', { template_id })
+export const apiGetSoulInventory = () => get('/souls/me/inventory')
+export const apiDrawSoul = () => post('/souls/me/draw', {})
+export const apiInjectSoul = (template_id) => post('/souls/me/inject', { template_id })
 
 // Chat
 export function apiSendMessage(message, sessionId) {

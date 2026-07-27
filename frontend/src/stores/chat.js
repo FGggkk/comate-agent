@@ -14,7 +14,7 @@ export const useChatStore = defineStore('chat', () => {
   })
 
   function addMessage(msg) {
-    messages.value.push({ ...msg, timestamp: Date.now() })
+    messages.value.push({ ...msg, timestamp: msg.timestamp || Date.now() })
   }
 
   function setStreaming(val) {
@@ -28,6 +28,16 @@ export const useChatStore = defineStore('chat', () => {
       const m = messages.value[i]
       if (m.role === 'agent') {
         m.content = streamBuffer.value
+        break
+      }
+    }
+  }
+
+  function setLastAgentSoul(soul) {
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      const m = messages.value[i]
+      if (m.role === 'agent') {
+        m.soul = soul
         break
       }
     }
@@ -74,7 +84,7 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     messages, isStreaming, streamBuffer, sessions, currentSessionId, showSessionList, currentSession,
-    addMessage, setStreaming, appendToStream, finishStream, clearHistory,
+    addMessage, setStreaming, appendToStream, setLastAgentSoul, finishStream, clearHistory,
     setSessions, setCurrentSession, toggleSessionList, closeSessionList,
     replaceSessions, removeSession,
   }
