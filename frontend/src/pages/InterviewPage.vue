@@ -77,16 +77,37 @@
 
     <!-- 面试中 -->
     <div v-else class="page-card">
-      <!-- 返回按钮（历史记录模式） -->
-      <div v-if="statusText === '历史记录'" style="margin-bottom:10px;">
+      <!-- 返回按钮 -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
         <button @click="backToHistory" style="font-size:20px;padding:4px 8px;color:var(--ink-soft);">← 返回</button>
+        <button @click="confirmEnd" style="font-size:12px;padding:4px 10px;border-radius:var(--r-sm);border:1px solid var(--berry);color:var(--berry);">结束面试</button>
       </div>
       <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--sub);margin-bottom:12px;">
         <span>第 {{ currentRound }} / 3 轮</span>
         <span>{{ statusText }}</span>
       </div>
 
-      <!-- 题目 -->
+      <!-- 历史问答 -->
+      <div v-if="qaHistory.length > 0" style="margin-bottom:12px;">
+        <div class="page-label" style="margin:0 0 6px;">历史回答</div>
+        <div v-for="(qa, idx) in qaHistory" :key="idx" class="page-card" style="padding:8px 10px;margin-top:4px;">
+          <div style="font-size:12px;font-weight:600;margin-bottom:2px;">Q{{ idx+1 }}: <span v-html="renderMd(qa.question)"></span></div>
+          <div style="font-size:11px;color:var(--sub);">
+            回答：
+            <template v-if="editingQA === idx">
+              <textarea v-model="editingQAText" rows="2" class="form-input" style="resize:none;font-size:11px;" />
+              <button @click="saveQA(qa, idx)" class="btn-primary" style="width:auto;padding:2px 10px;font-size:11px;margin-top:2px;">保存</button>
+              <button @click="cancelEditQA" style="padding:2px 10px;font-size:11px;color:var(--sub);">取消</button>
+            </template>
+            <template v-else>
+              {{ qa.answer }}
+              <button @click="startEditQA(qa, idx)" style="font-size:10px;color:var(--honey);margin-left:4px;">编辑</button>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- 当前题目 -->
       <div v-if="currentQuestion" class="interview-q">
         <div style="font-size:13px;font-weight:600;margin-bottom:6px;">面试官：</div>
         <div v-html="renderMd(currentQuestion)"></div>
@@ -198,6 +219,9 @@ const showEndConfirm = ref(false)
 const showAllHistory = ref(false)
 const roundBanner = ref('')
 const evalReport = ref(null)
+const qaHistory = ref([])
+const editingQA = ref(-1)
+const editingQAText = ref('')
 const renamingId = ref('')
 const renameText = ref('')
 const editingAnswerIdx = ref(-1)
@@ -224,9 +248,13 @@ async function viewHistory(id) {
     currentQuestion.value = ''
     streamEval.value = ''
     state.value = 'idle'
-    // 找到第一个未回答的问题
+    qaHistory.value = []
     if (data.questions && data.questions.length > 0) {
-      const pending = data.questions.find(q => !q.answer || q.status === 'pending')
+      // 已回答的问题显示为历史
+      const answered = data.questions.filter(q => q.answer)
+      qaHistory.value = answered
+      // 第一个未回答的作为当前问题
+      const pending = data.questions.find(q => !q.answer)
       if (pending) currentQuestion.value = pending.question
     }
   } catch {}
@@ -265,6 +293,34 @@ async function confirmRename(s) {
     if (res.success) { s.title = renameText.value.trim() }
   } catch {}
   renamingId.value = ''
+}
+
+function startEditQA(qa, idx) {
+  editingQA.value = idx
+  editingQAText.value = qa.answer || ''
+}
+
+function cancelEditQA() {
+  editingQA.value = -1
+}
+
+async function saveQA(qa, idx) {
+  if (!editingQAText.value.trim()) return
+  const newText = editingQAText.value.trim()
+  editingQA.value = -1
+  try {
+    const res = await apiEditInterviewAnswer(sessionId.value, qa.id, newText)
+    qa.answer = newText
+    if (res.status === 'in_progress') {
+      // 删除后续历史
+      qaHistory.value = qaHistory.value.slice(0, idx + 1)
+      if (res.next_question) {
+        currentQuestion.value = res.next_question
+        streamEval.value = ''
+        state.value = 'idle'
+      }
+    }
+  } catch {}
 }
 
 async function startInterview() {
@@ -463,6 +519,7 @@ function backToHistory() {
   sessionId.value = ''; currentQuestion.value = ''; lastEvaluation.value = ''
   report.value = null; statusText.value = ''; currentRound.value = 1
   streamEval.value = ''; errorMsg.value = ''; editingAnswerIdx.value = -1
+  qaHistory.value = []; editingQA.value = -1
   state.value = 'idle'
 }
 
