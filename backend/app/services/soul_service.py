@@ -1,10 +1,11 @@
 import json
+import random
 from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.soul import SoulTemplate, UserSoul
+from app.models.soul import SoulTemplate, UserSoul, UserSoulInventory
 
 SOULS_DIR = Path(__file__).parent.parent.parent / "souls"
 
@@ -15,6 +16,39 @@ TEMPLATES_META = [
     {"slug": "energetic_peer", "name": "活力同伴型", "warmth": 0.80, "directness": 0.55},
     {"slug": "patient_mentor", "name": "耐心导师型", "warmth": 0.75, "directness": 0.50},
 ]
+
+ORB_META = {
+    "warm_companion": {
+        "tone": "温和、耐心",
+        "intro": "先接住情绪，再慢慢陪你理清楚。",
+        "colors": ["#FFD8B8", "#FFB088"],
+        "expression": "smile",
+    },
+    "rational_clear": {
+        "tone": "清醒、理性",
+        "intro": "把问题拆开看，用结构感陪你稳住。",
+        "colors": ["#B8D4F0", "#5FB0E8"],
+        "expression": "calm",
+    },
+    "direct_coach": {
+        "tone": "直接、行动",
+        "intro": "少绕弯，帮你把下一步推起来。",
+        "colors": ["#FFD0A8", "#FF9F45"],
+        "expression": "firm",
+    },
+    "energetic_peer": {
+        "tone": "轻快、有活力",
+        "intro": "像身边的同伴，把日常聊得更松一点。",
+        "colors": ["#A8E6CF", "#5FBE63"],
+        "expression": "wink",
+    },
+    "patient_mentor": {
+        "tone": "耐心、讲解",
+        "intro": "一步一步陪你复盘、学习和成长。",
+        "colors": ["#D4B8F0", "#9B6FD8"],
+        "expression": "mentor",
+    },
+}
 
 
 async def seed_templates(db: AsyncSession) -> list[SoulTemplate]:
@@ -53,16 +87,148 @@ async def seed_templates(db: AsyncSession) -> list[SoulTemplate]:
 async def get_templates(db: AsyncSession) -> list[dict]:
     result = await db.execute(select(SoulTemplate).where(SoulTemplate.status == "active"))
     templates = result.scalars().all()
-    return [
-        {
-            "id": str(t.id),
-            "slug": t.slug,
-            "name": t.name,
-            "description": t.description,
-            "dimensions": t.dimensions,
-        }
+    return [_template_to_dict(t) for t in templates]
+
+
+def _template_to_dict(t: SoulTemplate, owned: bool = False, active: bool = False, acquired_at=None) -> dict:
+    return {
+        "id": str(t.id),
+        "slug": t.slug,
+        "name": t.name,
+        "description": t.description,
+        "dimensions": t.dimensions,
+        "orb": ORB_META.get(t.slug, {}),
+        "owned": owned,
+        "active": active,
+        "acquired_at": acquired_at.isoformat() if acquired_at else None,
+    }
+
+
+async def _active_user_soul(user_id: str, db: AsyncSession) -> UserSoul | None:
+    result = await db.execute(
+        select(UserSoul).where(
+            UserSoul.user_id == user_id,
+            UserSoul.status == "active",
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def _ensure_inventory_item(user_id: str, template_id: str, db: AsyncSession, source: str = "draw") -> UserSoulInventory:
+    result = await db.execute(
+        select(UserSoulInventory).where(
+            UserSoulInventory.user_id == user_id,
+            UserSoulInventory.template_id == template_id,
+        )
+    )
+    item = result.scalar_one_or_none()
+    if item:
+        if item.status != "owned":
+            item.status = "owned"
+        return item
+
+    item = UserSoulInventory(
+        user_id=user_id,
+        template_id=template_id,
+        source=source,
+        status="owned",
+    )
+    db.add(item)
+    return item
+
+
+async def get_inventory(user_id: str, db: AsyncSession) -> dict:
+    await seed_templates(db)
+
+    templates_result = await db.execute(select(SoulTemplate).where(SoulTemplate.status == "active"))
+    templates = templates_result.scalars().all()
+    order = {meta["slug"]: idx for idx, meta in enumerate(TEMPLATES_META)}
+    templates.sort(key=lambda t: order.get(t.slug, 99))
+
+    active_soul = await _active_user_soul(user_id, db)
+    active_template_id = str(active_soul.template_id) if active_soul and active_soul.template_id else None
+
+    if active_template_id:
+        await _ensure_inventory_item(user_id, active_template_id, db, source="default")
+        await db.commit()
+
+    inventory_result = await db.execute(
+        select(UserSoulInventory).where(
+            UserSoulInventory.user_id == user_id,
+            UserSoulInventory.status == "owned",
+        )
+    )
+    inventory = inventory_result.scalars().all()
+    owned_by_template = {str(item.template_id): item for item in inventory}
+
+    items = [
+        _template_to_dict(
+            t,
+            owned=str(t.id) in owned_by_template,
+            active=str(t.id) == active_template_id,
+            acquired_at=owned_by_template[str(t.id)].acquired_at if str(t.id) in owned_by_template else None,
+        )
         for t in templates
     ]
+    current = next((item for item in items if item["active"]), None)
+
+    return {
+        "templates": items,
+        "current": current,
+        "owned_count": sum(1 for item in items if item["owned"]),
+        "total_count": len(items),
+    }
+
+
+async def draw_soul(user_id: str, db: AsyncSession) -> dict:
+    await seed_templates(db)
+    inventory = await get_inventory(user_id, db)
+    available = [item for item in inventory["templates"] if not item["owned"]]
+
+    if not available:
+        return {
+            "success": False,
+            "message": "五种人设已经全部获得",
+            "inventory": inventory,
+        }
+
+    picked = random.choice(available)
+    await _ensure_inventory_item(user_id, picked["id"], db, source="draw")
+    await db.commit()
+    updated_inventory = await get_inventory(user_id, db)
+    owned_template = next(
+        (item for item in updated_inventory["templates"] if item["id"] == picked["id"]),
+        picked,
+    )
+
+    return {
+        "success": True,
+        "message": "抽取成功",
+        "template": owned_template,
+        "inventory": updated_inventory,
+    }
+
+
+async def inject_soul(user_id: str, template_id: str, db: AsyncSession) -> dict:
+    result = await db.execute(
+        select(UserSoulInventory).where(
+            UserSoulInventory.user_id == user_id,
+            UserSoulInventory.template_id == template_id,
+            UserSoulInventory.status == "owned",
+        )
+    )
+    if not result.scalar_one_or_none():
+        return {"success": False, "message": "请先抽到这个人设"}
+
+    result = await confirm_soul(user_id, template_id, db)
+    if not result.get("success"):
+        return result
+
+    return {
+        "success": True,
+        "message": "已切换当前风格",
+        "inventory": await get_inventory(user_id, db),
+    }
 
 
 def recommend(answers: list[dict]) -> list[dict]:
@@ -159,6 +325,7 @@ async def confirm_soul(user_id: str, template_id: str, db: AsyncSession) -> dict
         soul_markdown=tmpl.soul_markdown,
     )
     db.add(user_soul)
+    await _ensure_inventory_item(user_id, template_id, db, source="default")
 
     # 更新用户 onboarding 状态
     from app.models.user import User

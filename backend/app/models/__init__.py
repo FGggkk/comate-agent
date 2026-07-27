@@ -1,5 +1,5 @@
 from .user import User
-from .soul import SoulTemplate, UserSoul
+from .soul import SoulTemplate, UserSoul, UserSoulInventory
 from .memory import MemoryItem, ForbiddenTopic, PendingAnchor
 from .interview import InterviewSession, InterviewQuestion
 from .reminder import Reminder
@@ -10,6 +10,7 @@ __all__ = [
     "User",
     "SoulTemplate",
     "UserSoul",
+    "UserSoulInventory",
     "MemoryItem",
     "ForbiddenTopic",
     "PendingAnchor",

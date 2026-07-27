@@ -4,7 +4,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
-from app.services.soul_service import confirm_soul, get_templates, preview, recommend, seed_templates
+from app.services.soul_service import (
+    confirm_soul,
+    draw_soul,
+    get_inventory,
+    get_templates,
+    inject_soul,
+    preview,
+    recommend,
+    seed_templates,
+)
 
 router = APIRouter(prefix="/api/souls", tags=["souls"])
 
@@ -40,3 +49,18 @@ async def api_preview(req: PreviewRequest, db: AsyncSession = Depends(get_db)):
 @router.post("/users/me/soul")
 async def api_confirm_soul(req: ConfirmRequest, db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
     return await confirm_soul(user_id, req.template_id, db)
+
+
+@router.get("/me/inventory")
+async def api_get_inventory(db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
+    return await get_inventory(user_id, db)
+
+
+@router.post("/me/draw")
+async def api_draw_soul(db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
+    return await draw_soul(user_id, db)
+
+
+@router.post("/me/inject")
+async def api_inject_soul(req: ConfirmRequest, db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
+    return await inject_soul(user_id, req.template_id, db)
