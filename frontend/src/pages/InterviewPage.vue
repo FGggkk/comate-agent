@@ -169,29 +169,30 @@
         <button v-if="state === 'error'" @click="retryAnswer" style="margin-top:4px;font-size:12px;color:var(--sprout);">重试</button>
       </div>
 
-      <!-- 评价报告覆盖层 -->
-      <div v-if="evalReport" class="dialog-overlay" @click="closeEval">
-        <div class="dialog-box eval-box" @click.stop>
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-            <div class="page-label" style="margin:0;">面试评价报告</div>
-            <button @click="closeEval" style="font-size:18px;padding:4px;color:var(--sub);">✕</button>
-          </div>
-          <div v-if="evalReport.overall_score !== undefined" style="text-align:center;padding:8px 0 16px;">
-            <span style="font-size:28px;font-weight:700;color:var(--honey-deep);">{{ evalReport.overall_score }}/100</span>
-            <div style="font-size:12px;color:var(--sub);">共 {{ evalReport.questions ? evalReport.questions.length : 0 }} 题</div>
-            <div v-if="evalReport.report_generated_at" style="font-size:11px;color:var(--sub);margin-top:4px;">更新于 {{ formatTime(evalReport.report_generated_at) }}</div>
-          </div>
-          <div style="max-height:60vh;overflow-y:auto;">
-            <div v-for="(q, idx) in evalReport.questions || []" :key="idx" class="page-card" style="margin-top:8px;padding:10px;">
-              <div style="font-size:13px;font-weight:600;margin-bottom:4px;" v-html="renderMd(q.question)"></div>
-              <div style="font-size:11px;color:var(--sub);margin-bottom:4px;">回答：{{ q.answer }}</div>
-              <div v-if="q.score !== undefined" style="font-size:12px;margin-bottom:2px;">
-                <span :style="{color: q.score/q.max_score >= 0.7 ? 'var(--sprout)' : q.score/q.max_score >= 0.4 ? 'var(--honey-deep)' : 'var(--berry)'}">
-                  {{ q.score }}/{{ q.max_score }}分
-                </span>
-              </div>
-              <div style="font-size:11px;color:var(--ink-soft);" v-html="renderMd(q.evaluation)"></div>
+    </div>
+
+    <!-- 评价报告覆盖层（放在最外层，不受 v-if/v-else 影响） -->
+    <div v-if="evalReport" class="dialog-overlay" @click="closeEval">
+      <div class="dialog-box eval-box" @click.stop>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+          <div class="page-label" style="margin:0;">面试评价报告</div>
+          <button @click="closeEval" style="font-size:18px;padding:4px;color:var(--sub);">✕</button>
+        </div>
+        <div v-if="evalReport.overall_score !== undefined" style="text-align:center;padding:8px 0 16px;">
+          <span style="font-size:28px;font-weight:700;color:var(--honey-deep);">{{ evalReport.overall_score }}/100</span>
+          <div style="font-size:12px;color:var(--sub);">共 {{ evalReport.questions ? evalReport.questions.length : 0 }} 题</div>
+          <div v-if="evalReport.report_generated_at" style="font-size:11px;color:var(--sub);margin-top:4px;">更新于 {{ formatTime(evalReport.report_generated_at) }}</div>
+        </div>
+        <div style="max-height:60vh;overflow-y:auto;">
+          <div v-for="(q, idx) in evalReport.questions || []" :key="idx" class="page-card" style="margin-top:8px;padding:10px;">
+            <div style="font-size:13px;font-weight:600;margin-bottom:4px;" v-html="renderMd(q.question)"></div>
+            <div style="font-size:11px;color:var(--sub);margin-bottom:4px;">回答：{{ q.answer }}</div>
+            <div v-if="q.score !== undefined" style="font-size:12px;margin-bottom:2px;">
+              <span :style="{color: q.score/q.max_score >= 0.7 ? 'var(--sprout)' : q.score/q.max_score >= 0.4 ? 'var(--honey-deep)' : 'var(--berry)'}">
+                {{ q.score }}/{{ q.max_score }}分
+              </span>
             </div>
+            <div style="font-size:11px;color:var(--ink-soft);" v-html="renderMd(q.evaluation)"></div>
           </div>
         </div>
       </div>
