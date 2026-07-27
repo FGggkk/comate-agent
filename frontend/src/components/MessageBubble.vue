@@ -1,15 +1,6 @@
 <template>
   <div :class="role === 'user' ? 'msg-user' : 'msg-bot'">
-    <div v-if="role === 'agent'" :class="['companion', squished ? 'squish' : 'bob']" style="--s:28px;flex-shrink:0;" @click="squishIt">
-      <div class="companion-body">
-        <span class="companion-eye l"></span>
-        <span class="companion-eye r"></span>
-        <span class="companion-cheek l"></span>
-        <span class="companion-cheek r"></span>
-        <span class="companion-mouth"></span>
-      </div>
-      <div class="companion-sprout"><span class="companion-sprout-r"></span></div>
-    </div>
+    <SoulOrb v-if="role === 'agent'" :template="soul || {}" size="xs" class="message-soul-orb" />
     <div style="position:relative;" @mouseenter="hover=true" @mouseleave="hover=false">
       <div :class="role === 'user' ? 'bubble-user' : 'bubble-bot'">{{ content }}</div>
       <!-- 用户消息 hover 操作 -->
@@ -23,17 +14,28 @@
 
 <script setup>
 import { ref } from 'vue'
-defineProps({ role: String, content: String })
+import SoulOrb from './SoulOrb.vue'
+
+defineProps({
+  role: String,
+  content: String,
+  soul: { type: Object, default: null },
+})
 defineEmits(['edit', 'delete'])
-const squished = ref(false)
 const hover = ref(false)
-function squishIt() {
-  squished.value = true
-  setTimeout(() => { squished.value = false }, 450)
-}
 </script>
 
 <style scoped>
+.message-soul-orb {
+  flex-shrink: 0;
+  align-self: flex-end;
+  margin-bottom: 2px;
+  animation: message-orb-bob 3.2s ease-in-out infinite;
+}
+@keyframes message-orb-bob {
+  0%,100% { transform: translateY(0) rotate(-1deg); }
+  50% { transform: translateY(-3px) rotate(1deg); }
+}
 .msg-actions {
   position: absolute; top: -22px; right: 0; display: flex; gap: 2px;
   background: var(--card); border-radius: 8px; padding: 2px 4px;
