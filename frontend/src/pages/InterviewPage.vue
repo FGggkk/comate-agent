@@ -116,10 +116,13 @@
       <!-- 轮次切换横幅 -->
       <div v-if="roundBanner" class="round-banner">{{ roundBanner }}</div>
 
-      <!-- 进度条（loading/thinking/evaluating 状态） -->
-      <div v-if="state === 'loading' || state === 'thinking' || state === 'evaluating'" class="progress-wrap">
-        <div class="progress-bar"><div class="progress-fill" :style="{width: progress + '%'}"></div></div>
-        <div class="progress-label">{{ state === 'loading' ? '正在准备面试…' : thinkingLabel }}</div>
+      <!-- 圆形进度条 -->
+      <div v-if="state === 'loading' || state === 'thinking' || state === 'evaluating'" class="progress-wrap" style="display:flex;align-items:center;gap:12px;">
+        <div class="spinner"><svg viewBox="0 0 36 36"><path class="spinner-bg" d="M18 2a16 16 0 1 1 0 32 16 16 0 1 1 0-32"/><path class="spinner-fill" :stroke-dasharray="progress + ', 100'" d="M18 2a16 16 0 1 1 0 32 16 16 0 1 1 0-32"/></svg></div>
+        <div style="flex:1;">
+          <div class="progress-label" style="text-align:left;">{{ state === 'loading' ? '正在准备面试…' : thinkingLabel }}</div>
+          <div style="font-size:11px;color:var(--sub);">{{ Math.round(progress) }}%</div>
+        </div>
         <button v-if="state === 'evaluating'" @click="cancelStream" class="thinking-cancel">取消</button>
       </div>
 
@@ -471,7 +474,7 @@ async function doEnd() {
   try {
     const res = await apiEndInterview(sessionId.value)
     if (res.success) {
-      report.value = res
+      evalReport.value = res
       currentQuestion.value = ''
       statusText.value = '已结束'
       state.value = 'idle'
@@ -616,6 +619,10 @@ function formatTime(iso) {
   animation: fadeIn .3s ease;
 }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+.spinner { width: 40px; height: 40px; flex-shrink: 0; }
+.spinner svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.spinner-bg { fill: none; stroke: var(--line); stroke-width: 3; }
+.spinner-fill { fill: none; stroke: var(--honey); stroke-width: 3; stroke-linecap: round; transition: stroke-dasharray .3s ease; }
 .progress-wrap {
   margin-top: 12px; padding: 12px 14px;
   background: var(--honey-soft); border-radius: var(--r-md);

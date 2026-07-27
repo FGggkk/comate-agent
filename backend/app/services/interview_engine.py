@@ -326,12 +326,22 @@ async def get_report(session_id: str, db: AsyncSession) -> dict:
         ).order_by(InterviewQuestion.round_number, InterviewQuestion.created_at)
     )
     questions = result.scalars().all()
+    answered = [q for q in questions if q.status == "resolved" and q.user_answer]
+    total_score = sum(q.score or 0 for q in answered)
+    total_max = sum(q.max_score or 10 for q in answered)
+    overall = round(total_score / total_max * 100) if total_max > 0 else 0
     return {
         "session_id": str(session.id),
         "target_role": session.target_role,
         "target_company": session.target_company,
+        "title": session.title or "",
         "status": session.status,
         "rounds_completed": session.round_number,
+        "overall_score": overall,
+        "total_score": total_score,
+        "total_max": total_max,
+        "report_version": session.report_version,
+        "report_generated_at": session.report_generated_at.isoformat() if session.report_generated_at else None,
         "questions": [
             {
                 "id": str(q.id),
@@ -339,6 +349,8 @@ async def get_report(session_id: str, db: AsyncSession) -> dict:
                 "question": q.question_text,
                 "answer": q.user_answer,
                 "evaluation": q.evaluation,
+                "score": q.score,
+                "max_score": q.max_score,
                 "status": q.status,
             }
             for q in questions
