@@ -1,25 +1,31 @@
+import asyncio
 from datetime import datetime, timezone
+from typing import AsyncGenerator
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.interview import InterviewQuestion, InterviewSession
 from app.services.model_gateway import gateway
 
+_session_locks: dict[str, str] = {}
+
 
 async def start_session(user_id: str, resume: str, target_role: str, company: str, db: AsyncSession) -> dict:
+    title = target_role or company or "面试"
     session = InterviewSession(
         user_id=user_id,
         resume_text=resume,
         target_role=target_role,
         target_company=company,
+        title=title,
         round_number=1,
     )
     db.add(session)
     await db.commit()
     await db.refresh(session)
 
-    # 生成第一题
     question = await _generate_question(session, db)
     return {
         "session_id": str(session.id),
@@ -28,71 +34,84 @@ async def start_session(user_id: str, resume: str, target_role: str, company: st
     }
 
 
-async def answer_question(session_id: str, answer: str, db: AsyncSession) -> dict:
-    # 获取当前未回答的问题
-    result = await db.execute(
-        select(InterviewQuestion).where(
-            InterviewQuestion.session_id == session_id,
-            InterviewQuestion.status == "pending",
-        ).order_by(InterviewQuestion.created_at.asc()).limit(1)
-    )
-    q = result.scalar_one_or_none()
-    if not q:
-        return {"done": True, "message": "所有问题已答完"}
+async def stream_answer(session_id: str, answer: str, db: AsyncSession) -> AsyncGenerator[dict, None]:
+    """仅保存回答，不做评估"""
+    if _session_locks.get(session_id) == "evaluating":
+        yield {"type": "error", "data": {"message": "正在处理中，请稍后"}}
+        return
+    _session_locks[session_id] = "thinking"
 
-    # 保存答案 + 评估
-    q.user_answer = answer
-    evaluation = await _evaluate_answer(q.question_text, answer)
-    q.evaluation = evaluation
-    q.status = "resolved"
+    try:
+        q = await _get_pending_question(session_id, db)
+        if not q:
+            yield {"type": "done", "data": {"message": "所有问题已答完"}}
+            return
 
-    await db.commit()
+        q.user_answer = answer
+        q.status = "resolved"
+        await db.commit()
+        _session_locks[session_id] = "feedback_done"
 
-    # 获取 session
-    result = await db.execute(select(InterviewSession).where(InterviewSession.id == session_id))
-    session = result.scalar_one()
+        yield {"type": "answer_saved", "data": {"can_next": True, "can_end": True}}
 
-    # 检查是否完成本轮的足够题数
-    result = await db.execute(
-        select(InterviewQuestion).where(
-            InterviewQuestion.session_id == session_id,
-            InterviewQuestion.round_number == session.round_number,
+    finally:
+        pass
+
+
+async def next_question(session_id: str, db: AsyncSession) -> AsyncGenerator[dict, None]:
+    """用户主动点下一题"""
+    if _session_locks.get(session_id) == "evaluating":
+        yield {"type": "error", "data": {"message": "正在评估中，请稍后点下一题"}}
+        return
+
+    _session_locks[session_id] = "thinking"
+
+    try:
+        session = await db.execute(select(InterviewSession).where(InterviewSession.id == session_id))
+        session = session.scalar_one()
+
+        # 检查该轮已回答数，>=3 则升级
+        result = await db.execute(
+            select(InterviewQuestion).where(
+                InterviewQuestion.session_id == session_id,
+                InterviewQuestion.round_number == session.round_number,
+            )
         )
-    )
-    questions = result.scalars().all()
-    answered = [q for q in questions if q.status == "resolved"]
+        answered = [q for q in result.scalars().all() if q.status == "resolved"]
 
-    if len(answered) >= 3:
-        # 进入下一轮或结束
-        if session.round_number < 3:
-            session.round_number += 1
-            await db.commit()
-            next_q = await _generate_question(session, db)
-            return {
-                "done": False,
-                "round": session.round_number,
-                "question": next_q,
-                "evaluation": evaluation,
-            }
-        else:
-            session.status = "completed"
-            session.completed_at = datetime.now(timezone.utc)
-            await db.commit()
-            return {"done": True, "message": "面试完成！可以查看报告了", "evaluation": evaluation}
+        if len(answered) >= 3:
+            if session.round_number < 3:
+                session.round_number += 1
+                await db.commit()
+                yield {"type": "round_change", "data": {"round": session.round_number}}
+            else:
+                session.status = "completed"
+                session.completed_at = datetime.now(timezone.utc)
+                await db.commit()
+                yield {"type": "done", "data": {"message": "面试完成！可以查看报告了"}}
+                _session_locks.pop(session_id, None)
+                return
 
-    # 继续出下一题
-    next_q = await _generate_question(session, db)
-    return {
-        "done": False,
-        "round": session.round_number,
-        "question": next_q,
-        "evaluation": evaluation,
-    }
+        # 出一题
+        yield {"type": "thinking", "data": {"label": "正在准备下一题…"}}
+        q_text = ""
+        async for chunk in _stream_with_retry(_generate_question_stream(session, db)):
+            q_text += chunk
+        yield {"type": "question", "data": {"round": session.round_number, "text": q_text}}
+        _session_locks[session_id] = "waiting"
+
+    finally:
+        pass
 
 
-async def get_report(session_id: str, db: AsyncSession) -> dict:
-    result = await db.execute(select(InterviewSession).where(InterviewSession.id == session_id))
-    session = result.scalar_one()
+async def end_interview(session_id: str, db: AsyncSession) -> dict:
+    """主动结束面试，批量评估所有已回答的问题并打分"""
+    session = await db.execute(select(InterviewSession).where(InterviewSession.id == session_id))
+    session = session.scalar_one()
+
+    session.status = "completed"
+    session.completed_at = datetime.now(timezone.utc)
+    await db.commit()
 
     result = await db.execute(
         select(InterviewQuestion).where(
@@ -100,7 +119,101 @@ async def get_report(session_id: str, db: AsyncSession) -> dict:
         ).order_by(InterviewQuestion.round_number, InterviewQuestion.created_at)
     )
     questions = result.scalars().all()
+    answered = [q for q in questions if q.status == "resolved"]
 
+    # 批量评估所有已回答的问题
+    evaluations = await _batch_evaluate(answered)
+
+    total_score = 0
+    total_max = 0
+    for q, ev in zip(answered, evaluations):
+        q.evaluation = ev.get("comment", "")
+        q.score = ev.get("score", 0)
+        q.max_score = ev.get("max_score", 10)
+        total_score += q.score
+        total_max += q.max_score
+    await db.commit()
+
+    overall = round(total_score / total_max * 100) if total_max > 0 else 0
+
+    return {
+        "success": True,
+        "overall_score": overall,
+        "total_score": total_score,
+        "total_max": total_max,
+        "summary": {
+            "total_questions": len(questions),
+            "answered": len(answered),
+            "target_role": session.target_role,
+            "target_company": session.target_company,
+            "rounds_completed": session.round_number,
+        },
+        "questions": [
+            {
+                "id": str(q.id),
+                "round": q.round_number,
+                "question": q.question_text,
+                "answer": q.user_answer or "",
+                "evaluation": q.evaluation or "",
+                "score": getattr(q, "score", 0),
+                "max_score": getattr(q, "max_score", 10),
+            }
+            for q in questions
+        ],
+    }
+
+
+async def _batch_evaluate(questions: list) -> list[dict]:
+    """批量评估所有问题，返回每题得分和评语"""
+    if not questions:
+        return []
+
+    qa_list = "\n\n".join(
+        f"问题{i+1}（权重：根据问题重要程度，满分在5-20分之间）：\n题目：{q.question_text}\n回答：{q.user_answer}"
+        for i, q in enumerate(questions)
+    )
+
+    prompt = f"""你是面试评分专家。请评估以下面试回答，按每题独立打分。
+
+要求：
+1. 每题按重要程度给一个满分（5-20分之间），重要的问题满分高
+2. 根据回答质量给一个实际得分
+3. 用一两句话说明得分点和扣分点
+4. 输出格式为JSON数组，不要其他内容
+
+{qa_list}
+
+输出格式（严格JSON数组）：
+[
+  {{
+    "score": 8,
+    "max_score": 10,
+    "comment": "得分点：... 扣分点：..."
+  }}
+]"""
+
+    try:
+        full = ""
+        async for chunk in gateway.stream(prompt):
+            full += chunk
+        import json
+        full = full.strip().strip("```json").strip("```").strip()
+        results = json.loads(full)
+        return results if isinstance(results, list) else []
+    except Exception as e:
+        print(f"[batch_evaluate] 失败: {e}")
+        return [{"score": 0, "max_score": 10, "comment": "评估失败"} for _ in questions]
+
+
+async def get_report(session_id: str, db: AsyncSession) -> dict:
+    result = await db.execute(select(InterviewSession).where(InterviewSession.id == session_id))
+    session = result.scalar_one()
+    result = await db.execute(
+        select(InterviewQuestion).where(
+            InterviewQuestion.session_id == session_id,
+        ).order_by(InterviewQuestion.round_number, InterviewQuestion.created_at)
+    )
+    questions = result.scalars().all()
     return {
         "session_id": str(session.id),
         "target_role": session.target_role,
@@ -109,6 +222,7 @@ async def get_report(session_id: str, db: AsyncSession) -> dict:
         "rounds_completed": session.round_number,
         "questions": [
             {
+                "id": str(q.id),
                 "round": q.round_number,
                 "question": q.question_text,
                 "answer": q.user_answer,
@@ -120,38 +234,87 @@ async def get_report(session_id: str, db: AsyncSession) -> dict:
     }
 
 
-async def _generate_question(session: InterviewSession, db: AsyncSession) -> str:
-    prompt = f"""你是一个面试官，正在面试一位{session.target_role}岗位的候选人（目标公司：{session.target_company}）。
+# ── 内部辅助 ──
 
-候选人的简历：
-{session.resume_text}
+async def _get_pending_question(session_id: str, db: AsyncSession):
+    result = await db.execute(
+        select(InterviewQuestion).where(
+            InterviewQuestion.session_id == session_id,
+            InterviewQuestion.status == "pending",
+        ).order_by(InterviewQuestion.created_at.asc()).limit(1)
+    )
+    return result.scalar_one_or_none()
 
-当前是第 {session.round_number} 轮面试。
 
-"""
+async def _stream_with_retry(agen) -> AsyncGenerator[str, None]:
+    last_exc = None
+    for attempt in range(3):
+        try:
+            async with asyncio.timeout(30):
+                async for chunk in agen:
+                    yield chunk
+                return
+        except asyncio.TimeoutError:
+            last_exc = "超时"
+            if attempt < 2:
+                continue
+        except Exception as e:
+            last_exc = str(e)
+            if attempt < 2:
+                await asyncio.sleep(1)
+                continue
+        break
+    yield f"\n\n[生成超时，请重试]"
+
+
+async def _evaluate_answer_stream(question: str, answer: str) -> AsyncGenerator[str, None]:
+    prompt = f"""面试问题：{question}
+候选人回答：{answer}
+
+请用三段式精简评估（总共不超过150字）：
+1. 优点（一句话）
+2. 改进点（一句话）
+3. 示例或建议（一句话）
+
+只输出以上三段，不要多余内容。"""
+    async for chunk in gateway.stream(prompt):
+        yield chunk
+
+
+async def _generate_question_stream(session: InterviewSession, db: AsyncSession) -> AsyncGenerator[str, None]:
+    # 获取之前所有 Q&A 上下文
+    prev_qa = await db.execute(
+        select(InterviewQuestion).where(
+            InterviewQuestion.session_id == session.id,
+        ).order_by(InterviewQuestion.created_at.asc()).limit(10)
+    )
+    prev_questions = prev_qa.scalars().all()
+    context = "\n".join(
+        f"之前问题：{q.question_text}\n候选人回答：{q.user_answer or '（未回答）'}"
+        for q in prev_questions if q.user_answer
+    )
+
+    prompt = f"""你是一个面试官，正在面试{session.target_role}岗位（{session.target_company}）。
+简历：{session.resume_text}
+
+面试历史：
+{context if context else '（面试刚开始）'}
+
+第 {session.round_number} 轮面试。请只出一道题，不要出多道。
+要求：基于前面的对话自然延续，不要重复已问过的问题，让整场面试像真实对话一样连贯。"""
     if session.round_number == 1:
-        prompt += "请出第一道面试题，从自我介绍或项目经验开始。"
+        prompt += "\n从简单的自我介绍或项目经历切入。"
     elif session.round_number == 2:
-        # 获取第一轮未解决的问题
-        result = await db.execute(
-            select(InterviewQuestion).where(
-                InterviewQuestion.session_id == session.id,
-                InterviewQuestion.round_number == 1,
-            )
-        )
-        prev = result.scalars().all()
-        weak_areas = [q.question_text for q in prev if q.status == "pending"]
-        if weak_areas:
-            prompt += f"候选人上一轮在以下问题上表现不足，请重点考察：{', '.join(weak_areas[:3])}"
-        else:
-            prompt += "请出更有深度的问题，考察候选人的技术深度和项目理解。"
+        prompt += "\n根据上一轮的回答深入追问，考察技术深度和项目细节。"
     else:
-        prompt += "这是压力面试轮。请出一道有挑战性的场景题，追问候选人的决策过程和取舍逻辑。"
+        prompt += "\n基于前两轮表现，出一道综合性的场景题，考察决策能力和综合素养。"
 
-    reply = await gateway.chat(prompt)
-    # 清理回复
-    question = reply.strip().strip('"').strip("'")
+    reply_buffer = ""
+    async for chunk in gateway.stream(prompt):
+        reply_buffer += chunk
+        yield chunk
 
+    question = reply_buffer.strip().strip('"').strip("'")
     q = InterviewQuestion(
         session_id=session.id,
         round_number=session.round_number,
@@ -160,22 +323,28 @@ async def _generate_question(session: InterviewSession, db: AsyncSession) -> str
     db.add(q)
     await db.commit()
 
-    return question
+
+async def _generate_question(session: InterviewSession, db: AsyncSession) -> str:
+    result = ""
+    async for chunk in _generate_question_stream(session, db):
+        result += chunk
+    return result.strip().strip('"').strip("'")
 
 
-async def _evaluate_answer(question: str, answer: str) -> str:
-    prompt = f"""面试问题：{question}
+# ── 兼容旧接口 ──
 
-候选人的回答：{answer}
-
-请从以下维度评估（每个维度 1-5 分）：
-1. 内容完整性
-2. 逻辑清晰度
-3. 与岗位匹配度
-
-请用一两句话给出评价和改进建议。"""
+async def answer_question(session_id: str, answer: str, db: AsyncSession) -> dict:
+    q = await _get_pending_question(session_id, db)
+    if not q:
+        return {"done": True, "message": "所有问题已答完"}
+    q.user_answer = answer
+    eval_text = ""
     try:
-        evaluation = await gateway.chat(prompt)
-        return evaluation.strip()
+        async for chunk in _stream_with_retry(_evaluate_answer_stream(q.question_text, answer)):
+            eval_text += chunk
     except Exception:
-        return "评估生成失败，请人工复核。"
+        eval_text = "评估生成失败"
+    q.evaluation = eval_text
+    q.status = "resolved"
+    await db.commit()
+    return {"done": False, "evaluation": eval_text}

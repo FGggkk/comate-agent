@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.3.3",
+    "marked": "^18.0.7",
     "pinia": "^3.0.0",
     "vue": "^3.5.0"
   },
