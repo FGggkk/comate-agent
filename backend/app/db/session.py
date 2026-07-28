@@ -63,6 +63,11 @@ MIGRATION_SQL = [
     "ALTER TABLE interview_sessions ADD COLUMN IF NOT EXISTS interview_type VARCHAR(32) DEFAULT 'comprehensive'",
     "ALTER TABLE interview_sessions ADD COLUMN IF NOT EXISTS difficulty VARCHAR(16) DEFAULT 'medium'",
     "ALTER TABLE interview_sessions ADD COLUMN IF NOT EXISTS dimension_scores JSONB",
+
+    "CREATE TABLE IF NOT EXISTS finance_records (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id), type VARCHAR(8) NOT NULL, category VARCHAR(32) NOT NULL, amount BIGINT NOT NULL, note TEXT, record_date DATE NOT NULL, source VARCHAR(16) DEFAULT 'manual', created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW())",
+    "CREATE INDEX IF NOT EXISTS idx_finance_records_user_date ON finance_records(user_id, record_date)",
+    "CREATE TABLE IF NOT EXISTS finance_messages (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id), role VARCHAR(16) NOT NULL, content TEXT NOT NULL, record_id UUID REFERENCES finance_records(id), created_at TIMESTAMPTZ DEFAULT NOW())",
+    "CREATE INDEX IF NOT EXISTS idx_finance_messages_user ON finance_messages(user_id)",
 ]
 
 LOCK_ID = 20240724  # 迁移锁 ID（唯一整数）
