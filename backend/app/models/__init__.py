@@ -6,6 +6,7 @@ from .reminder import Reminder
 from .verification_code import VerificationCode
 from .conversation import Session, Message
 from .tacit import SessionSummary, TacitProfile, TacitProfileVersion
+from .finance import FinanceRecord, FinanceMessage
 
 __all__ = [
     "User",
@@ -24,4 +25,6 @@ __all__ = [
     "SessionSummary",
     "TacitProfile",
     "TacitProfileVersion",
+    "FinanceRecord",
+    "FinanceMessage",
 ]

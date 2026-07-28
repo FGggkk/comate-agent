@@ -147,6 +147,16 @@ export const apiGetReport = (id) => get(`/interview/${id}/report`)
 export const apiGetHint = (id, question) => post(`/interview/${id}/hint`, { question })
 export const apiRerollQuestion = (id) => post(`/interview/${id}/reroll`, {})
 
+// Finance
+export const apiCreateRecord = (data) => post('/finance/record', data)
+export const apiGetRecords = (year, month) => get(`/finance/records?year=${year}&month=${month}`)
+export const apiUpdateRecord = (id, data) => put(`/finance/record/${id}`, data)
+export const apiDeleteRecord = (id) => del(`/finance/record/${id}`)
+export const apiGetSummary = (year, month) => get(`/finance/summary?year=${year}&month=${month}`)
+export const apiAiParse = (text) => post('/finance/ai-parse', { text })
+export const apiGetFinanceMessages = () => get('/finance/messages')
+export const apiSaveFinanceMessage = (role, content, recordId) => post('/finance/messages', { role, content, record_id: recordId })
+
 // User Profile
 export const apiGetProfile = () => get('/user/me')
 export const apiUpdateProfile = (data) => put('/user/me', data)
