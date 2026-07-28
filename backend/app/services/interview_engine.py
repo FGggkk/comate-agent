@@ -212,6 +212,8 @@ async def _batch_evaluate(questions: list) -> list[dict]:
 
     prompt = f"""评估下面的面试回答，每题独立评分。
 
+所有题目的满分之和必须等于100分，每题根据重要程度分配不同的满分（重要题目满分高，次要题目满分低）。
+
 每题输出 JSON 对象，格式：
 {{
   "score": 分数,
@@ -226,13 +228,13 @@ async def _batch_evaluate(questions: list) -> list[dict]:
   }}
 }}
 
-满分根据题目重要程度在5-20分之间。
+注意：所有题的 max_score 相加必须等于100！
 各维度满分10分，评估候选人在该题表现出的能力。
 
 {qa_list}
 
 输出JSON数组：
-[{{"score": 8, "max_score": 10, "comment": "得分点... 扣分点...", "dimensions": {{"tech_depth": 7, "communication": 8, "logic": 6, "project_exp": 5, "adaptability": 4}}}}]"""
+[{{"score": 15, "max_score": 30, "comment": "得分点... 扣分点...", "dimensions": {{"tech_depth": 7, "communication": 8, "logic": 6, "project_exp": 5, "adaptability": 4}}}}]"""
 
     try:
         async with asyncio.timeout(45):
