@@ -89,7 +89,7 @@ async function handleRegister() {
   registering.value = true; error.value = ''
   try {
     const res = await apiRegister(email.value, code.value, password.value)
-    if (res.success) { userStore.login(res.token, email.value, res.onboarding_status); if (res.is_new_user) emit('onboard') }
+    if (res.success) { userStore.login(res.token, email.value, res.onboarding_status, res.refresh_token); if (res.is_new_user) emit('onboard') }
     else error.value = res.message || '注册失败'
   } catch { error.value = '网络错误，请重试' } finally { registering.value = false }
 }
@@ -100,7 +100,7 @@ async function handleLogin() {
   loading.value = true; error.value = ''
   try {
     const res = await apiLogin(email.value, password.value)
-    res.success ? userStore.login(res.token, email.value, res.onboarding_status) : (error.value = res.message || '登录失败')
+    res.success ? userStore.login(res.token, email.value, res.onboarding_status, res.refresh_token) : (error.value = res.message || '登录失败')
   } catch { error.value = '网络错误，请重试' } finally { loading.value = false }
 }
 </script>

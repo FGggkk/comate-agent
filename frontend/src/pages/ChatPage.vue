@@ -97,6 +97,9 @@
           />
           <MemoryCard v-else-if="msg.type === 'memory_card'" :summary="msg.summary" :layer="msg.layer" />
           <ActionButtons v-else-if="msg.type === 'actions'" :buttons="msg.buttons" @action="handleAction" />
+          <div v-else-if="msg.type === 'error'" class="error-msg">
+            <span style="color:#e74c3c;font-size:13px;">⚠ {{ msg.content }}</span>
+          </div>
         </div>
 
         <StatusIndicator v-if="chatStore.isStreaming" />
@@ -323,15 +326,29 @@ async function handleSend(text) {
         if (!line.startsWith('data: ')) continue
         try {
           const event = JSON.parse(line.slice(6))
-          if (event.type === 'soul_snapshot') {
-            chatStore.setLastAgentSoul(snapshotSoul(event.data))
-          } else if (event.type === 'memory_card') {
-            chatStore.addMessage({ type: 'memory_card', summary: event.data.summary, layer: event.data.layer })
-          } else if (event.type === 'text_chunk') {
-            chatStore.appendToStream(event.data.text)
-            await new Promise(r => setTimeout(r, 0))
-          } else if (event.type === 'action_buttons') {
-            chatStore.addMessage({ type: 'actions', buttons: event.data.buttons })
+          switch (event.type) {
+            case 'soul_snapshot':
+              chatStore.setLastAgentSoul(snapshotSoul(event.data))
+              break
+            case 'memory_card':
+              chatStore.addMessage({ type: 'memory_card', summary: event.data.summary, layer: event.data.layer })
+              break
+            case 'text_chunk':
+              chatStore.appendToStream(event.data.text)
+              await new Promise(r => setTimeout(r, 0))
+              break
+            case 'action_buttons':
+              chatStore.addMessage({ type: 'actions', buttons: event.data.buttons })
+              break
+            case 'status':
+              // 状态事件可选使用，目前 StreamingIndicator 已覆盖
+              break
+            case 'error':
+              chatStore.addMessage({ type: 'error', role: 'system', content: event.data.message || '出错了' })
+              break
+            case 'done':
+              // 流正常结束，finishStream() 会在 finally 中处理
+              break
           }
         } catch { continue }
       }

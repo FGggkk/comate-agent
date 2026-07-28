@@ -104,10 +104,13 @@ async def next_question(session_id: str, db: AsyncSession) -> AsyncGenerator[dic
         pass
 
 
-async def end_interview(session_id: str, db: AsyncSession) -> dict:
+async def end_interview(session_id: str, user_id: str, db: AsyncSession) -> dict:
     """主动结束面试，批量评估所有已回答的问题并打分"""
     session = await db.execute(select(InterviewSession).where(InterviewSession.id == session_id))
     session = session.scalar_one()
+
+    if str(session.user_id) != user_id:
+        return {"success": False, "message": "无权操作"}
 
     session.status = "completed"
     session.completed_at = datetime.now(timezone.utc)
@@ -200,12 +203,14 @@ async def _batch_evaluate(questions: list) -> list[dict]:
         return [{"score": 0, "max_score": 10, "comment": "评估失败"} for _ in questions]
 
 
-async def edit_answer(session_id: str, question_id: str, new_answer: str, db: AsyncSession) -> dict:
+async def edit_answer(session_id: str, question_id: str, new_answer: str, user_id: str, db: AsyncSession) -> dict:
     """编辑回答，分状态处理"""
     from sqlalchemy import delete as sa_delete
 
     session = await db.execute(select(InterviewSession).where(InterviewSession.id == session_id))
     session = session.scalar_one()
+    if str(session.user_id) != user_id:
+        return {"success": False, "message": "无权操作"}
 
     q = await db.execute(select(InterviewQuestion).where(InterviewQuestion.id == question_id, InterviewQuestion.session_id == session_id))
     q = q.scalar_one_or_none()
@@ -312,9 +317,11 @@ async def regenerate_report(session_id: str, db: AsyncSession) -> dict:
     }
 
 
-async def get_report(session_id: str, db: AsyncSession) -> dict:
+async def get_report(session_id: str, user_id: str, db: AsyncSession) -> dict:
     result = await db.execute(select(InterviewSession).where(InterviewSession.id == session_id))
     session = result.scalar_one()
+    if str(session.user_id) != user_id:
+        return {"success": False, "message": "无权操作"}
     result = await db.execute(
         select(InterviewQuestion).where(
             InterviewQuestion.session_id == session_id,
@@ -452,10 +459,15 @@ async def _generate_question(session: InterviewSession, db: AsyncSession) -> str
 
 # ── 兼容旧接口 ──
 
-async def answer_question(session_id: str, answer: str, db: AsyncSession) -> dict:
+async def answer_question(session_id: str, answer: str, user_id: str, db: AsyncSession) -> dict:
     q = await _get_pending_question(session_id, db)
     if not q:
         return {"done": True, "message": "所有问题已答完"}
+    from app.models.interview import InterviewSession
+    sess = await db.execute(select(InterviewSession).where(InterviewSession.id == session_id))
+    sess = sess.scalar_one()
+    if str(sess.user_id) != user_id:
+        return {"success": False, "message": "无权操作"}
     q.user_answer = answer
     eval_text = ""
     try:

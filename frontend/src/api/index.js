@@ -1,5 +1,7 @@
 const BASE = '/api'
 
+let _refreshing = null
+
 function authHeaders() {
   const token = localStorage.getItem('comate_token')
   const headers = { 'Content-Type': 'application/json' }
@@ -7,32 +9,77 @@ function authHeaders() {
   return headers
 }
 
+async function refreshAuth() {
+  const refreshToken = localStorage.getItem('comate_refresh_token')
+  if (!refreshToken) return false
+  try {
+    const res = await fetch(`${BASE}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    })
+    if (!res.ok) {
+      localStorage.removeItem('comate_token')
+      localStorage.removeItem('comate_refresh_token')
+      localStorage.removeItem('comate_onboarding')
+      return false
+    }
+    const data = await res.json()
+    localStorage.setItem('comate_token', data.access_token)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function fetchWithAuth(path, options) {
+  let res = await fetch(`${BASE}${path}`, options)
+  if (res.status === 401 && localStorage.getItem('comate_refresh_token')) {
+    if (!_refreshing) _refreshing = refreshAuth()
+    const ok = await _refreshing
+    _refreshing = null
+    if (ok) {
+      options.headers['Authorization'] = `Bearer ${localStorage.getItem('comate_token')}`
+      res = await fetch(`${BASE}${path}`, options)
+    } else {
+      localStorage.removeItem('comate_token')
+      localStorage.removeItem('comate_refresh_token')
+      window.location.reload()
+    }
+  }
+  return res
+}
+
 async function post(path, data) {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetchWithAuth(path, {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify(data),
   })
-  return res.json()
+  const json = await res.json()
+  return json.success && 'data' in json ? json.data : json
 }
 
 async function get(path) {
-  const res = await fetch(`${BASE}${path}`, { headers: authHeaders() })
-  return res.json()
+  const res = await fetchWithAuth(path, { headers: authHeaders() })
+  const json = await res.json()
+  return json.success && 'data' in json ? json.data : json
 }
 
 async function del(path) {
-  const res = await fetch(`${BASE}${path}`, { method: 'DELETE', headers: authHeaders() })
-  return res.json()
+  const res = await fetchWithAuth(path, { method: 'DELETE', headers: authHeaders() })
+  const json = await res.json()
+  return json.success && 'data' in json ? json.data : json
 }
 
 async function put(path, data) {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetchWithAuth(path, {
     method: 'PUT',
     headers: authHeaders(),
     body: JSON.stringify(data),
   })
-  return res.json()
+  const json = await res.json()
+  return json.success && 'data' in json ? json.data : json
 }
 
 // Auth（不需要 token）

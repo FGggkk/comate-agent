@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     jwt_secret: str = "dev-secret-change-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expire_hours: int = 72
+    jwt_refresh_expire_days: int = 7
 
     model_config: ClassVar[dict] = {
         "env_file": "../config/.env",

@@ -36,3 +36,4 @@ jwt:
   secret: "${JWT_SECRET}"
   algorithm: HS256
   expire_hours: 72
+  refresh_expire_days: 7

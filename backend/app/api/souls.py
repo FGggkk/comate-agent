@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.api.response import ok
 from app.db.session import get_db
 from app.services.soul_service import (
     confirm_soul,
@@ -33,17 +34,17 @@ class ConfirmRequest(BaseModel):
 @router.get("/templates")
 async def api_get_templates(db: AsyncSession = Depends(get_db)):
     await seed_templates(db)
-    return await get_templates(db)
+    return ok(await get_templates(db))
 
 
 @router.post("/recommend")
 async def api_recommend(req: RecommendRequest):
-    return {"recommendations": recommend(req.answers)}
+    return ok({"recommendations": recommend(req.answers)})
 
 
 @router.post("/preview")
 async def api_preview(req: PreviewRequest, db: AsyncSession = Depends(get_db)):
-    return {"messages": await preview(req.slug, db)}
+    return ok({"messages": await preview(req.slug, db)})
 
 
 @router.post("/users/me/soul")
@@ -53,7 +54,7 @@ async def api_confirm_soul(req: ConfirmRequest, db: AsyncSession = Depends(get_d
 
 @router.get("/me/inventory")
 async def api_get_inventory(db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
-    return await get_inventory(user_id, db)
+    return ok(await get_inventory(user_id, db))
 
 
 @router.post("/me/draw")

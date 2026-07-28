@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.api.response import ok, fail
 from app.db.session import get_db
 from app.services.interview_engine import (
     answer_question,
@@ -54,12 +55,13 @@ def _sse(event_type: str, data: dict) -> str:
 
 @router.post("/start")
 async def api_start(req: StartRequest, db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
-    return await start_session(user_id, req.resume_text, req.target_role, req.target_company, db)
+    return ok(await start_session(user_id, req.resume_text, req.target_role, req.target_company, db))
 
 
 @router.post("/{session_id}/answer")
-async def api_answer(session_id: str, req: AnswerRequest, db: AsyncSession = Depends(get_db)):
-    return await answer_question(session_id, req.answer, db)
+async def api_answer(session_id: str, req: AnswerRequest, db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
+    result = await answer_question(session_id, req.answer, user_id, db)
+    return ok(result) if "success" not in result else result
 
 
 @router.post("/{session_id}/answer/stream")
@@ -84,7 +86,7 @@ async def api_next(session_id: str, db: AsyncSession = Depends(get_db), user_id:
 @router.post("/{session_id}/end")
 async def api_end(session_id: str, db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
     """主动结束面试"""
-    return await end_interview(session_id, db)
+    return await end_interview(session_id, user_id, db)
 
 
 @router.get("")
@@ -95,7 +97,7 @@ async def api_list_sessions(db: AsyncSession = Depends(get_db), user_id: str = D
         select(InterviewSession).where(InterviewSession.user_id == user_id).order_by(InterviewSession.created_at.desc()).limit(20)
     )
     sessions = result.scalars().all()
-    return {
+    return ok({
         "sessions": [
             {
                 "id": str(s.id),
@@ -108,11 +110,11 @@ async def api_list_sessions(db: AsyncSession = Depends(get_db), user_id: str = D
             }
             for s in sessions
         ]
-    }
+    })
 
 
 @router.put("/{session_id}/answer/{question_id}")
-async def api_edit_answer(
+async def api_edit_single_answer(
     session_id: str,
     question_id: str,
     req: EditAnswerBody,
@@ -120,7 +122,7 @@ async def api_edit_answer(
     user_id: str = Depends(get_current_user),
 ):
     """编辑回答（进行中/已完成分状态处理）"""
-    return await edit_answer(session_id, question_id, req.new_answer, db)
+    return await edit_answer(session_id, question_id, req.new_answer, user_id, db)
 
 
 @router.put("/{session_id}")
@@ -182,5 +184,6 @@ async def api_edit_answer(
 
 
 @router.get("/{session_id}/report")
-async def api_report(session_id: str, db: AsyncSession = Depends(get_db)):
-    return await get_report(session_id, db)
+async def api_report(session_id: str, db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
+    result = await get_report(session_id, user_id, db)
+    return ok(result) if "success" not in result else result

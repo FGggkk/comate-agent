@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.services.auth_service import login, register, send_code
+from app.services.auth_service import login, register, send_code, refresh_access_token
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -36,3 +36,15 @@ async def api_register(req: RegisterRequest, db: AsyncSession = Depends(get_db))
 @router.post("/login")
 async def api_login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     return await login(req.email, req.password, db)
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+@router.post("/refresh")
+async def api_refresh(req: RefreshRequest):
+    result = refresh_access_token(req.refresh_token)
+    if not result:
+        raise HTTPException(status_code=401, detail="refresh_token 无效或已过期")
+    return result
