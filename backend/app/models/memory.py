@@ -23,9 +23,35 @@ class MemoryItem(Base):
     user_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     is_inference: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(16), default="active")
+    event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    observed_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dedupe_key: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
+    review_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=func.now())
+
+
+class MemoryObservation(Base):
+    __tablename__ = "memory_observations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    memory_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("memory_items.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    source_type: Mapped[str] = mapped_column(String(32), default="chat")
+    source_ref: Mapped[str] = mapped_column(String(128), default="")
+    observed_text: Mapped[str] = mapped_column(Text, default="")
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    observation_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
 
 class ForbiddenTopic(Base):

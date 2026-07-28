@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import json
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -8,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text as sa_text
 
 from app.db.session import async_session_factory
-from app.models.memory import ForbiddenTopic, MemoryItem, PendingAnchor
+from app.models.memory import ForbiddenTopic, MemoryItem, MemoryObservation, PendingAnchor
 from app.services.embedding_service import get_embedding
 from app.services import reminder_service
 
@@ -23,6 +25,15 @@ ALLOWED_MEMORY_TYPES = {
     "routine",
     "boundary",
     "insight",
+}
+STRUCTURED_MEMORY_FIELDS = {
+    "event_at",
+    "expires_at",
+    "confidence",
+    "observed_count",
+    "last_observed_at",
+    "dedupe_key",
+    "review_after",
 }
 
 
@@ -46,7 +57,10 @@ async def search(
         vec_literal = "[" + ",".join(str(v) for v in query_vec) + "]"
         sql = text("""
             SELECT id, layer, memory_type, summary, content,
-                   user_confirmed, is_inference, created_at,
+                   user_confirmed, is_inference,
+                   event_at, expires_at, confidence, observed_count,
+                   last_observed_at, review_after,
+                   created_at,
                    1 - (embedding <=> CAST(:query_vec AS vector)) AS score
             FROM memory_items
             WHERE user_id = CAST(:user_id AS uuid)
@@ -67,23 +81,32 @@ async def search(
         rows = result.fetchall()
         results = []
         for row in rows:
-            if not _is_available_for_chat(row.layer, row.user_confirmed, row.memory_type, row.content):
+            if not _is_available_for_chat(row.layer, row.user_confirmed, row.memory_type, row.content, row.expires_at):
                 continue
             # 禁区过滤
             summary_lower = (row.summary or "").lower()
             if any(fw in summary_lower for fw in forbidden_words):
                 continue
+            content = row.content or {}
             results.append({
                 "id": str(row.id),
                 "layer": row.layer,
                 "memory_type": row.memory_type or "general",
                 "summary": row.summary,
-                "content": row.content,
+                "content": content,
+                "event_at": _format_optional_datetime(row.event_at or _parse_datetime(content.get("event_at"))),
+                "expires_at": _format_optional_datetime(row.expires_at or _parse_datetime(content.get("expires_at"))),
+                "confidence": row.confidence or 0,
+                "observed_count": row.observed_count or 0,
+                "last_observed_at": _format_optional_datetime(
+                    row.last_observed_at or _parse_datetime(content.get("last_observed_at"))
+                ),
+                "review_after": _format_optional_datetime(row.review_after or _parse_datetime(content.get("review_after"))),
                 "user_confirmed": row.user_confirmed,
                 "is_inference": row.is_inference,
                 "created_at": row.created_at.isoformat() if row.created_at else None,
-                "lifecycle": _memory_lifecycle(row.memory_type, row.content),
-                "is_expired": _is_expired_memory(row.memory_type, row.content),
+                "lifecycle": _memory_lifecycle(row.memory_type, content, row.expires_at),
+                "is_expired": _is_expired_memory(row.memory_type, content, row.expires_at),
                 "score": float(row.score) if row.score else 0,
             })
         if results:
@@ -135,6 +158,10 @@ async def create_co_created(
     content: dict | None = None,
     event_at: datetime | None = None,
     expires_at: datetime | None = None,
+    confidence: float | None = None,
+    observed_count: int | None = None,
+    last_observed_at: datetime | None = None,
+    review_after: datetime | None = None,
     db: AsyncSession = None,
 ) -> dict:
     summary = (summary or "").strip()
@@ -161,7 +188,24 @@ async def create_co_created(
         expires_at=expires_at,
         source="user_explicit",
     )
-    reminder_candidate = _build_reminder_candidate(memory_type, summary, normalized_content)
+    structured_fields = _derive_memory_fields(
+        layer="co_created",
+        memory_type=memory_type,
+        summary=summary,
+        content=normalized_content,
+        event_at=event_at,
+        expires_at=expires_at,
+        confidence=confidence,
+        observed_count=observed_count,
+        last_observed_at=last_observed_at,
+        review_after=review_after,
+    )
+    reminder_candidate = _build_reminder_candidate(
+        memory_type,
+        summary,
+        normalized_content,
+        event_at=structured_fields.get("event_at"),
+    )
     if reminder_candidate:
         normalized_content["reminder_candidate"] = reminder_candidate
         normalized_content.setdefault("reminder_status", "candidate")
@@ -176,8 +220,18 @@ async def create_co_created(
         source_type="user_explicit",
         user_confirmed=True,
         defer_enrichment=True,
+        **structured_fields,
     )
-    return {"success": True, "data": _item_to_dict(item), "message": "ok"}
+    superseded_count = await _resolve_explicit_memory_replacements(user_id, item, db)
+    if superseded_count:
+        try:
+            from app.services.tacit_profile_service import update_tacit_profile
+            await update_tacit_profile(user_id, db)
+        except Exception as e:
+            print(f"[memory] 更新默契画像失败: {e}")
+    data = _item_to_dict(item)
+    data["superseded_count"] = superseded_count
+    return {"success": True, "data": data, "message": "ok"}
 
 
 async def create_event_reminder(user_id: str, item_id: str, db: AsyncSession = None) -> dict:
@@ -202,7 +256,12 @@ async def create_event_reminder(user_id: str, item_id: str, db: AsyncSession = N
             "message": "已创建过提醒",
         }
 
-    candidate = content.get("reminder_candidate") or _build_reminder_candidate(item.memory_type, item.summary, content)
+    candidate = content.get("reminder_candidate") or _build_reminder_candidate(
+        item.memory_type,
+        item.summary,
+        content,
+        event_at=item.event_at,
+    )
     if not candidate:
         return {"success": False, "message": "这条事件记忆还没有可用提醒时间"}
 
@@ -227,6 +286,47 @@ async def create_event_reminder(user_id: str, item_id: str, db: AsyncSession = N
     return {"success": True, "data": {"memory": _item_to_dict(item), "reminder": reminder}, "message": "ok"}
 
 
+async def add_observation(
+    user_id: str,
+    item_id: str,
+    observed_text: str,
+    db: AsyncSession = None,
+    source_type: str = "chat",
+    source_ref: str = "",
+    confidence: float = 0.0,
+    metadata: dict | None = None,
+) -> dict:
+    result = await db.execute(
+        select(MemoryItem).where(
+            MemoryItem.id == item_id,
+            MemoryItem.user_id == user_id,
+            MemoryItem.status == "active",
+        )
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        return {"success": False, "message": "记忆不存在或无权操作"}
+
+    now = datetime.now(timezone.utc)
+    observation = MemoryObservation(
+        memory_id=item.id,
+        user_id=user_id,
+        source_type=source_type,
+        source_ref=source_ref,
+        observed_text=(observed_text or "")[:2000],
+        confidence=confidence,
+        observation_metadata=metadata or {},
+        observed_at=now,
+    )
+    db.add(observation)
+    item.observed_count = (item.observed_count or 0) + 1
+    item.last_observed_at = now
+    item.confidence = max(item.confidence or 0, confidence)
+    await db.commit()
+    await db.refresh(item)
+    return {"success": True, "data": {"memory": _item_to_dict(item), "observation_id": str(observation.id)}}
+
+
 async def _get_existing_active_memory(
     user_id: str,
     layer: str,
@@ -234,6 +334,20 @@ async def _get_existing_active_memory(
     memory_type: str,
     db: AsyncSession,
 ) -> MemoryItem | None:
+    dedupe_key = _build_memory_dedupe_key(layer, memory_type, summary)
+    result = await db.execute(
+        select(MemoryItem).where(
+            MemoryItem.user_id == user_id,
+            MemoryItem.layer == layer,
+            MemoryItem.memory_type == memory_type,
+            MemoryItem.dedupe_key == dedupe_key,
+            MemoryItem.status == "active",
+        ).limit(1)
+    )
+    existing = result.scalar_one_or_none()
+    if existing:
+        return existing
+
     result = await db.execute(
         select(MemoryItem).where(
             MemoryItem.user_id == user_id,
@@ -252,15 +366,39 @@ async def add(
     summary: str,
     content: dict = None,
     db: AsyncSession = None,
+    memory_type: str = "general",
+    event_at: datetime | None = None,
+    expires_at: datetime | None = None,
+    confidence: float | None = None,
+    observed_count: int | None = None,
+    last_observed_at: datetime | None = None,
+    dedupe_key: str | None = None,
+    review_after: datetime | None = None,
 ) -> MemoryItem:
+    memory_type = memory_type or "general"
+    structured_fields = _derive_memory_fields(
+        layer=layer,
+        memory_type=memory_type,
+        summary=summary,
+        content=content or {},
+        event_at=event_at,
+        expires_at=expires_at,
+        confidence=confidence,
+        observed_count=observed_count,
+        last_observed_at=last_observed_at,
+        dedupe_key=dedupe_key,
+        review_after=review_after,
+    )
     item = MemoryItem(
         user_id=user_id,
         layer=layer,
+        memory_type=memory_type,
         summary=summary,
         content=content or {},
         source_type="user_input",
         user_confirmed=(layer != "tacit"),
         is_inference=(layer == "tacit"),
+        **structured_fields,
     )
     db.add(item)
     await db.commit()
@@ -269,6 +407,8 @@ async def add(
 
 
 async def update_item(user_id: str, item_id: str, data: dict, db: AsyncSession = None) -> dict:
+    structured_updates = {key: data.pop(key) for key in list(data.keys()) if key in STRUCTURED_MEMORY_FIELDS}
+
     result = await db.execute(
         select(MemoryItem).where(
             MemoryItem.id == item_id,
@@ -296,11 +436,49 @@ async def update_item(user_id: str, item_id: str, data: dict, db: AsyncSession =
         )
 
     if "memory_type" in data and "content" not in data:
-        item.content = _normalize_memory_content(
+        data["content"] = _normalize_memory_content(
             memory_type=data["memory_type"],
             content=item.content or {},
             source=(item.content or {}).get("source", item.source_type),
         )
+
+    should_refresh_structured = bool(
+        structured_updates
+        or "content" in data
+        or "memory_type" in data
+        or "summary" in data
+    )
+    if should_refresh_structured:
+        content_for_fields = data.get("content", item.content or {})
+        structured_fields = _derive_memory_fields(
+            layer=item.layer,
+            memory_type=data.get("memory_type", item.memory_type or "general"),
+            summary=data.get("summary", item.summary),
+            content=content_for_fields,
+            event_at=structured_updates.get("event_at"),
+            expires_at=structured_updates.get("expires_at"),
+            confidence=structured_updates.get("confidence"),
+            observed_count=structured_updates.get("observed_count"),
+            last_observed_at=structured_updates.get("last_observed_at"),
+            dedupe_key=structured_updates.get("dedupe_key"),
+            review_after=structured_updates.get("review_after"),
+        )
+        if "event_at" not in structured_updates and "content" not in data:
+            structured_fields["event_at"] = item.event_at
+        if "expires_at" not in structured_updates and "content" not in data:
+            structured_fields["expires_at"] = item.expires_at
+        if "confidence" not in structured_updates and "content" not in data:
+            structured_fields["confidence"] = item.confidence
+        if "observed_count" not in structured_updates and "content" not in data:
+            structured_fields["observed_count"] = item.observed_count
+        if "last_observed_at" not in structured_updates and "content" not in data:
+            structured_fields["last_observed_at"] = item.last_observed_at
+        if "review_after" not in structured_updates and "content" not in data:
+            structured_fields["review_after"] = item.review_after
+        if "summary" not in data and "memory_type" not in data and "dedupe_key" not in structured_updates:
+            structured_fields["dedupe_key"] = item.dedupe_key
+        for key, value in structured_fields.items():
+            setattr(item, key, value)
 
     for key, value in data.items():
         setattr(item, key, value)
@@ -342,9 +520,16 @@ async def get_all(user_id: str, db: AsyncSession = None) -> dict:
 
     forbidden = await get_forbidden(user_id, db)
     anchors = await get_anchors(user_id, db)
+    tacit_profile = {}
+    try:
+        from app.services.tacit_profile_service import get_profile_snapshot
+        tacit_profile = await get_profile_snapshot(user_id, db)
+    except Exception as e:
+        print(f"[memory] 默契画像读取失败: {e}")
 
     return {
         "layers": layers,
+        "tacit_profile": tacit_profile,
         "forbidden_topics": [{"id": str(f.id), "topic": f.topic_summary} for f in forbidden],
         "pending_anchors": [
             {"id": str(a.id), "topic": a.topic_summary, "status": a.status, "expires_at": a.expires_at.isoformat()}
@@ -408,20 +593,28 @@ async def fulfill_anchor(user_id: str, anchor_id: str, db: AsyncSession = None) 
 
 def _item_to_dict(item: MemoryItem) -> dict:
     content = item.content or {}
+    event_at = item.event_at or _parse_datetime(content.get("event_at"))
+    expires_at = item.expires_at or _parse_datetime(content.get("expires_at"))
+    last_observed_at = item.last_observed_at or _parse_datetime(content.get("last_observed_at"))
+    review_after = item.review_after or _parse_datetime(content.get("review_after"))
     return {
         "id": str(item.id),
         "layer": item.layer,
         "memory_type": item.memory_type or "general",
         "summary": item.summary,
         "content": content,
-        "event_at": content.get("event_at"),
-        "expires_at": content.get("expires_at"),
+        "event_at": _format_optional_datetime(event_at),
+        "expires_at": _format_optional_datetime(expires_at),
+        "confidence": item.confidence or _parse_float(content.get("confidence"), 0),
+        "observed_count": item.observed_count or _parse_int(content.get("observed_count"), 0),
+        "last_observed_at": _format_optional_datetime(last_observed_at),
+        "review_after": _format_optional_datetime(review_after),
         "reminder_id": content.get("reminder_id"),
         "reminder_status": content.get("reminder_status"),
         "reminder_candidate": content.get("reminder_candidate"),
-        "lifecycle": _memory_lifecycle(item.memory_type, content),
-        "is_expired": _is_expired_memory(item.memory_type, content),
-        "needs_cleanup": _needs_cleanup(item.memory_type, content),
+        "lifecycle": _memory_lifecycle(item.memory_type, content, expires_at),
+        "is_expired": _is_expired_memory(item.memory_type, content, expires_at),
+        "needs_cleanup": _needs_cleanup(item.memory_type, content, expires_at),
         "user_confirmed": item.user_confirmed,
         "is_inference": item.is_inference,
         "source_type": item.source_type,
@@ -455,6 +648,70 @@ def _normalize_memory_content(
     return normalized
 
 
+def _derive_memory_fields(
+    layer: str,
+    memory_type: str,
+    summary: str,
+    content: dict | None,
+    event_at: datetime | str | None = None,
+    expires_at: datetime | str | None = None,
+    confidence: float | str | None = None,
+    observed_count: int | str | None = None,
+    last_observed_at: datetime | str | None = None,
+    dedupe_key: str | None = None,
+    review_after: datetime | str | None = None,
+) -> dict:
+    content = content or {}
+    parsed_event_at = _parse_datetime(event_at) or _parse_datetime(content.get("event_at"))
+    parsed_expires_at = _parse_datetime(expires_at) or _parse_datetime(content.get("expires_at"))
+    if memory_type == "event" and parsed_event_at and not parsed_expires_at:
+        parsed_expires_at = parsed_event_at + timedelta(days=1)
+    parsed_review_after = _parse_datetime(review_after) or _parse_datetime(content.get("review_after"))
+    if memory_type == "event" and parsed_expires_at and not parsed_review_after:
+        parsed_review_after = parsed_expires_at
+
+    return {
+        "event_at": parsed_event_at,
+        "expires_at": parsed_expires_at,
+        "confidence": _parse_float(confidence if confidence is not None else content.get("confidence"), 0.0),
+        "observed_count": _parse_int(observed_count if observed_count is not None else content.get("observed_count"), 0),
+        "last_observed_at": _parse_datetime(last_observed_at) or _parse_datetime(content.get("last_observed_at")),
+        "dedupe_key": (dedupe_key or content.get("dedupe_key") or _build_memory_dedupe_key(layer, memory_type, summary))[:160],
+        "review_after": parsed_review_after,
+    }
+
+
+def _build_memory_dedupe_key(layer: str, memory_type: str | None, summary: str) -> str:
+    normalized = re.sub(r"\s+", "", (summary or "").strip().casefold())
+    raw = f"{layer}|{memory_type or 'general'}|{normalized[:500]}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _format_optional_datetime(value: datetime | str | None) -> str | None:
+    if not value:
+        return None
+    parsed = _parse_datetime(value)
+    return parsed.isoformat() if parsed else str(value)
+
+
+def _parse_float(value, default: float = 0.0) -> float:
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_int(value, default: int = 0) -> int:
+    if value is None or value == "":
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _format_datetime(value: datetime | str) -> str:
     if isinstance(value, str):
         parsed = _parse_datetime(value)
@@ -486,20 +743,25 @@ def _parse_datetime(value) -> datetime | None:
     return parsed
 
 
-def _build_reminder_candidate(memory_type: str | None, summary: str, content: dict | None) -> dict | None:
+def _build_reminder_candidate(
+    memory_type: str | None,
+    summary: str,
+    content: dict | None,
+    event_at: datetime | str | None = None,
+) -> dict | None:
     if memory_type != "event":
         return None
     content = content or {}
-    event_at = _parse_datetime(content.get("event_at"))
-    if not event_at:
+    parsed_event_at = _parse_datetime(event_at) or _parse_datetime(content.get("event_at"))
+    if not parsed_event_at:
         return None
 
     now = datetime.now(timezone.utc)
-    if event_at <= now:
+    if parsed_event_at <= now:
         return None
 
-    if event_at - now > timedelta(hours=36):
-        local_event = event_at.astimezone(APP_TZ)
+    if parsed_event_at - now > timedelta(hours=36):
+        local_event = parsed_event_at.astimezone(APP_TZ)
         remind_at = datetime(
             local_event.year,
             local_event.month,
@@ -509,11 +771,11 @@ def _build_reminder_candidate(memory_type: str | None, summary: str, content: di
             tzinfo=APP_TZ,
         ) - timedelta(days=1)
         reason = "提前一天晚上提醒"
-    elif event_at - now > timedelta(hours=4):
-        remind_at = event_at - timedelta(hours=2)
+    elif parsed_event_at - now > timedelta(hours=4):
+        remind_at = parsed_event_at - timedelta(hours=2)
         reason = "提前两小时提醒"
     else:
-        remind_at = event_at - timedelta(hours=1)
+        remind_at = parsed_event_at - timedelta(hours=1)
         reason = "提前一小时提醒"
 
     if remind_at <= now:
@@ -522,35 +784,35 @@ def _build_reminder_candidate(memory_type: str | None, summary: str, content: di
     return {
         "content": f"提醒：{summary}",
         "remind_at": _format_datetime(remind_at),
-        "event_at": _format_datetime(event_at),
+        "event_at": _format_datetime(parsed_event_at),
         "label": f"{reason}（{_format_local_datetime(remind_at)}）",
         "reason": reason,
     }
 
 
-def _memory_lifecycle(memory_type: str | None, content: dict | None) -> str:
+def _memory_lifecycle(memory_type: str | None, content: dict | None, expires_at: datetime | str | None = None) -> str:
     content = content or {}
     lifecycle = content.get("lifecycle") or "active"
-    if memory_type == "event" and lifecycle == "active" and _is_expired_memory(memory_type, content):
+    if memory_type == "event" and lifecycle == "active" and _is_expired_memory(memory_type, content, expires_at):
         return "expired"
     return lifecycle
 
 
-def _is_expired_memory(memory_type: str | None, content: dict | None) -> bool:
+def _is_expired_memory(memory_type: str | None, content: dict | None, expires_at: datetime | str | None = None) -> bool:
     if memory_type != "event":
         return False
-    expires_at = _parse_datetime((content or {}).get("expires_at"))
-    if not expires_at:
+    parsed_expires_at = _parse_datetime(expires_at) or _parse_datetime((content or {}).get("expires_at"))
+    if not parsed_expires_at:
         return False
-    return expires_at <= datetime.now(timezone.utc)
+    return parsed_expires_at <= datetime.now(timezone.utc)
 
 
-def _needs_cleanup(memory_type: str | None, content: dict | None) -> bool:
-    return memory_type == "event" and _memory_lifecycle(memory_type, content) == "expired"
+def _needs_cleanup(memory_type: str | None, content: dict | None, expires_at: datetime | str | None = None) -> bool:
+    return memory_type == "event" and _memory_lifecycle(memory_type, content, expires_at) == "expired"
 
 
 def _is_item_available_for_chat(item: MemoryItem) -> bool:
-    return _is_available_for_chat(item.layer, item.user_confirmed, item.memory_type, item.content)
+    return _is_available_for_chat(item.layer, item.user_confirmed, item.memory_type, item.content, item.expires_at)
 
 
 def _is_available_for_chat(
@@ -558,12 +820,13 @@ def _is_available_for_chat(
     user_confirmed: bool,
     memory_type: str | None,
     content: dict | None,
+    expires_at: datetime | str | None = None,
 ) -> bool:
     if layer not in CHAT_MEMORY_LAYERS:
         return False
     if not user_confirmed:
         return False
-    if _needs_cleanup(memory_type, content):
+    if _needs_cleanup(memory_type, content, expires_at):
         return False
     if (content or {}).get("lifecycle") in {"dismissed", "archived"}:
         return False
@@ -773,10 +1036,30 @@ async def add_with_embedding(
     source_type: str = "user_input",
     user_confirmed: bool | None = None,
     defer_enrichment: bool = False,
+    event_at: datetime | None = None,
+    expires_at: datetime | None = None,
+    confidence: float | None = None,
+    observed_count: int | None = None,
+    last_observed_at: datetime | None = None,
+    dedupe_key: str | None = None,
+    review_after: datetime | None = None,
 ) -> MemoryItem | None:
     """保存记忆并异步生成 embedding"""
     if user_confirmed is None:
         user_confirmed = (layer != "tacit")
+    structured_fields = _derive_memory_fields(
+        layer=layer,
+        memory_type=memory_type,
+        summary=summary,
+        content=content or {},
+        event_at=event_at,
+        expires_at=expires_at,
+        confidence=confidence,
+        observed_count=observed_count,
+        last_observed_at=last_observed_at,
+        dedupe_key=dedupe_key,
+        review_after=review_after,
+    )
     item = MemoryItem(
         user_id=user_id,
         layer=layer,
@@ -786,6 +1069,7 @@ async def add_with_embedding(
         source_type=source_type,
         user_confirmed=user_confirmed,
         is_inference=(layer == "tacit"),
+        **structured_fields,
     )
     db.add(item)
     await db.commit()
@@ -891,6 +1175,228 @@ async def resolve_contradictions(user_id: str, new_summary: str, new_item_id, db
             print(f"[resolve] 矛盾删除旧记忆: {old_item.summary[:40]}")
     except (ValueError, IndexError, Exception) as e:
         print(f"[resolve] LLM判断失败: {e}")
+
+
+async def _resolve_explicit_memory_replacements(user_id: str, new_item: MemoryItem, db: AsyncSession) -> int:
+    """同步处理用户明确表达的取消/替换，避免旧共建记忆继续展示。"""
+    source_text = _replacement_source_text(new_item)
+    cancelled_terms = _extract_cancelled_topics(source_text)
+    if not cancelled_terms:
+        return 0
+
+    result = await db.execute(
+        select(MemoryItem)
+        .where(
+            MemoryItem.user_id == user_id,
+            MemoryItem.layer == "co_created",
+            MemoryItem.status == "active",
+            MemoryItem.user_confirmed.is_(True),
+            MemoryItem.id != new_item.id,
+        )
+        .order_by(MemoryItem.updated_at.desc())
+        .limit(80)
+    )
+
+    now = datetime.now(timezone.utc)
+    superseded_count = 0
+    for old_item in result.scalars().all():
+        if not _should_supersede_memory(old_item, cancelled_terms, source_text):
+            continue
+        old_content = dict(old_item.content or {})
+        old_content["lifecycle"] = "superseded"
+        old_content["superseded_by"] = str(new_item.id)
+        old_content["superseded_reason"] = "explicit_replacement"
+        old_content["superseded_terms"] = sorted(cancelled_terms)
+        old_content["superseded_at"] = _format_datetime(now)
+        old_item.content = old_content
+        old_item.status = "deleted"
+        superseded_count += 1
+
+    if superseded_count:
+        new_content = dict(new_item.content or {})
+        new_content["replacement"] = {
+            "cancelled_terms": sorted(cancelled_terms),
+            "superseded_count": superseded_count,
+            "resolved_at": _format_datetime(now),
+        }
+        new_item.content = new_content
+        await db.commit()
+        await db.refresh(new_item)
+
+    return superseded_count
+
+
+def _replacement_source_text(item: MemoryItem) -> str:
+    content = item.content or {}
+    pieces = [
+        item.summary or "",
+        str(content.get("source_message") or ""),
+        str(content.get("source_reply") or ""),
+    ]
+    return "\n".join(piece for piece in pieces if piece)
+
+
+def _extract_cancelled_topics(text: str) -> set[str]:
+    if not _has_replacement_intent(text):
+        return set()
+
+    spans: list[str] = []
+    for pattern in (
+        r"(?:取消|停止|暂停|放弃|停掉|不再|别再|不用|不要|先不)([^，。！？；、\n]{1,24})",
+        r"([^，。！？；、\n]{1,24}?)(?:取消了?|停止了?|暂停了?|放弃了?|停掉了?|不做了?|不去了?|不用了?|不要了?)",
+        r"(?:把|将)?([^，。！？；、\n]{1,24}?)(?:改为|改成|换成|替换成|改去|改做)",
+    ):
+        spans.extend(match.group(1) for match in re.finditer(pattern, text))
+
+    terms: set[str] = set()
+    for span in spans:
+        terms.update(_extract_topic_terms(span))
+    return {term for term in terms if len(term) >= 2}
+
+
+def _extract_topic_terms(phrase: str) -> set[str]:
+    phrase = re.sub(r"\s+", "", phrase or "")
+    if not phrase:
+        return set()
+
+    known_terms = (
+        "跑步",
+        "健身",
+        "运动",
+        "训练",
+        "面试",
+        "考试",
+        "会议",
+        "求职",
+        "简历",
+        "香蕉",
+        "橘子",
+        "水果",
+        "早睡",
+        "熬夜",
+        "睡眠",
+        "学习",
+        "项目",
+        "代码",
+        "提醒",
+    )
+    terms = {term for term in known_terms if term in phrase}
+    if terms:
+        return terms
+
+    cleaned = phrase
+    for word in (
+        "用户",
+        "自己",
+        "我的",
+        "我",
+        "原来",
+        "之前",
+        "当前",
+        "现在",
+        "今天",
+        "明天",
+        "后天",
+        "之后",
+        "以后",
+        "这次",
+        "计划",
+        "安排",
+        "习惯",
+        "目标",
+        "需要",
+        "准备",
+        "已经",
+        "还是",
+        "那个",
+        "这个",
+        "一些",
+        "的",
+        "了",
+        "去",
+        "做",
+        "要",
+        "会",
+    ):
+        cleaned = cleaned.replace(word, "")
+    cleaned = cleaned.strip("，。！？；、 ")
+    if 2 <= len(cleaned) <= 12:
+        return {cleaned}
+    return set()
+
+
+def _has_replacement_intent(text: str) -> bool:
+    return bool(re.search(r"(取消|停止|暂停|放弃|停掉|不再|别再|不用|不要|不做了|不去了|改为|改成|换成|替换成|改去|改做)", text or ""))
+
+
+def _should_supersede_memory(old_item: MemoryItem, cancelled_terms: set[str], source_text: str) -> bool:
+    old_text = _memory_text(old_item)
+    matched_terms = [term for term in cancelled_terms if term and term in old_text]
+    if not matched_terms:
+        return False
+
+    old_type = old_item.memory_type or "general"
+    if old_type == "boundary":
+        return False
+
+    for term in matched_terms:
+        if _is_negative_constraint_about_term(old_text, term):
+            continue
+        if old_type in {"event", "routine"}:
+            return True
+        if old_type == "preference":
+            return _looks_like_activity_or_plan_memory(old_text, term) or _is_preference_reversal(source_text, term)
+        if old_type in {"general", "profile", "insight"}:
+            return _looks_like_activity_or_plan_memory(old_text, term)
+    return False
+
+
+def _memory_text(item: MemoryItem) -> str:
+    return "\n".join([
+        item.summary or "",
+        json.dumps(item.content or {}, ensure_ascii=False),
+    ])
+
+
+def _is_negative_constraint_about_term(text: str, term: str) -> bool:
+    for part in re.split(r"[，。！？；、\n]", text or ""):
+        if term not in part:
+            continue
+        if any(word in part for word in ("不会", "不能", "不在同一天", "不同时", "不要同时", "不一起")):
+            return True
+    return False
+
+
+def _looks_like_activity_or_plan_memory(text: str, term: str) -> bool:
+    if term not in text:
+        return False
+    markers = (
+        "计划",
+        "安排",
+        "准备",
+        "打算",
+        "目标",
+        "明天",
+        "今天",
+        "后天",
+        "每天",
+        "每周",
+        "每次",
+        "经常",
+        "常常",
+        "习惯",
+        "固定",
+        "围绕",
+        "公里",
+        "喜欢",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _is_preference_reversal(text: str, term: str) -> bool:
+    if term not in text:
+        return False
+    return any(word in text for word in ("不喜欢", "讨厌", "不想", "不再喜欢", "不爱", "不要"))
 
 
 async def update_anchors(user_id: str, message: str, reply: str, db: AsyncSession = None) -> None:

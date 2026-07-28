@@ -313,11 +313,14 @@ async function handleAction(payload, actionMessage = null) {
         content: candidate.content || {},
       })
       const failed = res?.success === false
+      const savedMessage = res?.superseded_count > 0
+        ? '好，我记住了，也更新了相关旧记忆。'
+        : '好，我记住了。'
       if (actionMessage) actionMessage.handled = true
       chatStore.addMessage({
         type: 'text',
         role: 'agent',
-        content: failed ? (res.message || '这条记忆保存失败了，稍后再试。') : '好，我记住了。',
+        content: failed ? (res.message || '这条记忆保存失败了，稍后再试。') : savedMessage,
         soul: snapshotSoul(activeSoul.value),
       })
       if (!failed && res?.reminder_candidate) {

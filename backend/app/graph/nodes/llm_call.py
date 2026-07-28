@@ -17,6 +17,9 @@ async def llm_call_node(state: ChatState):
         )
         system_parts.append(f"\n# 相关记忆\n{memory_context}")
 
+    if state.tacit_context:
+        system_parts.append(f"\n# 默契画像\n{state.tacit_context}")
+
     # 注入未完待续
     if state.pending_anchors:
         anchor_line = "\n".join(f"- 上次提到: {a['topic']}" for a in state.pending_anchors)

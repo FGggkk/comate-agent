@@ -25,8 +25,11 @@
           :current-soul="currentSoul"
           @tab-change="handleTabChange"
         />
-        <MemoryPage :class="['page', activeTab === 'memory' ? 'active' : '']" />
+        
+        <MemoryPage :class="['page', activeTab === 'memory' ? 'active' : '']" :active="activeTab === 'memory'" />
+        <InterviewPage :class="['page', activeTab === 'interview' ? 'active' : '']" />
         <WorkbenchPage :class="['page', activeTab === 'workbench' ? 'active' : '']" />
+
         <SettingsPage
           :class="['page', activeTab === 'settings' ? 'active' : '']"
           :refresh-key="personaRefreshKey"
