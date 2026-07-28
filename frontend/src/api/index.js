@@ -142,6 +142,8 @@ export const apiAnswerQuestionStream = (id, answer) => {
   })
 }
 export const apiGetReport = (id) => get(`/interview/${id}/report`)
+export const apiGetHint = (id, question) => post(`/interview/${id}/hint`, { question })
+export const apiRerollQuestion = (id) => post(`/interview/${id}/reroll`, {})
 
 // User Profile
 export const apiGetProfile = () => get('/user/me')

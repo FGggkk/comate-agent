@@ -38,7 +38,9 @@ MIGRATION_SQL = [
     "ALTER TABLE interview_sessions ADD COLUMN IF NOT EXISTS report_version INTEGER DEFAULT 0",
     "ALTER TABLE interview_sessions ADD COLUMN IF NOT EXISTS report_generated_at TIMESTAMPTZ",
     "ALTER TABLE interview_questions ADD COLUMN IF NOT EXISTS answer_version INTEGER DEFAULT 0",
-
+    "ALTER TABLE interview_sessions ADD COLUMN IF NOT EXISTS interview_type VARCHAR(32) DEFAULT 'comprehensive'",
+    "ALTER TABLE interview_sessions ADD COLUMN IF NOT EXISTS difficulty VARCHAR(16) DEFAULT 'medium'",
+    "ALTER TABLE interview_sessions ADD COLUMN IF NOT EXISTS dimension_scores JSONB",
 ]
 
 LOCK_ID = 20240724  # 迁移锁 ID（唯一整数）

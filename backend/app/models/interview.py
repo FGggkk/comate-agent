@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .user import Base
@@ -18,9 +18,12 @@ class InterviewSession(Base):
     target_company: Mapped[str] = mapped_column(String(255), default="")
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="in_progress")  # in_progress / completed
+    interview_type: Mapped[str] = mapped_column(String(32), default="comprehensive")  # tech/behavior/project/stress/comprehensive
+    difficulty: Mapped[str] = mapped_column(String(16), default="medium")  # easy/medium/hard
     round_number: Mapped[int] = mapped_column(Integer, default=1)
     report_version: Mapped[int] = mapped_column(Integer, default=0)
     report_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dimension_scores: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # {"tech_depth": 7.5, ...}
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
