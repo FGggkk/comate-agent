@@ -96,7 +96,14 @@
             @delete="confirmDelete(msg,i)"
           />
           <MemoryCard v-else-if="msg.type === 'memory_card'" :summary="msg.summary" :layer="msg.layer" />
-          <ActionButtons v-else-if="msg.type === 'actions'" :buttons="msg.buttons" @action="handleAction" />
+          <ActionButtons
+            v-else-if="msg.type === 'actions' && !msg.handled"
+            :buttons="msg.buttons"
+            :prompt="msg.prompt"
+            :candidate-summary="msg.candidateSummary"
+            :processing="msg.processing"
+            @action="handleAction($event, msg)"
+          />
           <div v-else-if="msg.type === 'error'" class="error-msg">
             <span style="color:#e74c3c;font-size:13px;">⚠ {{ msg.content }}</span>
           </div>
@@ -133,7 +140,7 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useUserStore } from '../stores/user'
-import { apiGetTemplates, apiPreview, apiConfirmSoul, apiSendMessage, apiListSessions, apiCreateSession, apiDeleteSession, apiGetMessages, apiEditMessage, apiDeleteMessage, apiUpdateSession, apiGetSoulInventory } from '../api/index'
+import { apiGetTemplates, apiPreview, apiConfirmSoul, apiSendMessage, apiListSessions, apiCreateSession, apiDeleteSession, apiGetMessages, apiEditMessage, apiDeleteMessage, apiUpdateSession, apiGetSoulInventory, apiCreateMemory } from '../api/index'
 import MessageBubble from '../components/MessageBubble.vue'
 import MemoryCard from '../components/MemoryCard.vue'
 import ActionButtons from '../components/ActionButtons.vue'
@@ -283,9 +290,64 @@ function handleQuickAction(action) {
   else if (action === 'interview') emit('tab-change', 'interview')
 }
 
-function handleAction(action) {
-  if (action === 'interview') emit('tab-change', 'interview')
-  else if (action === 'remind') emit('tab-change', 'settings')
+async function handleAction(payload, actionMessage = null) {
+  const action = typeof payload === 'string' ? payload : payload?.action
+  if (action === 'confirm_memory_candidate') {
+    if (actionMessage?.processing || actionMessage?.handled) return
+    if (actionMessage) {
+      actionMessage.processing = true
+      actionMessage.handled = true
+    }
+    const candidate = payload?.candidate
+    if (!candidate?.summary) {
+      if (actionMessage) {
+        actionMessage.processing = false
+        actionMessage.handled = false
+      }
+      return
+    }
+    try {
+      const res = await apiCreateMemory({
+        summary: candidate.summary,
+        memory_type: candidate.memory_type || 'general',
+        content: candidate.content || {},
+      })
+      const failed = res?.success === false
+      if (actionMessage) actionMessage.handled = true
+      chatStore.addMessage({
+        type: 'text',
+        role: 'agent',
+        content: failed ? (res.message || '这条记忆保存失败了，稍后再试。') : '好，我记住了。',
+        soul: snapshotSoul(activeSoul.value),
+      })
+    } catch {
+      chatStore.addMessage({
+        type: 'text',
+        role: 'agent',
+        content: '这条记忆保存失败了，稍后可以在记忆页手动添加。',
+        soul: snapshotSoul(activeSoul.value),
+      })
+    } finally {
+      if (actionMessage) actionMessage.processing = false
+      nextTick(() => scrollToBottom())
+    }
+    return
+  }
+  if (action === 'dismiss_memory_candidate') {
+    if (actionMessage?.processing || actionMessage?.handled) return
+    if (actionMessage) actionMessage.handled = true
+    chatStore.addMessage({
+      type: 'text',
+      role: 'agent',
+      content: '好的，这条我先不记。',
+      soul: snapshotSoul(activeSoul.value),
+    })
+    nextTick(() => scrollToBottom())
+    return
+  }
+  if (action === 'interview' || action === 'start_interview') emit('tab-change', 'interview')
+  else if (action === 'remind' || action === 'set_reminder') emit('tab-change', 'settings')
+  else if (action === 'view_memory') emit('tab-change', 'memory')
   else handleSend('帮我分析一下')
 }
 
@@ -338,7 +400,12 @@ async function handleSend(text) {
               await new Promise(r => setTimeout(r, 0))
               break
             case 'action_buttons':
-              chatStore.addMessage({ type: 'actions', buttons: event.data.buttons })
+              chatStore.addMessage({
+                type: 'actions',
+                buttons: event.data.buttons,
+                prompt: event.data.prompt,
+                candidateSummary: event.data.candidate_summary,
+              })
               break
             case 'status':
               // 状态事件可选使用，目前 StreamingIndicator 已覆盖
