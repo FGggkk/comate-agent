@@ -110,6 +110,8 @@ export function apiSendMessage(message, sessionId) {
 
 // Memories
 export const apiGetMemories = () => get('/memories')
+export const apiCreateMemory = (data) => post('/memories', data)
+export const apiCreateMemoryReminder = (id) => post(`/memories/${id}/reminder`, {})
 export const apiUpdateMemory = (id, data) => put(`/memories/${id}`, data)
 export const apiDeleteMemory = (id) => del(`/memories/${id}`)
 export const apiAddForbidden = (topic, phrase) => post('/memories/forbidden', { topic_summary: topic, original_phrase: phrase })

@@ -14,6 +14,25 @@ async def create(user_id: str, content: str, remind_at: datetime, db: AsyncSessi
     return {"id": str(reminder.id), "content": reminder.content, "remind_at": reminder.remind_at.isoformat()}
 
 
+async def create_once(user_id: str, content: str, remind_at: datetime, db: AsyncSession) -> dict:
+    result = await db.execute(
+        select(Reminder).where(
+            Reminder.user_id == user_id,
+            Reminder.content == content,
+            Reminder.remind_at == remind_at,
+        ).limit(1)
+    )
+    existing = result.scalar_one_or_none()
+    if existing:
+        return {
+            "id": str(existing.id),
+            "content": existing.content,
+            "remind_at": existing.remind_at.isoformat(),
+            "triggered": existing.triggered,
+        }
+    return await create(user_id, content, remind_at, db)
+
+
 async def list_reminders(user_id: str, db: AsyncSession) -> list[dict]:
     result = await db.execute(
         select(Reminder).where(Reminder.user_id == user_id).order_by(Reminder.remind_at.asc())

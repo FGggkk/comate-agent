@@ -20,8 +20,17 @@ def text_chunk_event(text: str) -> SSEEvent:
     return SSEEvent(type="text_chunk", data={"text": text})
 
 
-def action_buttons_event(buttons: list[dict]) -> SSEEvent:
-    return SSEEvent(type="action_buttons", data={"buttons": buttons})
+def action_buttons_event(
+    buttons: list[dict],
+    prompt: str | None = None,
+    candidate_summary: str | None = None,
+) -> SSEEvent:
+    data = {"buttons": buttons}
+    if prompt:
+        data["prompt"] = prompt
+    if candidate_summary:
+        data["candidate_summary"] = candidate_summary
+    return SSEEvent(type="action_buttons", data=data)
 
 
 def done_event() -> SSEEvent:
