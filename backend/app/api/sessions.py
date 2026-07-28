@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.api.deps import get_current_user
+from app.api.response import ok, fail
 from app.models.conversation import Session, Message
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
@@ -36,7 +37,7 @@ async def list_sessions(user_id: str = Depends(get_current_user), db: AsyncSessi
         select(Session).where(Session.user_id == user_id).order_by(Session.updated_at.desc()).limit(50)
     )
     sessions = result.scalars().all()
-    return {
+    return ok({
         "sessions": [
             {
                 "id": str(s.id),
@@ -46,7 +47,7 @@ async def list_sessions(user_id: str = Depends(get_current_user), db: AsyncSessi
             }
             for s in sessions
         ]
-    }
+    })
 
 
 @router.post("")
@@ -59,11 +60,11 @@ async def create_session(
     db.add(session)
     await db.commit()
     await db.refresh(session)
-    return {
+    return ok({
         "id": str(session.id),
         "title": session.title,
         "created_at": session.created_at.isoformat() if session.created_at else None,
-    }
+    })
 
 
 @router.put("/{session_id}")
@@ -78,10 +79,10 @@ async def update_session(
     )
     session = result.scalar_one_or_none()
     if not session:
-        return {"success": False, "message": "会话不存在"}
+        return fail("会话不存在")
     if req.title is not None:
         session.title = req.title
-        session.title_auto_set = True  # 用户手动设置后不再自动覆盖
+        session.title_auto_set = True
     await db.commit()
     return {"success": True, "title": session.title}
 
@@ -96,8 +97,7 @@ async def delete_session(
         select(Session).where(Session.id == session_id, Session.user_id == user_id)
     )
     if not result.scalar_one_or_none():
-        return {"success": False, "message": "会话不存在"}
-    # 删除会话下的所有消息
+        return fail("会话不存在")
     await db.execute(delete(Message).where(Message.session_id == session_id))
     await db.execute(delete(Session).where(Session.id == session_id))
     await db.commit()
@@ -110,18 +110,17 @@ async def get_messages(
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # 验证会话归属
     result = await db.execute(
         select(Session).where(Session.id == session_id, Session.user_id == user_id)
     )
     if not result.scalar_one_or_none():
-        return {"success": False, "message": "会话不存在"}
+        return fail("会话不存在")
 
     result = await db.execute(
         select(Message).where(Message.session_id == session_id).order_by(Message.created_at.asc()).limit(100)
     )
     messages = result.scalars().all()
-    return {
+    return ok({
         "messages": [
             {
                 "id": str(m.id),
@@ -133,4 +132,4 @@ async def get_messages(
             }
             for m in messages
         ]
-    }
+    })

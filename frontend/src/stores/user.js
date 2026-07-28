@@ -13,13 +13,16 @@ export const useUserStore = defineStore('user', () => {
 
   const displayName = computed(() => nickname.value || email.value.split('@')[0])
 
-  function login(t, e, status) {
+  function login(t, e, status, rt) {
     token.value = t
     email.value = e
     onboardingStatus.value = status || 'none'
     localStorage.setItem('comate_token', t)
     localStorage.setItem('comate_email', e)
     localStorage.setItem('comate_onboarding', onboardingStatus.value)
+    if (rt) {
+      localStorage.setItem('comate_refresh_token', rt)
+    }
   }
 
   function setProfile(nick, ava) {
@@ -45,6 +48,7 @@ export const useUserStore = defineStore('user', () => {
     localStorage.removeItem('comate_nickname')
     localStorage.removeItem('comate_avatar_url')
     localStorage.removeItem('comate_onboarding')
+    localStorage.removeItem('comate_refresh_token')
   }
 
   return { token, email, nickname, avatarUrl, onboardingStatus, isLoggedIn, needsOnboarding, displayName, login, setProfile, completeOnboarding, logout }

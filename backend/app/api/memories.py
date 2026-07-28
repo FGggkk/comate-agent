@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.api.response import ok
 from app.db.session import get_db
 from app.services import memory_service
 
@@ -22,7 +23,7 @@ class AddForbiddenRequest(BaseModel):
 
 @router.get("")
 async def api_get_memories(db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
-    return await memory_service.get_all(user_id, db)
+    return ok(await memory_service.get_all(user_id, db))
 
 
 @router.put("/{item_id}")

@@ -1,7 +1,8 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.config.settings import get_settings
 from app.db.session import run_migrations
@@ -45,6 +46,14 @@ def create_app() -> FastAPI:
     @app.get("/api/health")
     async def health():
         return {"status": "ok", "app": settings.app_name}
+
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception):
+        print(f"[unhandled] {exc}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": "服务器内部错误", "detail": str(exc) if settings.debug else None},
+        )
 
     return app
 
