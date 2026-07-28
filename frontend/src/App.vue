@@ -26,7 +26,11 @@
           @tab-change="handleTabChange"
         />
         
-        <MemoryPage :class="['page', activeTab === 'memory' ? 'active' : '']" :active="activeTab === 'memory'" />
+        <MemoryPage
+          :class="['page', activeTab === 'memory' ? 'active' : '']"
+          :active="activeTab === 'memory'"
+          :current-soul="currentSoul"
+        />
         <InterviewPage :class="['page', activeTab === 'interview' ? 'active' : '']" />
         <WorkbenchPage :class="['page', activeTab === 'workbench' ? 'active' : '']" />
 
