@@ -27,6 +27,8 @@ class StartRequest(BaseModel):
     resume_text: str = ""
     target_role: str = ""
     target_company: str = ""
+    interview_type: str = "comprehensive"  # tech/behavior/project/stress/comprehensive
+    difficulty: str = "medium"  # easy/medium/hard
 
 
 class AnswerRequest(BaseModel):
@@ -38,6 +40,9 @@ class EditAnswerRequest(BaseModel):
 
 class RenameRequest(BaseModel):
     title: str
+
+class HintRequest(BaseModel):
+    question: str
 
 class EditAnswerBody(BaseModel):
     new_answer: str
@@ -55,7 +60,7 @@ def _sse(event_type: str, data: dict) -> str:
 
 @router.post("/start")
 async def api_start(req: StartRequest, db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
-    return ok(await start_session(user_id, req.resume_text, req.target_role, req.target_company, db))
+    return ok(await start_session(user_id, req.resume_text, req.target_role, req.target_company, req.interview_type, req.difficulty, db))
 
 
 @router.post("/{session_id}/answer")
@@ -187,3 +192,48 @@ async def api_edit_answer(
 async def api_report(session_id: str, db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
     result = await get_report(session_id, user_id, db)
     return ok(result) if "success" not in result else result
+
+
+@router.post("/{session_id}/hint")
+async def api_hint(session_id: str, req: HintRequest, db: AsyncSession = Depends(get_db)):
+    from app.services.model_gateway import gateway
+    prompt = f"""你是面试辅导教练。用户正在面试，遇到了这个问题：
+
+{req.question}
+
+请给出回答思路引导（不是标准答案），包括：
+1. 这个问题在考察什么能力
+2. 可以从哪几个角度回答
+3. 建议用什么结构组织回答
+
+控制在200字以内，简洁实用。"""
+    hint = ""
+    async for chunk in gateway.stream(prompt):
+        hint += chunk
+    return ok({"hint": hint.strip()})
+
+
+@router.post("/{session_id}/reroll")
+async def api_reroll(session_id: str, db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
+    """重新生成当前轮的最新一道 pending 题"""
+    from sqlalchemy import select, delete
+    from app.models.interview import InterviewSession, InterviewQuestion
+    sess = await db.execute(select(InterviewSession).where(InterviewSession.id == session_id, InterviewSession.user_id == user_id))
+    sess_obj = sess.scalar_one_or_none()
+    if not sess_obj:
+        return fail("无权操作")
+    latest = await db.execute(
+        select(InterviewQuestion).where(
+            InterviewQuestion.session_id == session_id,
+            InterviewQuestion.round_number == sess_obj.round_number,
+            InterviewQuestion.status == "pending",
+        ).order_by(InterviewQuestion.created_at.desc()).limit(1)
+    )
+    q = latest.scalar_one_or_none()
+    if not q:
+        return ok({"message": "没有可重出的题目"})
+    await db.execute(delete(InterviewQuestion).where(InterviewQuestion.id == q.id))
+    await db.commit()
+    from app.services.interview_engine import _generate_question
+    new_q = await _generate_question(sess_obj, db)
+    return ok({"question": new_q})

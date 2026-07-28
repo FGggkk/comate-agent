@@ -12,13 +12,27 @@ from app.services.model_gateway import gateway
 _session_locks: dict[str, str] = {}
 
 
-async def start_session(user_id: str, resume: str, target_role: str, company: str, db: AsyncSession) -> dict:
+DIFFICULTY_ROUNDS = {"easy": 1, "medium": 2, "hard": 3}
+
+INTERVIEW_TYPE_PROMPTS = {
+    "tech": "你是一个技术面试官，正在对候选人进行技术深度面试。重点考察技术原理、架构设计、代码能力和最佳实践。",
+    "behavior": "你是一个HR面试官，正在对候选人进行行为面试。重点考察团队协作、冲突处理、领导力和职业规划。",
+    "project": "你是一个技术负责人，正在深挖候选人的项目经历。重点考察项目难点、技术选型、个人贡献和复盘反思。",
+    "stress": "你是一个压力面试官，节奏紧凑、连续追问。考察候选人的抗压能力、思维速度和应变能力。",
+    "comprehensive": "你是一个综合面试官，从基础到项目到软技能全面考察候选人。",
+}
+
+
+async def start_session(user_id: str, resume: str, target_role: str, company: str, interview_type: str = "comprehensive", difficulty: str = "medium", db: AsyncSession = None) -> dict:
+    max_rounds = DIFFICULTY_ROUNDS.get(difficulty, 2)
     title = target_role or company or "面试"
     session = InterviewSession(
         user_id=user_id,
         resume_text=resume,
         target_role=target_role,
         target_company=company,
+        interview_type=interview_type,
+        difficulty=difficulty,
         title=title,
         round_number=1,
     )
@@ -78,12 +92,13 @@ async def next_question(session_id: str, db: AsyncSession) -> AsyncGenerator[dic
             )
         )
         answered = [q for q in result.scalars().all() if q.status == "resolved"]
+        max_rounds = DIFFICULTY_ROUNDS.get(session.difficulty or "medium", 2)
 
         if len(answered) >= 3:
-            if session.round_number < 3:
+            if session.round_number < max_rounds:
                 session.round_number += 1
                 await db.commit()
-                yield {"type": "round_change", "data": {"round": session.round_number}}
+                yield {"type": "round_change", "data": {"round": session.round_number, "max_rounds": max_rounds}}
             else:
                 session.status = "completed"
                 session.completed_at = datetime.now(timezone.utc)
@@ -91,6 +106,10 @@ async def next_question(session_id: str, db: AsyncSession) -> AsyncGenerator[dic
                 yield {"type": "done", "data": {"message": "面试完成！可以查看报告了"}}
                 _session_locks.pop(session_id, None)
                 return
+
+        # 如果已完成但还没 return（防御性检查）
+        if session.status == "completed":
+            return
 
         # 出一题
         yield {"type": "thinking", "data": {"label": "正在准备下一题…"}}
@@ -129,21 +148,36 @@ async def end_interview(session_id: str, user_id: str, db: AsyncSession) -> dict
 
     total_score = 0
     total_max = 0
+    dim_sums = {"tech_depth": 0, "communication": 0, "logic": 0, "project_exp": 0, "adaptability": 0}
+    dim_counts = {"tech_depth": 0, "communication": 0, "logic": 0, "project_exp": 0, "adaptability": 0}
     for q, ev in zip(answered, evaluations):
         q.evaluation = ev.get("comment", "")
         q.score = ev.get("score", 0)
         q.max_score = ev.get("max_score", 10)
         total_score += q.score
         total_max += q.max_score
+        dims = ev.get("dimensions", {})
+        for key in dim_sums:
+            val = dims.get(key)
+            if isinstance(val, (int, float)):
+                dim_sums[key] += val
+                dim_counts[key] += 1
     await db.commit()
 
     overall = round(total_score / total_max * 100) if total_max > 0 else 0
+    dimension_scores = {}
+    for key in dim_sums:
+        dimension_scores[key] = round(dim_sums[key] / dim_counts[key], 1) if dim_counts[key] > 0 else 0
+
+    session.dimension_scores = dimension_scores
+    await db.commit()
 
     return {
         "success": True,
         "overall_score": overall,
         "total_score": total_score,
         "total_max": total_max,
+        "dimension_scores": dimension_scores,
         "summary": {
             "total_questions": len(questions),
             "answered": len(answered),
@@ -178,13 +212,27 @@ async def _batch_evaluate(questions: list) -> list[dict]:
 
     prompt = f"""评估下面的面试回答，每题独立评分。
 
-每题输出格式：得分/满分 评语
+每题输出 JSON 对象，格式：
+{{
+  "score": 分数,
+  "max_score": 满分,
+  "comment": "评语",
+  "dimensions": {{
+    "tech_depth": 0-10,
+    "communication": 0-10,
+    "logic": 0-10,
+    "project_exp": 0-10,
+    "adaptability": 0-10
+  }}
+}}
+
 满分根据题目重要程度在5-20分之间。
+各维度满分10分，评估候选人在该题表现出的能力。
 
 {qa_list}
 
 输出JSON数组：
-[{{"score": 8, "max_score": 10, "comment": "得分点... 扣分点..."}}]"""
+[{{"score": 8, "max_score": 10, "comment": "得分点... 扣分点...", "dimensions": {{"tech_depth": 7, "communication": 8, "logic": 6, "project_exp": 5, "adaptability": 4}}}}]"""
 
     try:
         async with asyncio.timeout(45):
@@ -342,6 +390,7 @@ async def get_report(session_id: str, user_id: str, db: AsyncSession) -> dict:
         "overall_score": overall,
         "total_score": total_score,
         "total_max": total_max,
+        "dimension_scores": session.dimension_scores or {},
         "report_version": session.report_version,
         "report_generated_at": session.report_generated_at.isoformat() if session.report_generated_at else None,
         "questions": [
@@ -420,13 +469,19 @@ async def _generate_question_stream(session: InterviewSession, db: AsyncSession)
         for q in prev_questions if q.user_answer
     )
 
+    # 面试类型提示
+    type_hint = INTERVIEW_TYPE_PROMPTS.get(session.interview_type or "comprehensive", INTERVIEW_TYPE_PROMPTS["comprehensive"])
+    max_rounds = DIFFICULTY_ROUNDS.get(session.difficulty or "medium", 2)
+
     prompt = f"""你是一个面试官，正在面试{session.target_role}岗位（{session.target_company}）。
+{type_hint}
+
 简历：{session.resume_text}
 
 面试历史：
 {context if context else '（面试刚开始）'}
 
-第 {session.round_number} 轮面试。请只出一道题，不要出多道。
+第 {session.round_number} 轮面试（共 {max_rounds} 轮）。请只出一道题，不要出多道。
 要求：基于前面的对话自然延续，不要重复已问过的问题，让整场面试像真实对话一样连贯。"""
     if session.round_number == 1:
         prompt += "\n从简单的自我介绍或项目经历切入。"

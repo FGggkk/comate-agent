@@ -4,23 +4,48 @@
 
     <!-- 开始页 -->
     <div v-if="!sessionId" class="page-card">
-      <div style="margin-bottom:12px;">
-        <label class="form-label">简历内容</label>
-        <textarea v-model="resume" rows="4" placeholder="粘贴你的简历内容..." class="form-input" style="resize:none;"></textarea>
+      <!-- 快速开始 -->
+      <div style="margin-bottom:16px;padding:12px;background:var(--honey-soft);border-radius:var(--r-md);">
+        <div style="font-weight:600;font-size:15px;margin-bottom:8px;">🚀 快速面试</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <input v-model="targetRole" placeholder="目标岗位 *" class="form-input" style="flex:2;min-width:140px;" />
+          <select v-model="difficulty" class="form-input" style="flex:1;min-width:80px;">
+            <option value="easy">😊 简单</option>
+            <option value="medium">🤔 中等</option>
+            <option value="hard">😈 困难</option>
+          </select>
+        </div>
+        <button @click="startInterview" :disabled="state !== 'idle' || !targetRole" class="btn-primary" style="margin-top:10px;width:100%;">
+          {{ state === 'loading' ? '准备中...' : '🚀 开始模拟面试' }}
+        </button>
       </div>
-      <div style="margin-bottom:12px;">
-        <label class="form-label">目标岗位</label>
-        <input v-model="targetRole" placeholder="如：前端开发" class="form-input" />
-      </div>
-      <div style="margin-bottom:16px;">
-        <label class="form-label">目标公司</label>
-        <input v-model="targetCompany" placeholder="如：字节跳动" class="form-input" />
-      </div>
-      <button @click="startInterview" :disabled="state !== 'idle'" class="btn-primary">
-        {{ state === 'loading' ? '准备中...' : '开始模拟面试' }}
-      </button>
 
-      <!-- 历史记录（最近3条） -->
+      <!-- 更多设置 -->
+      <details style="margin-bottom:16px;">
+        <summary style="font-size:13px;color:var(--honey);cursor:pointer;padding:4px 0;">📋 更多设置</summary>
+        <div style="margin-top:8px;">
+          <div style="margin-bottom:10px;">
+            <label class="form-label">面试类型</label>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;">
+              <button v-for="t in interviewTypes" :key="t.value"
+                @click="interviewType = t.value"
+                :style="{flex:1,minWidth:'70px',padding:'6px 10px',fontSize:'12px',borderRadius:'var(--r-sm)',border:'1.5px solid',background: interviewType === t.value ? 'var(--honey-soft)' : 'transparent',borderColor: interviewType === t.value ? 'var(--honey)' : 'var(--line)',color: interviewType === t.value ? 'var(--honey-deep)' : 'var(--sub)'}">
+                {{ t.label }}
+              </button>
+            </div>
+          </div>
+          <div style="margin-bottom:10px;">
+            <label class="form-label">简历内容（选填）</label>
+            <textarea v-model="resume" rows="3" placeholder="粘贴你的简历内容..." class="form-input" style="resize:none;"></textarea>
+          </div>
+          <div>
+            <label class="form-label">目标公司（选填）</label>
+            <input v-model="targetCompany" placeholder="如：字节跳动" class="form-input" />
+          </div>
+        </div>
+      </details>
+
+      <!-- 历史记录 -->
       <div v-if="!showAllHistory && history.length > 0" style="margin-top:20px;">
         <div class="page-label">历史面试</div>
         <div v-for="s in history.slice(0,3)" :key="s.id" class="page-card" style="margin-top:6px;padding:10px 12px;">
@@ -84,52 +109,79 @@
 
     <!-- 面试中 -->
     <div v-else class="page-card">
-      <!-- 返回按钮 -->
+      <!-- 顶部：返回 + 步骤指示器 + 结束 -->
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
         <button @click="backToHistory" style="font-size:20px;padding:4px 8px;color:var(--ink-soft);">← 返回</button>
         <button @click="confirmEnd" style="font-size:12px;padding:4px 10px;border-radius:var(--r-sm);border:1px solid var(--berry);color:var(--berry);">结束面试</button>
       </div>
-      <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--sub);margin-bottom:12px;">
-        <span>第 {{ currentRound }} / 3 轮</span>
-        <span>{{ statusText }}</span>
+      <div style="margin-bottom:12px;">
+        <div style="display:flex;align-items:center;gap:4px;justify-content:center;">
+          <template v-for="r in maxRounds" :key="r">
+            <div :style="{width:'28px',height:'28px',borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'12px',fontWeight:600,
+              background: r < currentRound ? 'var(--sprout)' : r === currentRound ? 'var(--honey)' : 'var(--line)',
+              color: r <= currentRound ? '#fff' : 'var(--sub)'}">{{ r }}</div>
+            <div v-if="r < maxRounds" :style="{flex:1,height:'3px',background: r < currentRound ? 'var(--sprout)' : 'var(--line)',borderRadius:'2px',maxWidth:'60px'}"></div>
+          </template>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--sub);margin-top:4px;padding:0 10px;">
+          <span>第 {{ currentRound }} / {{ maxRounds }} 轮</span>
+          <span>{{ statusText }}</span>
+        </div>
       </div>
 
-      <!-- 历史问答 -->
-      <div v-if="qaHistory.length > 0" style="margin-bottom:12px;">
-        <div class="page-label" style="margin:0 0 6px;">历史回答</div>
-        <div v-for="(qa, idx) in qaHistory" :key="idx" class="page-card" style="padding:8px 10px;margin-top:4px;">
-          <div style="font-size:12px;font-weight:600;margin-bottom:2px;">Q{{ idx+1 }}: <span v-html="renderMd(qa.question)"></span></div>
-          <div style="font-size:11px;color:var(--sub);">
-            回答：
-            <template v-if="editingQA === idx">
-              <textarea v-model="editingQAText" rows="2" class="form-input" style="resize:none;font-size:11px;" />
-              <button @click="saveQA(qa, idx)" class="btn-primary" style="width:auto;padding:2px 10px;font-size:11px;margin-top:2px;">保存</button>
-              <button @click="cancelEditQA" style="padding:2px 10px;font-size:11px;color:var(--sub);">取消</button>
-            </template>
-            <template v-else>
-              {{ qa.answer }}
-              <button @click="startEditQA(qa, idx)" style="font-size:10px;color:var(--honey);margin-left:4px;">编辑</button>
-            </template>
+      <!-- 历史问答（对话气泡样式） -->
+      <div v-if="qaHistory.length > 0" style="margin-bottom:12px;max-height:40vh;overflow-y:auto;">
+        <div v-for="(qa, idx) in qaHistory" :key="idx" style="margin-bottom:10px;">
+          <!-- 面试官气泡（题目） -->
+          <div style="display:flex;margin-bottom:4px;">
+            <div style="background:var(--honey-soft);border-radius:12px 12px 12px 4px;padding:8px 12px;max-width:85%;font-size:13px;">
+              <div style="font-size:11px;font-weight:600;color:var(--honey-deep);margin-bottom:2px;">面试官 Q{{ idx+1 }}</div>
+              <div v-html="renderMd(qa.question)"></div>
+            </div>
+          </div>
+          <!-- 用户回答气泡 -->
+          <div style="display:flex;flex-direction:row-reverse;">
+            <div style="background:var(--sprout-soft);border-radius:12px 12px 4px 12px;padding:8px 12px;max-width:85%;font-size:13px;">
+              <div style="font-size:11px;font-weight:600;color:var(--sprout);margin-bottom:2px;">你的回答</div>
+              <template v-if="editingQA === idx">
+                <textarea v-model="editingQAText" rows="2" class="form-input" style="resize:none;font-size:12px;" />
+                <div style="display:flex;gap:4px;margin-top:4px;">
+                  <button @click="saveQA(qa, idx)" style="font-size:11px;padding:2px 10px;background:var(--sprout);color:#fff;border:none;border-radius:4px;">保存</button>
+                  <button @click="cancelEditQA" style="font-size:11px;padding:2px 10px;color:var(--sub);border:1px solid var(--line);border-radius:4px;">取消</button>
+                </div>
+              </template>
+              <template v-else>
+                <div style="color:var(--ink);">{{ qa.answer }}</div>
+                <button @click="startEditQA(qa, idx)" style="font-size:10px;color:var(--honey);margin-top:2px;padding:0;">编辑</button>
+              </template>
+            </div>
           </div>
         </div>
       </div>
 
       <!-- 当前题目 -->
-      <div v-if="currentQuestion" class="interview-q">
-        <div style="font-size:13px;font-weight:600;margin-bottom:6px;">面试官：</div>
-        <div v-html="renderMd(currentQuestion)"></div>
+      <div v-if="currentQuestion" class="interview-q" style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+          <div style="flex:1;">
+            <div style="font-size:13px;font-weight:600;margin-bottom:6px;">面试官：</div>
+            <div v-html="renderMd(currentQuestion)"></div>
+          </div>
+          <button v-if="state === 'idle'" @click="getHint" style="font-size:11px;padding:3px 8px;border-radius:var(--r-sm);border:1px solid var(--honey);color:var(--honey);background:transparent;white-space:nowrap;margin-left:8px;">💡 提示</button>
+          <button v-if="state === 'idle'" @click="rerollQuestion" style="font-size:11px;padding:3px 8px;border-radius:var(--r-sm);border:1px solid var(--sub);color:var(--sub);background:transparent;white-space:nowrap;margin-left:4px;">🔄</button>
+        </div>
+        <div v-if="hintText" style="margin-top:8px;padding:8px 10px;background:var(--honey-soft);border-radius:var(--r-sm);font-size:12px;color:var(--ink-soft);border-left:3px solid var(--honey);">
+          <div style="font-weight:600;margin-bottom:2px;">💡 思路引导</div>
+          <div v-html="renderMd(hintText)"></div>
+        </div>
       </div>
 
       <!-- 轮次切换横幅 -->
       <div v-if="roundBanner" class="round-banner">{{ roundBanner }}</div>
 
-      <!-- 圆形进度条 -->
-      <div v-if="state === 'loading' || state === 'thinking' || state === 'evaluating'" class="progress-wrap" style="display:flex;align-items:center;gap:12px;">
-        <div class="spinner"><svg viewBox="0 0 36 36"><path class="spinner-bg" d="M18 2a16 16 0 1 1 0 32 16 16 0 1 1 0-32"/><path class="spinner-fill" :stroke-dasharray="progress + ', 100'" d="M18 2a16 16 0 1 1 0 32 16 16 0 1 1 0-32"/></svg></div>
-        <div style="flex:1;">
-          <div class="progress-label" style="text-align:left;">{{ state === 'loading' ? '正在准备面试…' : thinkingLabel }}</div>
-          <div style="font-size:11px;color:var(--sub);">{{ Math.round(progress) }}%</div>
-        </div>
+      <!-- 进度指示（改用小型 pulse 动画，不模拟百分比） -->
+      <div v-if="state === 'loading' || state === 'thinking' || state === 'evaluating'" class="thinking-bar">
+        <div class="thinking-pulse"></div>
+        <div class="thinking-text">{{ state === 'loading' ? '正在准备面试…' : thinkingLabel }}</div>
         <button v-if="state === 'evaluating'" @click="cancelStream" class="thinking-cancel">取消</button>
       </div>
 
@@ -139,8 +191,8 @@
         <div v-html="renderMd(streamEval)"></div>
       </div>
 
-      <!-- 输入框（非 thinking/evaluating 状态时显示） -->
-      <div v-if="state === 'idle' || state === 'done'" style="margin-top:12px;">
+      <!-- 输入框（非 thinking/evaluating 且未完成时显示） -->
+      <div v-if="(state === 'idle' || state === 'done') && statusText !== '已完成' && statusText !== '已结束'" style="margin-top:12px;">
         <textarea v-model="answer" rows="3" placeholder="输入你的回答..." class="form-input" style="resize:none;"></textarea>
         <button @click="submitAnswer" class="btn-primary" style="margin-top:8px;">提交回答</button>
       </div>
@@ -176,11 +228,30 @@
       <div class="dialog-box eval-box" @click.stop>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
           <div class="page-label" style="margin:0;">面试评价报告</div>
-          <button @click="closeEval" style="font-size:18px;padding:4px;color:var(--sub);">✕</button>
+          <div style="display:flex;gap:6px;">
+            <button @click="exportReport" style="font-size:12px;padding:4px 10px;border-radius:var(--r-sm);border:1px solid var(--honey);color:var(--honey);background:transparent;">📄 导出</button>
+            <button @click="closeEval" style="font-size:18px;padding:4px;color:var(--sub);">✕</button>
+          </div>
         </div>
-        <div v-if="evalReport.overall_score !== undefined" style="text-align:center;padding:8px 0 16px;">
-          <span style="font-size:28px;font-weight:700;color:var(--honey-deep);">{{ evalReport.overall_score }}/100</span>
-          <div style="font-size:12px;color:var(--sub);">共 {{ evalReport.questions ? evalReport.questions.length : 0 }} 题</div>
+
+        <!-- 总分 + 雷达图 -->
+        <div v-if="evalReport.overall_score !== undefined" style="display:flex;gap:16px;align-items:center;padding:8px 0 16px;border-bottom:1px solid var(--line);margin-bottom:12px;">
+          <div style="text-align:center;flex-shrink:0;">
+            <div :style="{fontSize:'32px',fontWeight:700,color: evalReport.overall_score >= 70 ? 'var(--sprout)' : evalReport.overall_score >= 40 ? 'var(--honey-deep)' : 'var(--berry)'}">{{ evalReport.overall_score }}</div>
+            <div style="font-size:11px;color:var(--sub);">/100</div>
+            <div style="font-size:11px;color:var(--sub);margin-top:2px;">共 {{ evalReport.questions ? evalReport.questions.length : 0 }} 题</div>
+          </div>
+          <!-- CSS雷达图 -->
+          <div v-if="radarData.length > 0" style="flex:1;display:flex;flex-wrap:wrap;gap:4px 12px;justify-content:center;">
+            <div v-for="d in radarData" :key="d.key" style="display:flex;align-items:center;gap:4px;font-size:12px;">
+              <div :style="{width:'8px',height:'8px',borderRadius:'50%',background:d.color}"></div>
+              <span style="color:var(--ink-soft);min-width:44px;">{{ d.label }}</span>
+              <div style="width:60px;height:6px;background:var(--line);border-radius:3px;overflow:hidden;">
+                <div :style="{width:(d.value/10*100)+'%',height:'100%',background:d.color,borderRadius:'3px',transition:'width .5s ease'}"></div>
+              </div>
+              <span :style="{fontWeight:600,color:d.value >= 7 ? 'var(--sprout)' : d.value >= 4 ? 'var(--honey-deep)' : 'var(--berry)'}">{{ d.value }}</span>
+            </div>
+          </div>
           <div v-if="evalReport.report_generated_at" style="font-size:11px;color:var(--sub);margin-top:4px;">更新于 {{ formatTime(evalReport.report_generated_at) }}</div>
         </div>
         <div style="max-height:60vh;overflow-y:auto;">
@@ -201,9 +272,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { marked } from 'marked'
-import { apiStartInterview, apiAnswerQuestionStream, apiGetReport, apiListInterviews, apiNextQuestion, apiEndInterview, apiEditInterviewAnswer, apiDeleteInterview, apiRenameInterview } from '../api/index'
+import { apiStartInterview, apiAnswerQuestionStream, apiGetReport, apiListInterviews, apiNextQuestion, apiEndInterview, apiEditInterviewAnswer, apiDeleteInterview, apiRenameInterview, apiRerollQuestion } from '../api/index'
 
 function renderMd(text) {
   if (!text) return ''
@@ -214,8 +285,18 @@ const sessionId = ref('')
 const resume = ref('')
 const targetRole = ref('')
 const targetCompany = ref('')
+const interviewType = ref('comprehensive')
+const difficulty = ref('medium')
+const interviewTypes = [
+  { value: 'tech', label: '💻 技术面' },
+  { value: 'behavior', label: '🤝 行为面' },
+  { value: 'project', label: '📁 项目深挖' },
+  { value: 'stress', label: '🔥 压力面' },
+  { value: 'comprehensive', label: '🎯 综合面' },
+]
 const currentRound = ref(1)
 const currentQuestion = ref('')
+const hintText = ref('')
 const answer = ref('')
 const lastEvaluation = ref('')
 const statusText = ref('')
@@ -223,14 +304,30 @@ const report = ref(null)
 const streamEval = ref('')
 const errorMsg = ref('')
 const thinkingLabel = ref('')
-const progress = ref(0)
-let progressTimer = null
 const history = ref([])
 const showEndConfirm = ref(false)
 const showAllHistory = ref(false)
 const roundBanner = ref('')
 const evalReport = ref(null)
 const qaHistory = ref([])
+const maxRounds = computed(() => ({ easy: 1, medium: 2, hard: 3 }[difficulty.value] || 2))
+
+const dimLabels = {
+  tech_depth: '技术深度', communication: '沟通表达', logic: '逻辑思维',
+  project_exp: '项目经验', adaptability: '应变能力',
+}
+const dimColors = {
+  tech_depth: '#5FB0E8', communication: '#FFB088', logic: '#9B6FD8',
+  project_exp: '#5FBE63', adaptability: '#FF9F45',
+}
+const radarData = computed(() => {
+  const ds = evalReport.value?.dimension_scores
+  if (!ds) return []
+  return Object.entries(dimLabels).map(([key, label]) => ({
+    key, label, value: ds[key] || 0,
+    color: dimColors[key] || 'var(--honey)',
+  }))
+})
 const editingQA = ref(-1)
 const editingQAText = ref('')
 const renamingId = ref('')
@@ -288,6 +385,29 @@ function closeEval() {
   evalReport.value = null
 }
 
+function exportReport() {
+  if (!evalReport.value) return
+  const r = evalReport.value
+  let text = `面试评价报告\n${'='.repeat(30)}\n`
+  text += `总分：${r.overall_score || '-'}/100\n`
+  if (r.dimension_scores) {
+    text += `\n维度评分：\n`
+    for (const [key, val] of Object.entries(r.dimension_scores)) {
+      text += `  ${dimLabels[key] || key}: ${val}/10\n`
+    }
+  }
+  text += `\n共 ${r.questions?.length || 0} 题\n\n`
+  ;(r.questions || []).forEach((q, i) => {
+    text += `Q${i+1}: ${q.question}\n回答：${q.answer || '（未回答）'}\n评分：${q.score}/${q.max_score}\n评语：${q.evaluation || '无'}\n\n`
+  })
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = `面试报告_${new Date().toISOString().slice(0,10)}.txt`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 async function deleteHistory(id) {
   if (!confirm('确定删除此面试记录？')) return
   try {
@@ -339,12 +459,13 @@ async function saveQA(qa, idx) {
 }
 
 async function startInterview() {
-  startProgress()
   state.value = 'loading'
   errorMsg.value = ''
+  hintText.value = ''
   try {
     const res = await apiStartInterview({
       resume_text: resume.value, target_role: targetRole.value, target_company: targetCompany.value,
+      interview_type: interviewType.value, difficulty: difficulty.value,
     })
     sessionId.value = res.session_id; currentRound.value = res.round; currentQuestion.value = res.question; statusText.value = '面试进行中'; state.value = 'idle'
   } catch { errorMsg.value = '启动失败，请重试'; state.value = 'error' }
@@ -360,7 +481,6 @@ async function submitAnswer() {
   answer.value = ''
 
   abortController = new AbortController()
-  startProgress()
   state.value = 'thinking'
   thinkingLabel.value = '正在分析您的回答…'
 
@@ -391,6 +511,9 @@ async function submitAnswer() {
             thinkingLabel.value = event.data.label || '正在思考…'
             state.value = 'thinking'
           } else if (event.type === 'answer_saved') {
+            // 把刚答的题加入历史
+            qaHistory.value.push({question: currentQuestion.value, answer: text, id: ''})
+            await new Promise(r => setTimeout(r, 400))
             state.value = 'feedback_done'
           } else if (event.type === 'round_change') {
             currentRound.value = event.data.round
@@ -398,11 +521,13 @@ async function submitAnswer() {
             setTimeout(() => roundBanner.value = '', 3000)
           } else if (event.type === 'question') {
             currentRound.value = event.data.round
+            hintText.value = ''
             currentQuestion.value = event.data.text
             state.value = 'idle'
           } else if (event.type === 'done') {
             if (event.data && event.data.message === '面试完成！可以查看报告了') {
               report.value = await apiGetReport(sessionId.value)
+                await new Promise(r => setTimeout(r, 400))
               currentQuestion.value = ''
               statusText.value = '已完成'
             }
@@ -425,7 +550,6 @@ async function submitAnswer() {
 }
 
 async function nextQuestion() {
-  startProgress()
   state.value = 'thinking'
   thinkingLabel.value = '正在准备下一题…'
   try {
@@ -451,6 +575,7 @@ async function nextQuestion() {
             roundBanner.value = `第 ${event.data.round} 轮面试开始`
             setTimeout(() => roundBanner.value = '', 3000)
           } else if (event.type === 'question') {
+            hintText.value = ''
             currentRound.value = event.data.round
             currentQuestion.value = event.data.text
             streamEval.value = ''
@@ -458,6 +583,7 @@ async function nextQuestion() {
           } else if (event.type === 'done') {
             if (event.data && event.data.message === '面试完成！可以查看报告了') {
               report.value = await apiGetReport(sessionId.value)
+                await new Promise(r => setTimeout(r, 400))
               currentQuestion.value = ''
               statusText.value = '已完成'
             }
@@ -481,7 +607,6 @@ function confirmEnd() {
 
 async function doEnd() {
   showEndConfirm.value = false
-  startProgress()
   state.value = 'loading'
   try {
     const res = await apiEndInterview(sessionId.value)
@@ -497,26 +622,6 @@ async function doEnd() {
   }
 }
 
-function startProgress() {
-  progress.value = 0
-  if (progressTimer) clearInterval(progressTimer)
-  progressTimer = setInterval(() => {
-    if (progress.value < 95) {
-      // 前80%快一些，后面越来越慢
-      const step = progress.value < 50 ? 3 : progress.value < 80 ? 1.5 : 0.3
-      progress.value = Math.min(progress.value + step, 99)
-    }
-  }, 200)
-}
-
-function stopProgress() {
-  progress.value = 100
-  if (progressTimer) {
-    clearInterval(progressTimer)
-    progressTimer = null
-  }
-}
-
 function cancelStream() {
   if (abortController) {
     abortController.abort()
@@ -528,6 +633,35 @@ function cancelStream() {
 function retryAnswer() {
   state.value = 'idle'
   answer.value = streamEval.value ? '' : answer.value
+}
+
+async function getHint() {
+  if (!sessionId.value || !currentQuestion.value) return
+  try {
+    hintText.value = '正在生成思路引导...'
+    const res = await fetch(`/api/interview/${sessionId.value}/hint`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('comate_token')}` },
+      body: JSON.stringify({ question: currentQuestion.value }),
+    })
+    if (!res.ok) { hintText.value = ''; return }
+    const raw = await res.json()
+    hintText.value = (raw.data?.hint || raw.hint || '')
+  } catch { hintText.value = '' }
+}
+
+async function rerollQuestion() {
+  if (!sessionId.value || state.value !== 'idle') return
+  state.value = 'loading'
+  try {
+    const data = await apiRerollQuestion(sessionId.value)
+    if (data.question) {
+      currentQuestion.value = data.question
+      hintText.value = ''
+      streamEval.value = ''
+    }
+  } catch { errorMsg.value = '重试失败'; state.value = 'error' }
+  state.value = 'idle'
 }
 
 function backToHistory() {
@@ -631,25 +765,19 @@ function formatTime(iso) {
   animation: fadeIn .3s ease;
 }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
-.spinner { width: 40px; height: 40px; flex-shrink: 0; }
-.spinner svg { width: 100%; height: 100%; transform: rotate(-90deg); }
-.spinner-bg { fill: none; stroke: var(--line); stroke-width: 3; }
-.spinner-fill { fill: none; stroke: var(--honey); stroke-width: 3; stroke-linecap: round; transition: stroke-dasharray .3s ease; }
-.progress-wrap {
-  margin-top: 12px; padding: 12px 14px;
-  background: var(--honey-soft); border-radius: var(--r-md);
-}
-.progress-bar {
-  height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin-bottom: 6px;
-}
-.progress-fill {
-  height: 100%; background: var(--honey); border-radius: 3px;
-  transition: width .2s ease;
-}
-.progress-label {
-  font-size: 12px; color: var(--ink-soft); text-align: center;
-}
 .interview-eval {
   border-left: 3px solid var(--sprout); padding-left: 10px;
+}
+/* 长文本排版修复 */
+.interview-q div, .eval-box div, [class*="bubble"] div {
+  word-break: break-word; overflow-wrap: break-word; hyphens: auto;
+}
+.interview-q p, .eval-box p { margin: 4px 0; }
+.interview-q code, .eval-box code {
+  font-size: 12px; background: var(--line); padding: 1px 4px; border-radius: 3px; word-break: break-all;
+}
+.interview-q pre, .eval-box pre {
+  font-size: 12px; background: var(--line); padding: 8px; border-radius: var(--r-sm);
+  overflow-x: auto; white-space: pre-wrap; word-break: break-word;
 }
 </style>
