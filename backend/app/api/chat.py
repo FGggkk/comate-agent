@@ -12,6 +12,7 @@ from app.db.session import get_db
 from app.graph.engine import run_engine
 from app.models.conversation import Message, Session
 from app.services.soul_service import get_inventory
+from app.services.tacit_profile_service import schedule_tacit_refresh
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -82,5 +83,9 @@ async def api_send(
                 sess.title = auto_title
                 sess.title_auto_set = True
             await db.commit()
+            try:
+                schedule_tacit_refresh(user_id, session_id)
+            except Exception as e:
+                print(f"[chat] schedule tacit refresh failed: {e}")
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import json
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -221,7 +222,16 @@ async def create_co_created(
         defer_enrichment=True,
         **structured_fields,
     )
-    return {"success": True, "data": _item_to_dict(item), "message": "ok"}
+    superseded_count = await _resolve_explicit_memory_replacements(user_id, item, db)
+    if superseded_count:
+        try:
+            from app.services.tacit_profile_service import update_tacit_profile
+            await update_tacit_profile(user_id, db)
+        except Exception as e:
+            print(f"[memory] 更新默契画像失败: {e}")
+    data = _item_to_dict(item)
+    data["superseded_count"] = superseded_count
+    return {"success": True, "data": data, "message": "ok"}
 
 
 async def create_event_reminder(user_id: str, item_id: str, db: AsyncSession = None) -> dict:
@@ -510,9 +520,16 @@ async def get_all(user_id: str, db: AsyncSession = None) -> dict:
 
     forbidden = await get_forbidden(user_id, db)
     anchors = await get_anchors(user_id, db)
+    tacit_profile = {}
+    try:
+        from app.services.tacit_profile_service import get_profile_snapshot
+        tacit_profile = await get_profile_snapshot(user_id, db)
+    except Exception as e:
+        print(f"[memory] 默契画像读取失败: {e}")
 
     return {
         "layers": layers,
+        "tacit_profile": tacit_profile,
         "forbidden_topics": [{"id": str(f.id), "topic": f.topic_summary} for f in forbidden],
         "pending_anchors": [
             {"id": str(a.id), "topic": a.topic_summary, "status": a.status, "expires_at": a.expires_at.isoformat()}
@@ -1158,6 +1175,228 @@ async def resolve_contradictions(user_id: str, new_summary: str, new_item_id, db
             print(f"[resolve] 矛盾删除旧记忆: {old_item.summary[:40]}")
     except (ValueError, IndexError, Exception) as e:
         print(f"[resolve] LLM判断失败: {e}")
+
+
+async def _resolve_explicit_memory_replacements(user_id: str, new_item: MemoryItem, db: AsyncSession) -> int:
+    """同步处理用户明确表达的取消/替换，避免旧共建记忆继续展示。"""
+    source_text = _replacement_source_text(new_item)
+    cancelled_terms = _extract_cancelled_topics(source_text)
+    if not cancelled_terms:
+        return 0
+
+    result = await db.execute(
+        select(MemoryItem)
+        .where(
+            MemoryItem.user_id == user_id,
+            MemoryItem.layer == "co_created",
+            MemoryItem.status == "active",
+            MemoryItem.user_confirmed.is_(True),
+            MemoryItem.id != new_item.id,
+        )
+        .order_by(MemoryItem.updated_at.desc())
+        .limit(80)
+    )
+
+    now = datetime.now(timezone.utc)
+    superseded_count = 0
+    for old_item in result.scalars().all():
+        if not _should_supersede_memory(old_item, cancelled_terms, source_text):
+            continue
+        old_content = dict(old_item.content or {})
+        old_content["lifecycle"] = "superseded"
+        old_content["superseded_by"] = str(new_item.id)
+        old_content["superseded_reason"] = "explicit_replacement"
+        old_content["superseded_terms"] = sorted(cancelled_terms)
+        old_content["superseded_at"] = _format_datetime(now)
+        old_item.content = old_content
+        old_item.status = "deleted"
+        superseded_count += 1
+
+    if superseded_count:
+        new_content = dict(new_item.content or {})
+        new_content["replacement"] = {
+            "cancelled_terms": sorted(cancelled_terms),
+            "superseded_count": superseded_count,
+            "resolved_at": _format_datetime(now),
+        }
+        new_item.content = new_content
+        await db.commit()
+        await db.refresh(new_item)
+
+    return superseded_count
+
+
+def _replacement_source_text(item: MemoryItem) -> str:
+    content = item.content or {}
+    pieces = [
+        item.summary or "",
+        str(content.get("source_message") or ""),
+        str(content.get("source_reply") or ""),
+    ]
+    return "\n".join(piece for piece in pieces if piece)
+
+
+def _extract_cancelled_topics(text: str) -> set[str]:
+    if not _has_replacement_intent(text):
+        return set()
+
+    spans: list[str] = []
+    for pattern in (
+        r"(?:取消|停止|暂停|放弃|停掉|不再|别再|不用|不要|先不)([^，。！？；、\n]{1,24})",
+        r"([^，。！？；、\n]{1,24}?)(?:取消了?|停止了?|暂停了?|放弃了?|停掉了?|不做了?|不去了?|不用了?|不要了?)",
+        r"(?:把|将)?([^，。！？；、\n]{1,24}?)(?:改为|改成|换成|替换成|改去|改做)",
+    ):
+        spans.extend(match.group(1) for match in re.finditer(pattern, text))
+
+    terms: set[str] = set()
+    for span in spans:
+        terms.update(_extract_topic_terms(span))
+    return {term for term in terms if len(term) >= 2}
+
+
+def _extract_topic_terms(phrase: str) -> set[str]:
+    phrase = re.sub(r"\s+", "", phrase or "")
+    if not phrase:
+        return set()
+
+    known_terms = (
+        "跑步",
+        "健身",
+        "运动",
+        "训练",
+        "面试",
+        "考试",
+        "会议",
+        "求职",
+        "简历",
+        "香蕉",
+        "橘子",
+        "水果",
+        "早睡",
+        "熬夜",
+        "睡眠",
+        "学习",
+        "项目",
+        "代码",
+        "提醒",
+    )
+    terms = {term for term in known_terms if term in phrase}
+    if terms:
+        return terms
+
+    cleaned = phrase
+    for word in (
+        "用户",
+        "自己",
+        "我的",
+        "我",
+        "原来",
+        "之前",
+        "当前",
+        "现在",
+        "今天",
+        "明天",
+        "后天",
+        "之后",
+        "以后",
+        "这次",
+        "计划",
+        "安排",
+        "习惯",
+        "目标",
+        "需要",
+        "准备",
+        "已经",
+        "还是",
+        "那个",
+        "这个",
+        "一些",
+        "的",
+        "了",
+        "去",
+        "做",
+        "要",
+        "会",
+    ):
+        cleaned = cleaned.replace(word, "")
+    cleaned = cleaned.strip("，。！？；、 ")
+    if 2 <= len(cleaned) <= 12:
+        return {cleaned}
+    return set()
+
+
+def _has_replacement_intent(text: str) -> bool:
+    return bool(re.search(r"(取消|停止|暂停|放弃|停掉|不再|别再|不用|不要|不做了|不去了|改为|改成|换成|替换成|改去|改做)", text or ""))
+
+
+def _should_supersede_memory(old_item: MemoryItem, cancelled_terms: set[str], source_text: str) -> bool:
+    old_text = _memory_text(old_item)
+    matched_terms = [term for term in cancelled_terms if term and term in old_text]
+    if not matched_terms:
+        return False
+
+    old_type = old_item.memory_type or "general"
+    if old_type == "boundary":
+        return False
+
+    for term in matched_terms:
+        if _is_negative_constraint_about_term(old_text, term):
+            continue
+        if old_type in {"event", "routine"}:
+            return True
+        if old_type == "preference":
+            return _looks_like_activity_or_plan_memory(old_text, term) or _is_preference_reversal(source_text, term)
+        if old_type in {"general", "profile", "insight"}:
+            return _looks_like_activity_or_plan_memory(old_text, term)
+    return False
+
+
+def _memory_text(item: MemoryItem) -> str:
+    return "\n".join([
+        item.summary or "",
+        json.dumps(item.content or {}, ensure_ascii=False),
+    ])
+
+
+def _is_negative_constraint_about_term(text: str, term: str) -> bool:
+    for part in re.split(r"[，。！？；、\n]", text or ""):
+        if term not in part:
+            continue
+        if any(word in part for word in ("不会", "不能", "不在同一天", "不同时", "不要同时", "不一起")):
+            return True
+    return False
+
+
+def _looks_like_activity_or_plan_memory(text: str, term: str) -> bool:
+    if term not in text:
+        return False
+    markers = (
+        "计划",
+        "安排",
+        "准备",
+        "打算",
+        "目标",
+        "明天",
+        "今天",
+        "后天",
+        "每天",
+        "每周",
+        "每次",
+        "经常",
+        "常常",
+        "习惯",
+        "固定",
+        "围绕",
+        "公里",
+        "喜欢",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _is_preference_reversal(text: str, term: str) -> bool:
+    if term not in text:
+        return False
+    return any(word in text for word in ("不喜欢", "讨厌", "不想", "不再喜欢", "不爱", "不要"))
 
 
 async def update_anchors(user_id: str, message: str, reply: str, db: AsyncSession = None) -> None:

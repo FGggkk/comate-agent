@@ -5,6 +5,7 @@ from .interview import InterviewSession, InterviewQuestion
 from .reminder import Reminder
 from .verification_code import VerificationCode
 from .conversation import Session, Message
+from .tacit import SessionSummary, TacitProfile, TacitProfileVersion
 
 __all__ = [
     "User",
@@ -20,4 +21,7 @@ __all__ = [
     "VerificationCode",
     "Session",
     "Message",
+    "SessionSummary",
+    "TacitProfile",
+    "TacitProfileVersion",
 ]

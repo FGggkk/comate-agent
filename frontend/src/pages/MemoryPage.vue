@@ -36,11 +36,36 @@
       <!-- 记忆列表：默契层 -->
       <div class="page-label" style="margin-top:16px;">💭 默契层</div>
       <div class="page-card" style="padding:10px 14px;">
-        <div v-for="m in memoryStore.layers.tacit" :key="m.id" class="mitem">
-          <span class="mtype warn">推断</span>
-          <span class="mtext">{{ m.summary }}</span>
+        <div v-if="hasTacitProfile()" style="padding:4px 0 8px;">
+          <div class="tacit-profile-text">{{ memoryStore.tacitProfile.summary || '伴行正在形成对你的长期理解。' }}</div>
+          <div style="font-size:11px;color:var(--sub);margin-top:4px;">
+            v{{ memoryStore.tacitProfile.version_no || 0 }} · 置信度 {{ formatConfidence(memoryStore.tacitProfile.confidence) }} · {{ formatTime(memoryStore.tacitProfile.last_analyzed_at || memoryStore.tacitProfile.updated_at) }}
+          </div>
+          <button v-if="profileSections().length || memoryStore.layers.tacit.length" @click="showTacitEvidence = !showTacitEvidence" class="tacit-evidence-btn">
+            {{ showTacitEvidence ? '收起画像依据' : '查看画像依据' }}
+          </button>
+          <div v-if="showTacitEvidence" class="tacit-evidence">
+            <div v-for="section in profileSections()" :key="section.key" style="margin-top:10px;">
+              <div style="font-size:12px;color:var(--sub);font-weight:700;margin-bottom:4px;">{{ section.label }}</div>
+              <div v-for="item in section.items" :key="item.claim" style="display:flex;gap:8px;align-items:flex-start;padding:5px 0;border-bottom:1px solid var(--line);">
+                <span style="flex:1;font-size:13px;line-height:1.45;color:var(--ink);">{{ item.claim }}</span>
+                <span style="font-size:11px;color:var(--sub);white-space:nowrap;">{{ formatConfidence(item.confidence) }} · {{ item.evidence_count || 1 }}次</span>
+              </div>
+            </div>
+            <div v-for="m in memoryStore.layers.tacit" :key="m.id" class="mitem">
+              <span class="mtype warn">推断</span>
+              <span class="mtext">{{ m.summary }}</span>
+            </div>
+          </div>
         </div>
-        <div v-if="memoryStore.layers.tacit.length === 0" style="font-size:13px;color:var(--sub);padding:6px 0;">暂无默契记忆</div>
+
+        <div v-if="!hasTacitProfile()">
+          <div v-for="m in memoryStore.layers.tacit" :key="m.id" class="mitem">
+            <span class="mtype warn">推断</span>
+            <span class="mtext">{{ m.summary }}</span>
+          </div>
+        </div>
+        <div v-if="!hasTacitProfile() && memoryStore.layers.tacit.length === 0" style="font-size:13px;color:var(--sub);padding:6px 0;">暂无默契记忆</div>
       </div>
 
       <!-- 禁区 -->
@@ -81,8 +106,41 @@ const memoryStore = useMemoryStore()
 const loaded = ref(false)
 const loading = ref(false)
 const newForbidden = ref('')
+const showTacitEvidence = ref(false)
 
-function countLayer(layer) { return (memoryStore.layers[layer] || []).length }
+function countLayer(layer) {
+  const base = (memoryStore.layers[layer] || []).length
+  return layer === 'tacit' && hasTacitProfile() ? base + 1 : base
+}
+
+function hasTacitProfile() {
+  return !!(memoryStore.tacitProfile?.summary || profileSections().length)
+}
+
+function profileSections() {
+  const dimensions = memoryStore.tacitProfile?.dimensions || {}
+  return Object.entries(dimensions)
+    .map(([key, section]) => ({
+      key,
+      label: section.label || key,
+      items: (section.items || []).filter(item => item?.claim),
+    }))
+    .filter(section => section.items.length > 0)
+}
+
+function formatConfidence(value) {
+  const numeric = Number(value || 0)
+  return `${Math.round(numeric * 100)}%`
+}
+
+function formatTime(value) {
+  if (!value) return '尚未更新'
+  try {
+    return new Date(value).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  } catch {
+    return '尚未更新'
+  }
+}
 
 async function refreshMemories() {
   if (loading.value) return
@@ -131,3 +189,25 @@ async function fulfillAnchor(id) {
   await refreshMemories()
 }
 </script>
+
+<style scoped>
+.tacit-profile-text {
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.75;
+  white-space: pre-line;
+}
+
+.tacit-evidence-btn {
+  margin-top: 10px;
+  padding: 6px 0;
+  color: var(--honey-deep);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tacit-evidence {
+  margin-top: 2px;
+  padding-top: 2px;
+}
+</style>

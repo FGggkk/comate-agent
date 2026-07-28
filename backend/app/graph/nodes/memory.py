@@ -1,6 +1,7 @@
 from app.graph.state import ChatState
 from app.graph.schemas import memory_card_event, status_event
 from app.services.memory_service import get_anchors, search
+from app.services.tacit_profile_service import get_tacit_context
 
 
 async def memory_node(state: ChatState, db):
@@ -10,6 +11,12 @@ async def memory_node(state: ChatState, db):
     # 语义检索记忆
     memories = await search(state.user_id, state.message, top_k=3, db=db)
     state.memories = memories
+
+    try:
+        state.tacit_context = await get_tacit_context(state.user_id, db)
+    except Exception as e:
+        print(f"[memory] 默契画像读取失败: {e}")
+        state.tacit_context = ""
 
     # 记忆卡片（最多 2 条）
     for m in memories[:2]:

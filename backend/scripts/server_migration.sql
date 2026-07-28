@@ -1,4 +1,5 @@
 -- 已有数据库迁移 pgvector
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS vector;
 ALTER TABLE memory_items ADD COLUMN IF NOT EXISTS embedding vector(1536);
 CREATE INDEX IF NOT EXISTS idx_memory_embedding_hnsw
@@ -51,6 +52,92 @@ CREATE INDEX IF NOT EXISTS idx_memory_observations_memory
 ON memory_observations (memory_id, observed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_memory_observations_user
 ON memory_observations (user_id, observed_at DESC);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id),
+    title VARCHAR(200) DEFAULT '新对话',
+    title_auto_set BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    session_id UUID NOT NULL REFERENCES sessions(id),
+    role VARCHAR(16) NOT NULL,
+    content TEXT NOT NULL,
+    msg_type VARCHAR(32) DEFAULT 'text',
+    metadata_ TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
+
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS title_auto_set BOOLEAN DEFAULT FALSE;
+
+CREATE TABLE IF NOT EXISTS session_summaries (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id),
+    session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    summary TEXT DEFAULT '',
+    topics JSONB DEFAULT '{}',
+    signals JSONB DEFAULT '{}',
+    message_count INTEGER DEFAULT 0,
+    started_at TIMESTAMPTZ,
+    ended_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    CONSTRAINT uq_session_summaries_session_id UNIQUE (session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_summaries_user
+ON session_summaries (user_id, ended_at DESC);
+
+CREATE TABLE IF NOT EXISTS tacit_profiles (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id),
+    summary TEXT DEFAULT '',
+    profile JSONB DEFAULT '{}',
+    version_no INTEGER DEFAULT 1,
+    confidence DOUBLE PRECISION DEFAULT 0,
+    horizon_start TIMESTAMPTZ,
+    horizon_end TIMESTAMPTZ,
+    last_analyzed_at TIMESTAMPTZ,
+    next_review_at TIMESTAMPTZ,
+    status VARCHAR(16) DEFAULT 'active',
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    CONSTRAINT uq_tacit_profiles_user_id UNIQUE (user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tacit_profiles_review
+ON tacit_profiles (next_review_at)
+WHERE status = 'active' AND next_review_at IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS tacit_profile_versions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    profile_id UUID NOT NULL REFERENCES tacit_profiles(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id),
+    version_no INTEGER NOT NULL,
+    input_window_start TIMESTAMPTZ,
+    input_window_end TIMESTAMPTZ,
+    base_profile JSONB DEFAULT '{}',
+    new_evidence JSONB DEFAULT '{}',
+    delta JSONB DEFAULT '{}',
+    merged_profile JSONB DEFAULT '{}',
+    decay_applied JSONB DEFAULT '{}',
+    model_version VARCHAR(64) DEFAULT 'rules-v1',
+    prompt_version VARCHAR(64) DEFAULT 'tacit-profile-v1',
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tacit_profile_versions_user
+ON tacit_profile_versions (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tacit_profile_versions_profile
+ON tacit_profile_versions (profile_id, version_no DESC);
 
 -- 用户表新增字段
 ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname VARCHAR(64);

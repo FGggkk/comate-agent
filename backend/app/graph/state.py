@@ -11,6 +11,7 @@ class ChatState:
     compiled_soul: str = ""
     soul_id: str = ""
     memories: list[dict] = field(default_factory=list)
+    tacit_context: str = ""
     memory_candidates: list[dict] = field(default_factory=list)
     pending_anchors: list[dict] = field(default_factory=list)
     intent: str = "daily"  # daily / interview / complex
