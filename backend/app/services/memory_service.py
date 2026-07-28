@@ -12,13 +12,19 @@ from app.models.memory import ForbiddenTopic, MemoryItem, PendingAnchor
 from app.services.embedding_service import get_embedding
 
 
+CHAT_MEMORY_LAYERS = ("co_created", "tacit")
+
+
 async def search(
     user_id: str,
     query: str,
     top_k: int = 5,
     db: AsyncSession = None,
 ) -> list[dict]:
-    """语义检索 + 关键词兜底 + 禁区过滤"""
+    """语义检索 + 关键词兜底 + 禁区过滤。
+
+    先验层由系统/管理员维护，只用于安全策略，不作为聊天记忆主动引用。
+    """
     forbidden = await get_forbidden(user_id, db)
     forbidden_words = {f.topic_summary.lower() for f in forbidden}
 
@@ -34,6 +40,7 @@ async def search(
             FROM memory_items
             WHERE user_id = CAST(:user_id AS uuid)
               AND status = 'active'
+              AND layer IN ('co_created', 'tacit')
               AND embedding IS NOT NULL
             ORDER BY embedding <=> CAST(:query_vec AS vector)
             LIMIT :top_k
@@ -65,6 +72,7 @@ async def search(
         select(MemoryItem).where(
             MemoryItem.user_id == user_id,
             MemoryItem.status == "active",
+            MemoryItem.layer.in_(CHAT_MEMORY_LAYERS),
         ).order_by(MemoryItem.created_at.desc()).limit(50)
     )
     items = result.scalars().all()
@@ -118,18 +126,41 @@ async def add(
     return item
 
 
-async def update_item(item_id: str, data: dict, db: AsyncSession = None) -> dict:
-    await db.execute(
-        update(MemoryItem).where(MemoryItem.id == item_id).values(**data)
+async def update_item(user_id: str, item_id: str, data: dict, db: AsyncSession = None) -> dict:
+    result = await db.execute(
+        select(MemoryItem).where(
+            MemoryItem.id == item_id,
+            MemoryItem.user_id == user_id,
+            MemoryItem.status == "active",
+        )
     )
+    item = result.scalar_one_or_none()
+    if not item:
+        return {"success": False, "message": "记忆不存在或无权操作"}
+    if item.layer == "priors":
+        return {"success": False, "message": "先验层由系统维护，不能编辑"}
+
+    for key, value in data.items():
+        setattr(item, key, value)
     await db.commit()
     return {"success": True}
 
 
-async def delete_item(item_id: str, db: AsyncSession = None) -> dict:
-    await db.execute(
-        update(MemoryItem).where(MemoryItem.id == item_id).values(status="deleted")
+async def delete_item(user_id: str, item_id: str, db: AsyncSession = None) -> dict:
+    result = await db.execute(
+        select(MemoryItem).where(
+            MemoryItem.id == item_id,
+            MemoryItem.user_id == user_id,
+            MemoryItem.status == "active",
+        )
     )
+    item = result.scalar_one_or_none()
+    if not item:
+        return {"success": False, "message": "记忆不存在或无权操作"}
+    if item.layer == "priors":
+        return {"success": False, "message": "先验层由系统维护，不能删除"}
+
+    item.status = "deleted"
     await db.commit()
     return {"success": True}
 
@@ -174,9 +205,16 @@ async def add_forbidden(user_id: str, topic: str, phrase: str = "", db: AsyncSes
     return {"success": True}
 
 
-async def remove_forbidden(topic_id: str, db: AsyncSession = None) -> dict:
-    await db.execute(delete(ForbiddenTopic).where(ForbiddenTopic.id == topic_id))
+async def remove_forbidden(user_id: str, topic_id: str, db: AsyncSession = None) -> dict:
+    result = await db.execute(
+        delete(ForbiddenTopic).where(
+            ForbiddenTopic.id == topic_id,
+            ForbiddenTopic.user_id == user_id,
+        )
+    )
     await db.commit()
+    if result.rowcount == 0:
+        return {"success": False, "message": "禁区话题不存在或无权操作"}
     return {"success": True}
 
 
@@ -192,11 +230,17 @@ async def get_anchors(user_id: str, db: AsyncSession = None) -> list[PendingAnch
     return result.scalars().all()
 
 
-async def fulfill_anchor(anchor_id: str, db: AsyncSession = None) -> dict:
-    await db.execute(
-        update(PendingAnchor).where(PendingAnchor.id == anchor_id).values(status="fulfilled")
+async def fulfill_anchor(user_id: str, anchor_id: str, db: AsyncSession = None) -> dict:
+    result = await db.execute(
+        update(PendingAnchor).where(
+            PendingAnchor.id == anchor_id,
+            PendingAnchor.user_id == user_id,
+            PendingAnchor.status == "pending",
+        ).values(status="fulfilled")
     )
     await db.commit()
+    if result.rowcount == 0:
+        return {"success": False, "message": "待续话题不存在或无权操作"}
     return {"success": True}
 
 
@@ -313,6 +357,7 @@ async def resolve_contradictions(user_id: str, new_summary: str, new_item_id, db
             WHERE user_id = CAST(:uid AS uuid)
               AND status = 'active'
               AND id != CAST(:nid AS uuid)
+              AND layer IN ('co_created', 'tacit')
               AND embedding IS NOT NULL
             ORDER BY embedding <=> CAST(:vec AS vector)
             LIMIT 5

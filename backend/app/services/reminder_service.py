@@ -30,9 +30,16 @@ async def list_reminders(user_id: str, db: AsyncSession) -> list[dict]:
     ]
 
 
-async def delete_reminder(reminder_id: str, db: AsyncSession) -> dict:
-    await db.execute(delete(Reminder).where(Reminder.id == reminder_id))
+async def delete_reminder(user_id: str, reminder_id: str, db: AsyncSession) -> dict:
+    result = await db.execute(
+        delete(Reminder).where(
+            Reminder.id == reminder_id,
+            Reminder.user_id == user_id,
+        )
+    )
     await db.commit()
+    if result.rowcount == 0:
+        return {"success": False, "message": "提醒不存在或无权操作"}
     return {"success": True}
 
 

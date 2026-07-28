@@ -27,8 +27,12 @@ async def api_list(db: AsyncSession = Depends(get_db), user_id: str = Depends(ge
 
 
 @router.delete("/{reminder_id}")
-async def api_delete(reminder_id: str, db: AsyncSession = Depends(get_db)):
-    return await reminder_service.delete_reminder(reminder_id, db)
+async def api_delete(
+    reminder_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+):
+    return await reminder_service.delete_reminder(user_id, reminder_id, db)
 
 
 @router.get("/due")

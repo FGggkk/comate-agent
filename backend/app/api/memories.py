@@ -26,7 +26,12 @@ async def api_get_memories(db: AsyncSession = Depends(get_db), user_id: str = De
 
 
 @router.put("/{item_id}")
-async def api_update_memory(item_id: str, req: UpdateMemoryRequest, db: AsyncSession = Depends(get_db)):
+async def api_update_memory(
+    item_id: str,
+    req: UpdateMemoryRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+):
     data = {}
     if req.summary is not None:
         data["summary"] = req.summary
@@ -34,12 +39,16 @@ async def api_update_memory(item_id: str, req: UpdateMemoryRequest, db: AsyncSes
         data["content"] = req.content
     if req.user_confirmed is not None:
         data["user_confirmed"] = req.user_confirmed
-    return await memory_service.update_item(item_id, data, db)
+    return await memory_service.update_item(user_id, item_id, data, db)
 
 
 @router.delete("/{item_id}")
-async def api_delete_memory(item_id: str, db: AsyncSession = Depends(get_db)):
-    return await memory_service.delete_item(item_id, db)
+async def api_delete_memory(
+    item_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+):
+    return await memory_service.delete_item(user_id, item_id, db)
 
 
 @router.post("/forbidden")
@@ -48,10 +57,18 @@ async def api_add_forbidden(req: AddForbiddenRequest, db: AsyncSession = Depends
 
 
 @router.delete("/forbidden/{topic_id}")
-async def api_remove_forbidden(topic_id: str, db: AsyncSession = Depends(get_db)):
-    return await memory_service.remove_forbidden(topic_id, db)
+async def api_remove_forbidden(
+    topic_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+):
+    return await memory_service.remove_forbidden(user_id, topic_id, db)
 
 
 @router.post("/anchor/{anchor_id}/fulfill")
-async def api_fulfill_anchor(anchor_id: str, db: AsyncSession = Depends(get_db)):
-    return await memory_service.fulfill_anchor(anchor_id, db)
+async def api_fulfill_anchor(
+    anchor_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+):
+    return await memory_service.fulfill_anchor(user_id, anchor_id, db)
