@@ -111,6 +111,8 @@ async def api_list_sessions(db: AsyncSession = Depends(get_db), user_id: str = D
                 "title": s.title or "",
                 "status": s.status,
                 "round_number": s.round_number,
+                "difficulty": s.difficulty or "medium",
+                "max_rounds": {"easy": 1, "medium": 2, "hard": 3}.get(s.difficulty or "medium", 2),
                 "created_at": s.created_at.isoformat() if s.created_at else None,
             }
             for s in sessions

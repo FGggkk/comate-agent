@@ -39,6 +39,23 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 button:active { transform: scale(.96); }
 input { font-family: inherit; }
 
+/* ── Markdown 列表溢出修复 ── */
+.bubble-bot ol, .bubble-user ol,
+.interview-q ol, .eval-box ol,
+.bubble-bot ul, .bubble-user ul,
+.interview-q ul, .eval-box ul {
+  padding-left: 20px !important;
+  margin: 4px 0 !important;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+.bubble-bot li, .bubble-user li,
+.interview-q li, .eval-box li {
+  word-break: break-word;
+  overflow-wrap: break-word;
+  margin-bottom: 2px;
+}
+
 /* ── App Container ── */
 .app-container {
   max-width: 480px; margin: 0 auto; height: 100vh;
