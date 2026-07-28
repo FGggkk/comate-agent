@@ -23,9 +23,9 @@ const tabs = [
     icon: '<path d="M4 5a2 2 0 012-2h12a2 2 0 012 2v16l-4-3-4 3-4-3-4 3V5z"/>',
   },
   {
-    id: 'interview',
-    label: '面试',
-    icon: '<path d="M12 2a4 4 0 0 0-4 4c0 2 2 3 2 6H14c0-3 2-4 2-6a4 4 0 0 0-4-4z"/><path d="M10 17v1a2 2 0 1 0 4 0v-1"/><line x1="10" y1="13" x2="14" y2="13"/>',
+    id: 'workbench',
+    label: '工作台',
+    icon: '<rect x="3" y="7" width="18" height="14" rx="2" ry="2"/><path d="M7 7V5a2 2 0 012-2h6a2 2 0 012 2v2"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/>',
   },
   {
     id: 'settings',

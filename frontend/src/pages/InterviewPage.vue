@@ -1,5 +1,12 @@
 <template>
   <div class="scroll">
+    <!-- 返回栏（嵌入模式） -->
+    <div v-if="embedded" class="back-bar" style="margin-left:-16px;padding-left:4px;padding-right:16px;">
+      <button @click="embeddedBack" class="back-btn">
+        <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="13,4 7,10 13,16"/></svg>
+        {{ sessionId ? '返回' : '返回工作台' }}
+      </button>
+    </div>
     <div class="page-title">面试训练</div>
 
     <!-- 开始页 -->
@@ -15,10 +22,11 @@
             <option value="hard">😈 困难</option>
           </select>
         </div>
-        <button @click="startInterview" :disabled="state !== 'idle' || !targetRole" class="btn-primary" style="margin-top:10px;width:100%;">
+        <button @click="startInterview" :disabled="state !== 'idle'" class="btn-primary" style="margin-top:10px;width:100%;">
           {{ state === 'loading' ? '准备中...' : '🚀 开始模拟面试' }}
         </button>
       </div>
+      <div v-if="errorMsg" style="margin-top:8px;font-size:13px;color:var(--berry);text-align:center;">⚠ {{ errorMsg }}</div>
 
       <!-- 更多设置 -->
       <details style="margin-bottom:16px;">
@@ -53,20 +61,26 @@
             <div style="flex:1;cursor:pointer;" @click="renamingId !== s.id && (s.status === 'completed' ? showEval(s) : viewHistory(s.id))">
               <div style="font-weight:600;font-size:14px;">
                 <template v-if="renamingId === s.id">
-                  <input v-model="renameText" @keydown.enter="confirmRename(s)" @blur="confirmRename(s)" @click.stop class="form-input" style="font-size:14px;padding:2px 6px;" autofocus />
+                  <span style="display:flex;align-items:center;gap:4px;">
+                    <input v-model="renameText" @keydown.enter="confirmRename(s)" @click.stop class="form-input" style="font-size:14px;padding:2px 6px;flex:1;" autofocus />
+                    <button @click.stop="confirmRename(s)" style="font-size:14px;padding:2px 6px;color:var(--sprout);background:none;border:none;cursor:pointer;">✓</button>
+                  </span>
                 </template>
                 <template v-else>{{ s.title || s.target_role || '未命名' }}</template>
               </div>
               <div style="font-size:12px;color:var(--sub);">
-                {{ s.target_company }} · 第{{ s.round_number }}/3轮
+                {{ s.target_company }} · 第{{ s.round_number }}/{{ s.max_rounds || 3 }}轮
                 <span :style="{color: s.status === 'completed' ? 'var(--sprout)' : 'var(--honey-deep)'}">{{ s.status === 'completed' ? '✅ 已完成' : '⏳ 进行中' }}</span>
               </div>
             </div>
-            <div style="display:flex;gap:4px;align-items:center;">
-              <button @click.stop="startRename(s)" style="font-size:14px;padding:4px 6px;opacity:.4;">✏️</button>
-              <button v-if="s.status === 'completed'" @click.stop="showEval(s)" class="hist-btn" style="color:var(--sprout);">📄 评价</button>
-              <button v-else @click.stop="viewHistory(s.id)" class="hist-btn" style="color:var(--honey-deep);">继续 →</button>
-              <button @click.stop="deleteHistory(s.id)" style="font-size:14px;padding:4px 8px;color:var(--berry);opacity:.5;">🗑</button>
+            <div style="display:flex;gap:4px;align-items:center;position:relative;">
+              <button @click.stop="toggleMenu(s.id)" style="font-size:16px;padding:2px 6px;color:var(--sub);border:1px solid var(--line);border-radius:var(--r-sm);background:transparent;cursor:pointer;">⋮</button>
+              <div v-if="openMenuId === s.id" style="position:absolute;top:100%;right:0;z-index:20;min-width:120px;background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);box-shadow:0 4px 12px rgba(0,0,0,.1);padding:4px 0;">
+                <button @click.stop="startRename(s);openMenuId=''" style="display:block;width:100%;text-align:left;padding:6px 14px;font-size:13px;color:var(--ink);background:none;border:none;cursor:pointer;">✎ 重命名</button>
+                <button v-if="s.status === 'completed'" @click.stop="showEval(s);openMenuId=''" style="display:block;width:100%;text-align:left;padding:6px 14px;font-size:13px;color:var(--sprout);background:none;border:none;cursor:pointer;">☰ 查看报告</button>
+                <button v-else @click.stop="viewHistory(s.id);openMenuId=''" style="display:block;width:100%;text-align:left;padding:6px 14px;font-size:13px;color:var(--honey-deep);background:none;border:none;cursor:pointer;">▸ 继续</button>
+                <button @click.stop="deleteHistory(s.id);openMenuId=''" style="display:block;width:100%;text-align:left;padding:6px 14px;font-size:13px;color:var(--berry);background:none;border:none;cursor:pointer;">✕ 删除</button>
+              </div>
             </div>
           </div>
         </div>
@@ -86,20 +100,26 @@
             <div style="flex:1;cursor:pointer;" @click="renamingId !== s.id && viewHistory(s.id)">
               <div style="font-weight:600;font-size:14px;">
                 <template v-if="renamingId === s.id">
-                  <input v-model="renameText" @keydown.enter="confirmRename(s)" @blur="confirmRename(s)" @click.stop class="form-input" style="font-size:14px;padding:2px 6px;" autofocus />
+                  <span style="display:flex;align-items:center;gap:4px;">
+                    <input v-model="renameText" @keydown.enter="confirmRename(s)" @click.stop class="form-input" style="font-size:14px;padding:2px 6px;flex:1;" autofocus />
+                    <button @click.stop="confirmRename(s)" style="font-size:14px;padding:2px 6px;color:var(--sprout);background:none;border:none;cursor:pointer;">✓</button>
+                  </span>
                 </template>
                 <template v-else>{{ s.title || s.target_role || '未命名' }}</template>
               </div>
               <div style="font-size:12px;color:var(--sub);">
-                {{ s.target_company }} · 第{{ s.round_number }}/3轮
+                {{ s.target_company }} · 第{{ s.round_number }}/{{ s.max_rounds || 3 }}轮
                 <span :style="{color: s.status === 'completed' ? 'var(--sprout)' : 'var(--honey-deep)'}">{{ s.status === 'completed' ? '✅ 已完成' : '⏳ 进行中' }}</span>
               </div>
             </div>
-            <div style="display:flex;gap:4px;align-items:center;">
-              <button @click.stop="startRename(s)" style="font-size:14px;padding:4px 6px;opacity:.4;">✏️</button>
-              <button v-if="s.status === 'completed'" @click.stop="showEval(s)" class="hist-btn" style="color:var(--sprout);">📄 评价</button>
-              <button v-else @click.stop="viewHistory(s.id)" class="hist-btn" style="color:var(--honey-deep);">继续 →</button>
-              <button @click.stop="deleteHistory(s.id)" style="font-size:14px;padding:4px 8px;color:var(--berry);opacity:.5;">🗑</button>
+            <div style="display:flex;gap:4px;align-items:center;position:relative;">
+              <button @click.stop="toggleMenu(s.id)" style="font-size:16px;padding:2px 6px;color:var(--sub);border:1px solid var(--line);border-radius:var(--r-sm);background:transparent;cursor:pointer;">⋮</button>
+              <div v-if="openMenuId === s.id" style="position:absolute;top:100%;right:0;z-index:20;min-width:120px;background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);box-shadow:0 4px 12px rgba(0,0,0,.1);padding:4px 0;">
+                <button @click.stop="startRename(s);openMenuId=''" style="display:block;width:100%;text-align:left;padding:6px 14px;font-size:13px;color:var(--ink);background:none;border:none;cursor:pointer;">✎ 重命名</button>
+                <button v-if="s.status === 'completed'" @click.stop="showEval(s);openMenuId=''" style="display:block;width:100%;text-align:left;padding:6px 14px;font-size:13px;color:var(--sprout);background:none;border:none;cursor:pointer;">☰ 查看报告</button>
+                <button v-else @click.stop="viewHistory(s.id);openMenuId=''" style="display:block;width:100%;text-align:left;padding:6px 14px;font-size:13px;color:var(--honey-deep);background:none;border:none;cursor:pointer;">▸ 继续</button>
+                <button @click.stop="deleteHistory(s.id);openMenuId=''" style="display:block;width:100%;text-align:left;padding:6px 14px;font-size:13px;color:var(--berry);background:none;border:none;cursor:pointer;">✕ 删除</button>
+              </div>
             </div>
           </div>
         </div>
@@ -111,7 +131,7 @@
     <div v-else class="page-card">
       <!-- 顶部：返回 + 步骤指示器 + 结束 -->
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-        <button @click="backToHistory" style="font-size:20px;padding:4px 8px;color:var(--ink-soft);">← 返回</button>
+        <button v-if="!embedded" @click="backToHistory" class="back-btn"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="13,4 7,10 13,16"/></svg> 返回</button>
         <button @click="confirmEnd" style="font-size:12px;padding:4px 10px;border-radius:var(--r-sm);border:1px solid var(--berry);color:var(--berry);">结束面试</button>
       </div>
       <div style="margin-bottom:12px;">
@@ -178,11 +198,22 @@
       <!-- 轮次切换横幅 -->
       <div v-if="roundBanner" class="round-banner">{{ roundBanner }}</div>
 
-      <!-- 进度指示（改用小型 pulse 动画，不模拟百分比） -->
-      <div v-if="state === 'loading' || state === 'thinking' || state === 'evaluating'" class="thinking-bar">
-        <div class="thinking-pulse"></div>
-        <div class="thinking-text">{{ state === 'loading' ? '正在准备面试…' : thinkingLabel }}</div>
-        <button v-if="state === 'evaluating'" @click="cancelStream" class="thinking-cancel">取消</button>
+      <!-- 阶段进度条 -->
+      <div v-if="progressVisible" class="progress-wrap">
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--sub);margin-bottom:4px;">
+          <span>{{ progressLabel || progressPhases[progressPhaseIndex] || '' }}</span>
+          <span>{{ Math.round(progressPercent) }}%</span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" :style="{width: progressPercent + '%'}"></div>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
+          <span v-for="(ph, i) in progressPhases" :key="i" :style="{fontSize:'11px',color: i <= progressPhaseIndex ? 'var(--honey-deep)' : 'var(--sub)',opacity: i <= progressPhaseIndex ? 1 : .5}">
+            {{ i > 0 ? ' · ' : '' }}{{ i <= progressPhaseIndex ? '✓' : '○' }} {{ ph }}
+          </span>
+        </div>
+        <div v-if="progressDoneText" style="margin-top:6px;font-size:12px;color:var(--sprout);font-weight:600;">{{ progressDoneText }}</div>
+        <button v-if="state === 'evaluating'" @click="cancelStream" class="thinking-cancel" style="margin-top:6px;">取消</button>
       </div>
 
       <!-- 评估结果（流式） -->
@@ -225,10 +256,11 @@
 
     <!-- 评价报告覆盖层（放在最外层，不受 v-if/v-else 影响） -->
     <div v-if="evalReport" class="dialog-overlay" @click="closeEval">
-      <div class="dialog-box eval-box" @click.stop>
+      <div :class="['dialog-box', 'eval-box', isFullscreen ? 'eval-fullscreen' : '']" @click.stop>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
           <div class="page-label" style="margin:0;">面试评价报告</div>
           <div style="display:flex;gap:6px;">
+            <button @click="toggleFullscreen" style="font-size:16px;padding:4px 6px;color:var(--sub);background:none;border:none;cursor:pointer;" :title="isFullscreen ? '退出全屏' : '全屏'">⛶</button>
             <button @click="exportReport" style="font-size:12px;padding:4px 10px;border-radius:var(--r-sm);border:1px solid var(--honey);color:var(--honey);background:transparent;">📄 导出</button>
             <button @click="closeEval" style="font-size:18px;padding:4px;color:var(--sub);">✕</button>
           </div>
@@ -258,11 +290,12 @@
           <div v-for="(q, idx) in evalReport.questions || []" :key="idx" class="page-card" style="margin-top:8px;padding:10px;">
             <div style="font-size:13px;font-weight:600;margin-bottom:4px;" v-html="renderMd(q.question)"></div>
             <div style="font-size:11px;color:var(--sub);margin-bottom:4px;">回答：{{ q.answer }}</div>
-            <div v-if="q.score !== undefined" style="font-size:12px;margin-bottom:2px;">
+            <div v-if="q.max_score && q.max_score > 0" style="font-size:12px;margin-bottom:2px;">
               <span :style="{color: q.score/q.max_score >= 0.7 ? 'var(--sprout)' : q.score/q.max_score >= 0.4 ? 'var(--honey-deep)' : 'var(--berry)'}">
-                {{ q.score }}/{{ q.max_score }}分
+                {{ q.score ?? '-' }}/{{ q.max_score }}分
               </span>
             </div>
+            <div v-else style="font-size:12px;color:var(--sub);margin-bottom:2px;">-/{{ q.max_score || '?' }}分（待评估）</div>
             <div style="font-size:11px;color:var(--ink-soft);" v-html="renderMd(q.evaluation)"></div>
           </div>
         </div>
@@ -275,6 +308,11 @@
 import { ref, computed, onMounted } from 'vue'
 import { marked } from 'marked'
 import { apiStartInterview, apiAnswerQuestionStream, apiGetReport, apiListInterviews, apiNextQuestion, apiEndInterview, apiEditInterviewAnswer, apiDeleteInterview, apiRenameInterview, apiRerollQuestion } from '../api/index'
+
+const props = defineProps({
+  embedded: { type: Boolean, default: false },
+})
+const emit = defineEmits(['back'])
 
 function renderMd(text) {
   if (!text) return ''
@@ -332,8 +370,69 @@ const editingQA = ref(-1)
 const editingQAText = ref('')
 const renamingId = ref('')
 const renameText = ref('')
+const openMenuId = ref('')
+function toggleMenu(id) {
+  openMenuId.value = openMenuId.value === id ? '' : id
+  if (openMenuId.value) {
+    setTimeout(() => document.addEventListener('click', () => { openMenuId.value = '' }, { once: true }), 0)
+  }
+}
 const editingAnswerIdx = ref(-1)
 const editingAnswerText = ref('')
+const progressVisible = ref(false)
+const progressPercent = ref(0)
+const progressPhaseIndex = ref(0)
+const progressPhases = ref([])
+const progressLabel = ref('')
+const progressDoneText = ref('')
+let progressTimer = null
+
+function showProgress(phases) {
+  progressPhases.value = phases
+  progressPhaseIndex.value = 0
+  progressPercent.value = 5
+  progressVisible.value = true
+  progressLabel.value = phases[0] || ''
+  progressDoneText.value = ''
+  if (progressTimer) clearInterval(progressTimer)
+  progressTimer = setInterval(() => {
+    const phaseStart = (progressPhaseIndex.value / Math.max(phases.length, 1)) * 90
+    const phaseEnd = ((progressPhaseIndex.value + 1) / Math.max(phases.length, 1)) * 90
+    const range = phaseEnd - phaseStart
+    if (progressPercent.value < phaseEnd - 2) {
+      progressPercent.value = Math.min(progressPercent.value + 1, phaseEnd - 2)
+    }
+  }, 400)
+}
+
+function advancePhase() {
+  if (progressPhaseIndex.value < progressPhases.value.length - 1) {
+    progressPhaseIndex.value++
+    progressLabel.value = progressPhases.value[progressPhaseIndex.value] || ''
+    const newPct = ((progressPhaseIndex.value + 1) / Math.max(progressPhases.value.length, 1)) * 90
+    progressPercent.value = Math.max(progressPercent.value, newPct - 5)
+  }
+}
+
+function hideProgress() {
+  progressPercent.value = 100
+  progressVisible.value = false
+  progressPhaseIndex.value = 0
+  if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
+}
+
+function markProgressDone(doneText) {
+  progressPercent.value = 100
+  progressPhaseIndex.value = progressPhases.value.length - 1
+  progressLabel.value = progressDoneText.value = doneText || '完成'
+  if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
+}
+
+function completeProgress() {
+  progressPercent.value = 100
+  if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
+  return new Promise(r => setTimeout(r, 500))
+}
 
 // 状态机：idle | loading | thinking | evaluating | done | error
 const state = ref('idle')
@@ -381,8 +480,11 @@ async function showEval(session) {
   }
 }
 
+const isFullscreen = ref(false)
+function toggleFullscreen() { isFullscreen.value = !isFullscreen.value }
 function closeEval() {
   evalReport.value = null
+  isFullscreen.value = false
 }
 
 function exportReport() {
@@ -459,6 +561,8 @@ async function saveQA(qa, idx) {
 }
 
 async function startInterview() {
+  if (!targetRole.value.trim()) { errorMsg.value = '请填写目标岗位'; return }
+  showProgress(['准备题目', '生成中', '完成'])
   state.value = 'loading'
   errorMsg.value = ''
   hintText.value = ''
@@ -467,6 +571,7 @@ async function startInterview() {
       resume_text: resume.value, target_role: targetRole.value, target_company: targetCompany.value,
       interview_type: interviewType.value, difficulty: difficulty.value,
     })
+    markProgressDone('面试已开始')
     sessionId.value = res.session_id; currentRound.value = res.round; currentQuestion.value = res.question; statusText.value = '面试进行中'; state.value = 'idle'
   } catch { errorMsg.value = '启动失败，请重试'; state.value = 'error' }
 }
@@ -481,8 +586,8 @@ async function submitAnswer() {
   answer.value = ''
 
   abortController = new AbortController()
+  showProgress(['提交回答', '已保存', '等待下一题'])
   state.value = 'thinking'
-  thinkingLabel.value = '正在分析您的回答…'
 
   try {
     const response = await fetch(`/api/interview/${sessionId.value}/answer/stream`, {
@@ -511,8 +616,10 @@ async function submitAnswer() {
             thinkingLabel.value = event.data.label || '正在思考…'
             state.value = 'thinking'
           } else if (event.type === 'answer_saved') {
+            markProgressDone('✅ 回答已保存')
             // 把刚答的题加入历史
             qaHistory.value.push({question: currentQuestion.value, answer: text, id: ''})
+            currentQuestion.value = ''
             await new Promise(r => setTimeout(r, 400))
             state.value = 'feedback_done'
           } else if (event.type === 'round_change') {
@@ -540,6 +647,7 @@ async function submitAnswer() {
       }
     }
   } catch (err) {
+    hideProgress()
     if (err.name === 'AbortError') {
       state.value = 'idle'
     } else {
@@ -550,8 +658,8 @@ async function submitAnswer() {
 }
 
 async function nextQuestion() {
+  showProgress(['准备题目', '生成中', '完成'])
   state.value = 'thinking'
-  thinkingLabel.value = '正在准备下一题…'
   try {
     const response = await apiNextQuestion(sessionId.value)
     if (!response.ok) throw new Error('请求失败')
@@ -569,21 +677,24 @@ async function nextQuestion() {
         try {
           const event = JSON.parse(line.slice(6))
           if (event.type === 'thinking') {
-            thinkingLabel.value = event.data.label || '正在准备…'
+            advancePhase()
           } else if (event.type === 'round_change') {
             currentRound.value = event.data.round
             roundBanner.value = `第 ${event.data.round} 轮面试开始`
             setTimeout(() => roundBanner.value = '', 3000)
           } else if (event.type === 'question') {
+            markProgressDone('题目已就绪')
             hintText.value = ''
             currentRound.value = event.data.round
             currentQuestion.value = event.data.text
             streamEval.value = ''
+            await new Promise(r => setTimeout(r, 300))
             state.value = 'idle'
           } else if (event.type === 'done') {
             if (event.data && event.data.message === '面试完成！可以查看报告了') {
+              markProgressDone('面试完成')
+              await new Promise(r => setTimeout(r, 500))
               report.value = await apiGetReport(sessionId.value)
-                await new Promise(r => setTimeout(r, 400))
               currentQuestion.value = ''
               statusText.value = '已完成'
             }
@@ -607,10 +718,13 @@ function confirmEnd() {
 
 async function doEnd() {
   showEndConfirm.value = false
+  showProgress(['生成评分文档', '评估中', '完成'])
   state.value = 'loading'
   try {
     const res = await apiEndInterview(sessionId.value)
     if (res.success) {
+      markProgressDone('评分完成')
+      await new Promise(r => setTimeout(r, 500))
       evalReport.value = res
       currentQuestion.value = ''
       statusText.value = '已结束'
@@ -637,30 +751,35 @@ function retryAnswer() {
 
 async function getHint() {
   if (!sessionId.value || !currentQuestion.value) return
+  showProgress(['生成思路引导', '完成'])
   try {
-    hintText.value = '正在生成思路引导...'
     const res = await fetch(`/api/interview/${sessionId.value}/hint`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('comate_token')}` },
       body: JSON.stringify({ question: currentQuestion.value }),
     })
-    if (!res.ok) { hintText.value = ''; return }
+    if (!res.ok) { hideProgress(); return }
     const raw = await res.json()
+    markProgressDone('提示已生成')
+    await new Promise(r => setTimeout(r, 300))
     hintText.value = (raw.data?.hint || raw.hint || '')
-  } catch { hintText.value = '' }
+  } catch { hideProgress() }
 }
 
 async function rerollQuestion() {
   if (!sessionId.value || state.value !== 'idle') return
+  showProgress(['重新出题', '生成中', '完成'])
   state.value = 'loading'
   try {
     const data = await apiRerollQuestion(sessionId.value)
     if (data.question) {
+      markProgressDone('出题完成')
+      await new Promise(r => setTimeout(r, 300))
       currentQuestion.value = data.question
       hintText.value = ''
       streamEval.value = ''
     }
-  } catch { errorMsg.value = '重试失败'; state.value = 'error' }
+  } catch { hideProgress(); errorMsg.value = '重试失败'; state.value = 'error' }
   state.value = 'idle'
 }
 
@@ -670,6 +789,14 @@ function backToHistory() {
   streamEval.value = ''; errorMsg.value = ''; editingAnswerIdx.value = -1
   qaHistory.value = []; editingQA.value = -1
   state.value = 'idle'
+}
+
+function embeddedBack() {
+  if (sessionId.value) {
+    backToHistory()
+  } else {
+    emit('back')
+  }
 }
 
 function startEditAnswer(q, idx) {
@@ -732,6 +859,13 @@ function formatTime(iso) {
   width: 600px; max-width: 92vw; max-height: 80vh;
   padding: 16px 20px; overflow: hidden;
   display: flex; flex-direction: column;
+  transition: all .2s ease;
+}
+.eval-fullscreen {
+  width: 95vw !important;
+  max-width: 95vw !important;
+  height: 90vh !important;
+  max-height: 90vh !important;
 }
 .hist-btn { font-size: 11px; padding: 4px 8px; border-radius: var(--r-sm); }
 .dialog-box {
@@ -739,21 +873,17 @@ function formatTime(iso) {
   padding: 20px 24px; width: 320px; max-width: 90vw;
   box-shadow: 0 8px 30px rgba(0,0,0,.15);
 }
-.thinking-bar {
-  display: flex; align-items: center; gap: 10px;
+.progress-wrap {
   margin-top: 12px; padding: 12px 14px;
   background: var(--honey-soft); border-radius: var(--r-md);
 }
-.thinking-pulse {
-  width: 12px; height: 12px; border-radius: 50%;
-  background: var(--honey); animation: pulse 1.2s ease-in-out infinite;
-  flex-shrink: 0;
+.progress-bar {
+  height: 8px; background: var(--line); border-radius: 4px; overflow: hidden;
 }
-@keyframes pulse {
-  0%, 100% { opacity: .4; transform: scale(.8); }
-  50% { opacity: 1; transform: scale(1.1); }
+.progress-fill {
+  height: 100%; background: linear-gradient(90deg, var(--honey), var(--honey-deep));
+  border-radius: 4px; transition: width .3s ease;
 }
-.thinking-text { flex: 1; font-size: 13px; color: var(--ink-soft); }
 .thinking-cancel {
   font-size: 12px; padding: 4px 10px; border-radius: var(--r-sm);
   color: var(--berry); border: 1px solid var(--berry); background: transparent;
@@ -768,6 +898,13 @@ function formatTime(iso) {
 .interview-eval {
   border-left: 3px solid var(--sprout); padding-left: 10px;
 }
+.back-bar { display: flex; align-items: center; padding: 4px 4px; }
+.back-btn {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 14px; color: var(--ink-soft); padding: 6px 8px;
+  background: none; border: none; cursor: pointer;
+}
+.back-btn:hover { color: var(--ink); }
 /* 长文本排版修复 */
 .interview-q div, .eval-box div, [class*="bubble"] div {
   word-break: break-word; overflow-wrap: break-word; hyphens: auto;
