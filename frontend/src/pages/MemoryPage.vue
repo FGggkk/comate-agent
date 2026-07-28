@@ -70,46 +70,64 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useMemoryStore } from '../stores/memory'
 import { apiGetMemories, apiUpdateMemory, apiDeleteMemory, apiAddForbidden, apiRemoveForbidden, apiFulfillAnchor } from '../api/index'
 
+const props = defineProps({
+  active: { type: Boolean, default: false },
+})
 const memoryStore = useMemoryStore()
 const loaded = ref(false)
+const loading = ref(false)
 const newForbidden = ref('')
 
 function countLayer(layer) { return (memoryStore.layers[layer] || []).length }
 
+async function refreshMemories() {
+  if (loading.value) return
+  loading.value = true
+  try {
+    const data = await apiGetMemories()
+    memoryStore.load(data)
+    loaded.value = true
+  } finally {
+    loading.value = false
+  }
+}
+
 onMounted(async () => {
-  const data = await apiGetMemories()
-  memoryStore.load(data)
-  loaded.value = true
+  await refreshMemories()
+})
+
+watch(() => props.active, async (active) => {
+  if (active) await refreshMemories()
 })
 
 async function addForbidden() {
   if (!newForbidden.value.trim()) return
   await apiAddForbidden(newForbidden.value, '')
   newForbidden.value = ''
-  memoryStore.load(await apiGetMemories())
+  await refreshMemories()
 }
 
 async function removeForbidden(id) {
   await apiRemoveForbidden(id)
-  memoryStore.load(await apiGetMemories())
+  await refreshMemories()
 }
 
 async function confirmMemory(id) {
   await apiUpdateMemory(id, { user_confirmed: true })
-  memoryStore.load(await apiGetMemories())
+  await refreshMemories()
 }
 
 async function deleteMemory(id) {
   await apiDeleteMemory(id)
-  memoryStore.load(await apiGetMemories())
+  await refreshMemories()
 }
 
 async function fulfillAnchor(id) {
   await apiFulfillAnchor(id)
-  memoryStore.load(await apiGetMemories())
+  await refreshMemories()
 }
 </script>

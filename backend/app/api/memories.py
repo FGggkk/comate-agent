@@ -17,6 +17,12 @@ class UpdateMemoryRequest(BaseModel):
     memory_type: str | None = None
     content: dict | None = None
     user_confirmed: bool | None = None
+    event_at: datetime | None = None
+    expires_at: datetime | None = None
+    confidence: float | None = None
+    observed_count: int | None = None
+    last_observed_at: datetime | None = None
+    review_after: datetime | None = None
 
 
 class CreateMemoryRequest(BaseModel):
@@ -25,6 +31,10 @@ class CreateMemoryRequest(BaseModel):
     content: dict | None = None
     event_at: datetime | None = None
     expires_at: datetime | None = None
+    confidence: float | None = None
+    observed_count: int | None = None
+    last_observed_at: datetime | None = None
+    review_after: datetime | None = None
 
 
 class AddForbiddenRequest(BaseModel):
@@ -50,6 +60,10 @@ async def api_create_memory(
         content=req.content,
         event_at=req.event_at,
         expires_at=req.expires_at,
+        confidence=req.confidence,
+        observed_count=req.observed_count,
+        last_observed_at=req.last_observed_at,
+        review_after=req.review_after,
         db=db,
     )
 
@@ -79,6 +93,18 @@ async def api_update_memory(
         data["content"] = req.content
     if req.user_confirmed is not None:
         data["user_confirmed"] = req.user_confirmed
+    if req.event_at is not None:
+        data["event_at"] = req.event_at
+    if req.expires_at is not None:
+        data["expires_at"] = req.expires_at
+    if req.confidence is not None:
+        data["confidence"] = req.confidence
+    if req.observed_count is not None:
+        data["observed_count"] = req.observed_count
+    if req.last_observed_at is not None:
+        data["last_observed_at"] = req.last_observed_at
+    if req.review_after is not None:
+        data["review_after"] = req.review_after
     return await memory_service.update_item(user_id, item_id, data, db)
 
 
