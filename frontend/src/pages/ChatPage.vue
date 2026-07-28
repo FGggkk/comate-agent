@@ -140,7 +140,7 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useUserStore } from '../stores/user'
-import { apiGetTemplates, apiPreview, apiConfirmSoul, apiSendMessage, apiListSessions, apiCreateSession, apiDeleteSession, apiGetMessages, apiEditMessage, apiDeleteMessage, apiUpdateSession, apiGetSoulInventory, apiCreateMemory } from '../api/index'
+import { apiGetTemplates, apiPreview, apiConfirmSoul, apiSendMessage, apiListSessions, apiCreateSession, apiDeleteSession, apiGetMessages, apiEditMessage, apiDeleteMessage, apiUpdateSession, apiGetSoulInventory, apiCreateMemory, apiCreateMemoryReminder } from '../api/index'
 import MessageBubble from '../components/MessageBubble.vue'
 import MemoryCard from '../components/MemoryCard.vue'
 import ActionButtons from '../components/ActionButtons.vue'
@@ -320,6 +320,17 @@ async function handleAction(payload, actionMessage = null) {
         content: failed ? (res.message || '这条记忆保存失败了，稍后再试。') : '好，我记住了。',
         soul: snapshotSoul(activeSoul.value),
       })
+      if (!failed && res?.reminder_candidate) {
+        chatStore.addMessage({
+          type: 'actions',
+          prompt: '这件事有时间点，要不要我提前提醒你？',
+          candidateSummary: res.reminder_candidate.label || res.reminder_candidate.content,
+          buttons: [
+            { label: '需要提醒', action: 'confirm_event_reminder', memory_id: res.id },
+            { label: '只记住，不提醒', action: 'dismiss_event_reminder' },
+          ],
+        })
+      }
     } catch {
       chatStore.addMessage({
         type: 'text',
@@ -340,6 +351,48 @@ async function handleAction(payload, actionMessage = null) {
       type: 'text',
       role: 'agent',
       content: '好的，这条我先不记。',
+      soul: snapshotSoul(activeSoul.value),
+    })
+    nextTick(() => scrollToBottom())
+    return
+  }
+  if (action === 'confirm_event_reminder') {
+    if (actionMessage?.processing || actionMessage?.handled) return
+    if (!payload?.memory_id) return
+    if (actionMessage) {
+      actionMessage.processing = true
+      actionMessage.handled = true
+    }
+    try {
+      const res = await apiCreateMemoryReminder(payload?.memory_id)
+      const failed = res?.success === false
+      const reminderTime = failed ? '' : formatTime(res?.reminder?.remind_at)
+      chatStore.addMessage({
+        type: 'text',
+        role: 'agent',
+        content: failed ? (res.message || '提醒创建失败了，稍后可以在设置页手动添加。') : `好，我会在${reminderTime}提醒你。`,
+        soul: snapshotSoul(activeSoul.value),
+      })
+    } catch {
+      chatStore.addMessage({
+        type: 'text',
+        role: 'agent',
+        content: '提醒创建失败了，稍后可以在设置页手动添加。',
+        soul: snapshotSoul(activeSoul.value),
+      })
+    } finally {
+      if (actionMessage) actionMessage.processing = false
+      nextTick(() => scrollToBottom())
+    }
+    return
+  }
+  if (action === 'dismiss_event_reminder') {
+    if (actionMessage?.processing || actionMessage?.handled) return
+    if (actionMessage) actionMessage.handled = true
+    chatStore.addMessage({
+      type: 'text',
+      role: 'agent',
+      content: '好的，这件事我只记住，不提醒。',
       soul: snapshotSoul(activeSoul.value),
     })
     nextTick(() => scrollToBottom())

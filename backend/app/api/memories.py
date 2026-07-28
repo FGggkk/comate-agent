@@ -54,6 +54,15 @@ async def api_create_memory(
     )
 
 
+@router.post("/{item_id}/reminder")
+async def api_create_memory_reminder(
+    item_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+):
+    return await memory_service.create_event_reminder(user_id, item_id, db)
+
+
 @router.put("/{item_id}")
 async def api_update_memory(
     item_id: str,
