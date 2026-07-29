@@ -13,6 +13,7 @@ from app.db.session import async_session_factory
 from app.models.memory import ForbiddenTopic, MemoryItem, MemoryObservation, PendingAnchor
 from app.services.embedding_service import get_embedding
 from app.services import reminder_service
+from app.services.memory_gate_service import append_gate_trace
 
 
 CHAT_MEMORY_LAYERS = ("co_created",)
@@ -87,6 +88,7 @@ async def search(
     top_k: int = 5,
     db: AsyncSession = None,
     layers: tuple[str, ...] | None = None,
+    gate_trace: list[dict] | None = None,
 ) -> list[dict]:
     """检索可用于当前问题的共建记忆。
 
@@ -134,14 +136,56 @@ async def search(
         results = []
         for row in rows:
             if not _is_available_for_chat(row.layer, row.user_confirmed, row.memory_type, row.content, row.expires_at):
+                append_gate_trace(
+                    gate_trace,
+                    source="co_created",
+                    kept=False,
+                    reason="unavailable_for_chat",
+                    item_id=str(row.id),
+                    text=row.summary or "",
+                    metadata={
+                        "path": "vector",
+                        "layer": row.layer,
+                        "memory_type": row.memory_type,
+                        "user_confirmed": row.user_confirmed,
+                    },
+                )
                 continue
             item_data = _row_to_memory_dict(row)
             if is_forbidden_text(_memory_dict_text(item_data), forbidden):
+                append_gate_trace(
+                    gate_trace,
+                    source="co_created",
+                    kept=False,
+                    reason="forbidden",
+                    item_id=item_data["id"],
+                    text=item_data.get("summary") or "",
+                    metadata={"path": "vector"},
+                )
                 continue
             semantic_score = float(row.score) if row.score else 0
-            if not is_memory_relevant_to_query(item_data, query, query_topics, semantic_score):
+            relevance = explain_memory_relevance(item_data, query, query_topics, semantic_score)
+            if not relevance["kept"]:
+                append_gate_trace(
+                    gate_trace,
+                    source="co_created",
+                    kept=False,
+                    reason=relevance["reason"],
+                    item_id=item_data["id"],
+                    text=item_data.get("summary") or "",
+                    metadata={**relevance["metadata"], "path": "vector"},
+                )
                 continue
             item_data["score"] = _memory_relevance_score(item_data, query, query_topics, semantic_score)
+            append_gate_trace(
+                gate_trace,
+                source="co_created",
+                kept=True,
+                reason=relevance["reason"],
+                item_id=item_data["id"],
+                text=item_data.get("summary") or "",
+                metadata={**relevance["metadata"], "path": "vector", "score": item_data["score"]},
+            )
             results.append(item_data)
         if results:
             results.sort(key=lambda item: item.get("score", 0), reverse=True)
@@ -160,13 +204,55 @@ async def search(
     scored = []
     for item in items:
         if not _is_item_available_for_chat(item):
+            append_gate_trace(
+                gate_trace,
+                source="co_created",
+                kept=False,
+                reason="unavailable_for_chat",
+                item_id=str(item.id),
+                text=item.summary or "",
+                metadata={
+                    "path": "fallback",
+                    "layer": item.layer,
+                    "memory_type": item.memory_type,
+                    "user_confirmed": item.user_confirmed,
+                },
+            )
             continue
         data = _item_to_dict(item)
         if is_forbidden_text(_memory_dict_text(data), forbidden):
+            append_gate_trace(
+                gate_trace,
+                source="co_created",
+                kept=False,
+                reason="forbidden",
+                item_id=data["id"],
+                text=data.get("summary") or "",
+                metadata={"path": "fallback"},
+            )
             continue
-        if not is_memory_relevant_to_query(data, query, query_topics):
+        relevance = explain_memory_relevance(data, query, query_topics)
+        if not relevance["kept"]:
+            append_gate_trace(
+                gate_trace,
+                source="co_created",
+                kept=False,
+                reason=relevance["reason"],
+                item_id=data["id"],
+                text=data.get("summary") or "",
+                metadata={**relevance["metadata"], "path": "fallback"},
+            )
             continue
         score = _memory_relevance_score(data, query, query_topics)
+        append_gate_trace(
+            gate_trace,
+            source="co_created",
+            kept=True,
+            reason=relevance["reason"],
+            item_id=data["id"],
+            text=data.get("summary") or "",
+            metadata={**relevance["metadata"], "path": "fallback", "score": score},
+        )
         scored.append((score, data))
 
     scored.sort(key=lambda x: x[0], reverse=True)
@@ -906,14 +992,23 @@ def is_memory_relevant_to_query(
     query_topics: list[str] | None = None,
     semantic_score: float = 0.0,
 ) -> bool:
+    return explain_memory_relevance(memory, query, query_topics, semantic_score)["kept"]
+
+
+def explain_memory_relevance(
+    memory: dict,
+    query: str,
+    query_topics: list[str] | None = None,
+    semantic_score: float = 0.0,
+) -> dict:
     if not (query or "").strip():
-        return False
+        return _memory_gate_decision(False, "empty_query")
 
     memory_type = memory.get("memory_type") or "general"
     if memory_type == "boundary":
-        return False
+        return _memory_gate_decision(False, "boundary_memory")
     if memory.get("needs_cleanup") or memory.get("is_expired"):
-        return False
+        return _memory_gate_decision(False, "expired_or_cleanup")
 
     scope = _normalize_scope(
         memory.get("scope"),
@@ -928,15 +1023,46 @@ def is_memory_relevant_to_query(
     current_topics = set(query_topics or classify_query_topics(query))
     topic_overlap = bool(memory_topics and current_topics and memory_topics & current_topics)
     keyword_overlap = _keyword_overlap_count(query, memory.get("summary") or "")
+    metadata = {
+        "scope": scope,
+        "memory_type": memory_type,
+        "memory_topics": sorted(memory_topics),
+        "query_topics": sorted(current_topics),
+        "keyword_overlap": keyword_overlap,
+        "semantic_score": round(float(semantic_score or 0), 4),
+    }
+
+    if topic_overlap:
+        return _memory_gate_decision(True, "topic_overlap", metadata)
 
     if scope == "ephemeral":
-        return topic_overlap or keyword_overlap >= 2 or semantic_score >= 0.80
+        if keyword_overlap >= 2:
+            return _memory_gate_decision(True, "keyword_overlap", metadata)
+        if semantic_score >= 0.80:
+            return _memory_gate_decision(True, "semantic_match", metadata)
+        return _memory_gate_decision(False, "unrelated", metadata)
     if scope == "topic":
-        return topic_overlap or keyword_overlap >= 2 or semantic_score >= 0.76
+        if keyword_overlap >= 2:
+            return _memory_gate_decision(True, "keyword_overlap", metadata)
+        if semantic_score >= 0.76:
+            return _memory_gate_decision(True, "semantic_match", metadata)
+        return _memory_gate_decision(False, "unrelated", metadata)
     if scope == "session":
-        return keyword_overlap >= 2 or semantic_score >= 0.78
+        if keyword_overlap >= 2:
+            return _memory_gate_decision(True, "keyword_overlap", metadata)
+        if semantic_score >= 0.78:
+            return _memory_gate_decision(True, "semantic_match", metadata)
+        return _memory_gate_decision(False, "unrelated", metadata)
 
-    return topic_overlap or keyword_overlap >= 1 or semantic_score >= 0.72
+    if keyword_overlap >= 1:
+        return _memory_gate_decision(True, "keyword_overlap", metadata)
+    if semantic_score >= 0.72:
+        return _memory_gate_decision(True, "semantic_match", metadata)
+    return _memory_gate_decision(False, "unrelated", metadata)
+
+
+def _memory_gate_decision(kept: bool, reason: str, metadata: dict | None = None) -> dict:
+    return {"kept": kept, "reason": reason, "metadata": metadata or {}}
 
 
 def is_text_relevant_to_query(
@@ -944,11 +1070,29 @@ def is_text_relevant_to_query(
     query: str,
     query_topics: list[str] | None = None,
 ) -> bool:
+    return explain_text_relevance(text, query, query_topics)["kept"]
+
+
+def explain_text_relevance(
+    text: str,
+    query: str,
+    query_topics: list[str] | None = None,
+) -> dict:
     if _asks_for_pending_topic(query):
-        return True
+        return _memory_gate_decision(True, "pending_topic_requested")
     text_topics = set(classify_query_topics(text or ""))
     current_topics = set(query_topics or classify_query_topics(query or ""))
-    return bool(text_topics and current_topics and text_topics & current_topics) or _keyword_overlap_count(query, text) >= 2
+    keyword_overlap = _keyword_overlap_count(query, text)
+    metadata = {
+        "text_topics": sorted(text_topics),
+        "query_topics": sorted(current_topics),
+        "keyword_overlap": keyword_overlap,
+    }
+    if text_topics and current_topics and text_topics & current_topics:
+        return _memory_gate_decision(True, "topic_overlap", metadata)
+    if keyword_overlap >= 2:
+        return _memory_gate_decision(True, "keyword_overlap", metadata)
+    return _memory_gate_decision(False, "unrelated", metadata)
 
 
 def _memory_relevance_score(

@@ -4,7 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.conversation import Message, Session
-from app.services.memory_service import classify_query_topics, is_forbidden_text
+from app.services.memory_gate_service import append_gate_trace
+from app.services.memory_service import classify_query_topics, explain_text_relevance, is_forbidden_text
 
 
 TOPIC_NOISE_KEYWORDS = {
@@ -25,15 +26,18 @@ async def get_current_session_context(
     query: str | None = None,
     query_topics: list[str] | None = None,
     forbidden_topics: list | None = None,
+    gate_trace: list[dict] | None = None,
     limit: int = 8,
 ) -> str:
     if not session_id:
+        append_gate_trace(gate_trace, source="current_session", kept=False, reason="no_session")
         return ""
 
     session_result = await db.execute(
         select(Session.id).where(Session.id == session_id, Session.user_id == user_id)
     )
     if not session_result.scalar_one_or_none():
+        append_gate_trace(gate_trace, source="current_session", kept=False, reason="session_not_found")
         return ""
 
     result = await db.execute(
@@ -46,7 +50,14 @@ async def get_current_session_context(
     current_topics = query_topics if query_topics is not None else classify_query_topics(query or "")
     lines = []
     for message in messages:
-        content = _filter_message_for_query(message.content, query or "", current_topics, forbidden_topics)
+        content = _filter_message_for_query(
+            message.content,
+            query or "",
+            current_topics,
+            forbidden_topics,
+            gate_trace,
+            role=message.role,
+        )
         if not content:
             continue
         speaker = "用户" if message.role == "user" else "伴行"
@@ -64,6 +75,8 @@ def _filter_message_for_query(
     query: str,
     query_topics: list[str],
     forbidden_topics: list | None = None,
+    gate_trace: list[dict] | None = None,
+    role: str = "",
 ) -> str:
     content = _compact_text(text, 600)
     if not content:
@@ -75,16 +88,58 @@ def _filter_message_for_query(
         if not compacted:
             continue
         if is_forbidden_text(compacted, forbidden_topics):
+            append_gate_trace(
+                gate_trace,
+                source="current_session",
+                kept=False,
+                reason="forbidden",
+                text=compacted,
+                metadata={"role": role},
+            )
             continue
         if not query_topics:
+            append_gate_trace(
+                gate_trace,
+                source="current_session",
+                kept=True,
+                reason="no_query_topics",
+                text=compacted,
+                metadata={"role": role},
+            )
             kept.append(compacted)
             if len(kept) >= 3:
                 break
             continue
         if _has_off_topic_noise(compacted, query_topics):
+            append_gate_trace(
+                gate_trace,
+                source="current_session",
+                kept=False,
+                reason="off_topic_noise",
+                text=compacted,
+                metadata={"role": role, "query_topics": query_topics},
+            )
             continue
-        if _has_topic_overlap(compacted, query_topics):
+        relevance = explain_text_relevance(compacted, query, query_topics)
+        if relevance["kept"]:
+            append_gate_trace(
+                gate_trace,
+                source="current_session",
+                kept=True,
+                reason=relevance["reason"],
+                text=compacted,
+                metadata={"role": role, **relevance["metadata"]},
+            )
             kept.append(compacted)
+        else:
+            append_gate_trace(
+                gate_trace,
+                source="current_session",
+                kept=False,
+                reason=relevance["reason"],
+                text=compacted,
+                metadata={"role": role, **relevance["metadata"]},
+            )
         if len(kept) >= 3:
             break
 

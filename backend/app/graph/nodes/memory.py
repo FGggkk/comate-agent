@@ -1,12 +1,14 @@
+from app.config.settings import get_settings
 from app.graph.state import ChatState
 from app.graph.schemas import memory_card_event, status_event
 from app.services.conversation_context_service import get_current_session_context
+from app.services.memory_gate_service import append_gate_trace, log_gate_trace
 from app.services.memory_service import (
     classify_query_topics,
+    explain_text_relevance,
     get_anchors,
     get_forbidden,
     is_forbidden_text,
-    is_text_relevant_to_query,
     search,
     sync_forbidden_topics_from_message,
 )
@@ -19,6 +21,7 @@ async def memory_node(state: ChatState, db):
     顺序固定为：默契层人物理解 -> 当前问题匹配的共建事实 -> 当前会话上下文。
     """
     events = [status_event("memory", "正在回忆我们的聊天记录")]
+    state.memory_gate_trace = []
     state.query_topics = classify_query_topics(state.message)
 
     # 0. 禁区边界：先同步用户当前消息里的明示边界，再读取任何记忆。
@@ -39,13 +42,20 @@ async def memory_node(state: ChatState, db):
             db,
             query=state.message,
             forbidden_topics=forbidden_topics,
+            gate_trace=state.memory_gate_trace,
         )
     except Exception as e:
         print(f"[memory] 默契画像读取失败: {e}")
         state.tacit_context = ""
 
     # 2. 共建层：只取和当前问题相关的事实。
-    memories = await search(state.user_id, state.message, top_k=3, db=db)
+    memories = await search(
+        state.user_id,
+        state.message,
+        top_k=3,
+        db=db,
+        gate_trace=state.memory_gate_trace,
+    )
     state.memories = memories
 
     # 记忆卡片（最多 2 条）
@@ -62,21 +72,50 @@ async def memory_node(state: ChatState, db):
         query=state.message,
         query_topics=state.query_topics,
         forbidden_topics=forbidden_topics,
+        gate_trace=state.memory_gate_trace,
     )
 
     # 读取未完待续锚点
     anchors = await get_anchors(state.user_id, db=db)
-    state.pending_anchors = [
-        {"id": str(a.id), "topic": a.topic_summary}
-        for a in anchors
-        if is_text_relevant_to_query(a.topic_summary, state.message, state.query_topics)
-        and not is_forbidden_text(a.topic_summary, forbidden_topics)
-    ]
+    state.pending_anchors = []
+    for a in anchors:
+        if is_forbidden_text(a.topic_summary, forbidden_topics):
+            append_gate_trace(
+                state.memory_gate_trace,
+                source="pending_anchor",
+                kept=False,
+                reason="forbidden",
+                item_id=str(a.id),
+                text=a.topic_summary,
+            )
+            continue
+        relevance = explain_text_relevance(a.topic_summary, state.message, state.query_topics)
+        append_gate_trace(
+            state.memory_gate_trace,
+            source="pending_anchor",
+            kept=relevance["kept"],
+            reason=relevance["reason"],
+            item_id=str(a.id),
+            text=a.topic_summary,
+            metadata=relevance["metadata"],
+        )
+        if relevance["kept"]:
+            state.pending_anchors.append({"id": str(a.id), "topic": a.topic_summary})
+
     # 如果有锚点，也作为卡片展示
     if state.pending_anchors:
         for a in state.pending_anchors[:1]:
             card = memory_card_event(f"上次提到: {a['topic']}", "anchor")
             if card:
                 events.append(card)
+
+    settings = get_settings()
+    log_gate_trace(
+        state.memory_gate_trace,
+        enabled=settings.debug,
+        user_id=state.user_id,
+        query=state.message,
+        query_topics=state.query_topics,
+    )
 
     return events

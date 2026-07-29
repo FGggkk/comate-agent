@@ -17,6 +17,7 @@ class ChatState:
     forbidden_topics: list[dict] = field(default_factory=list)
     forbidden_updates: dict = field(default_factory=dict)
     forbidden_query_blocked: bool = False
+    memory_gate_trace: list[dict] = field(default_factory=list)
     memory_candidates: list[dict] = field(default_factory=list)
     pending_anchors: list[dict] = field(default_factory=list)
     intent: str = "daily"  # daily / interview / complex
