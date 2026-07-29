@@ -15,8 +15,10 @@ from app.services.embedding_service import get_embedding
 from app.services import reminder_service
 
 
-CHAT_MEMORY_LAYERS = ("co_created", "tacit")
+CHAT_MEMORY_LAYERS = ("co_created",)
 APP_TZ = timezone(timedelta(hours=8))
+MEMORY_SCOPES = {"global", "topic", "session", "ephemeral"}
+DEFAULT_MEMORY_SCOPE = "global"
 ALLOWED_MEMORY_TYPES = {
     "general",
     "preference",
@@ -34,6 +36,21 @@ STRUCTURED_MEMORY_FIELDS = {
     "last_observed_at",
     "dedupe_key",
     "review_after",
+    "scope",
+    "topic_tags",
+}
+
+TOPIC_KEYWORDS = {
+    "fitness": ("健身", "跑步", "运动", "训练", "锻炼", "公里", "肌肉", "体能", "力量", "瑜伽"),
+    "food": ("水果", "橘子", "香蕉", "苹果", "葡萄", "猕猴桃", "超市", "饮食", "吃", "补充", "维生素"),
+    "interview": ("面试", "求职", "简历", "offer", "岗位", "招聘", "hr", "HR", "技术岗"),
+    "work": ("项目", "代码", "分支", "提交", "pr", "PR", "bug", "需求", "上线", "开发"),
+    "emotion": ("焦虑", "压力", "烦", "累", "紧张", "情绪", "崩", "难受", "开心", "低落"),
+    "finance": ("记账", "账单", "预算", "消费", "花销", "收入", "支出", "省钱"),
+    "travel": ("旅游", "旅行", "行程", "酒店", "机票", "路线", "景点"),
+    "study": ("学习", "考试", "备考", "刷题", "课程", "复习", "论文"),
+    "sleep": ("睡眠", "作息", "早睡", "熬夜", "失眠", "起床"),
+    "boundary": ("禁区", "不要提", "别提", "不想聊", "不主动", "避开"),
 }
 
 
@@ -42,22 +59,31 @@ async def search(
     query: str,
     top_k: int = 5,
     db: AsyncSession = None,
+    layers: tuple[str, ...] | None = None,
 ) -> list[dict]:
-    """语义检索 + 关键词兜底 + 禁区过滤。
+    """检索可用于当前问题的共建记忆。
 
     先验层由系统/管理员维护，只用于安全策略，不作为聊天记忆主动引用。
+    默契层画像由 tacit_profile_service 单独读取，避免和零散事实混在一起。
     """
+    target_layers = tuple(layer for layer in (layers or CHAT_MEMORY_LAYERS) if layer in CHAT_MEMORY_LAYERS)
+    if not target_layers:
+        return []
+
     forbidden = await get_forbidden(user_id, db)
     forbidden_words = {f.topic_summary.lower() for f in forbidden}
+    query_topics = classify_query_topics(query)
 
     # 1. 尝试 pgvector 语义搜索
     query_vec = await get_embedding(query)
     if query_vec:
         from sqlalchemy import text
         vec_literal = "[" + ",".join(str(v) for v in query_vec) + "]"
+        layer_clause = ", ".join(f"'{layer}'" for layer in target_layers)
         sql = text("""
             SELECT id, layer, memory_type, summary, content,
                    user_confirmed, is_inference,
+                   scope, topic_tags,
                    event_at, expires_at, confidence, observed_count,
                    last_observed_at, review_after,
                    created_at,
@@ -65,11 +91,11 @@ async def search(
             FROM memory_items
             WHERE user_id = CAST(:user_id AS uuid)
               AND status = 'active'
-              AND layer IN ('co_created', 'tacit')
+              AND layer IN ({layer_clause})
               AND embedding IS NOT NULL
             ORDER BY embedding <=> CAST(:query_vec AS vector)
             LIMIT :candidate_limit
-        """)
+        """.format(layer_clause=layer_clause))
         result = await db.execute(
             sql,
             {
@@ -83,72 +109,44 @@ async def search(
         for row in rows:
             if not _is_available_for_chat(row.layer, row.user_confirmed, row.memory_type, row.content, row.expires_at):
                 continue
-            # 禁区过滤
             summary_lower = (row.summary or "").lower()
             if any(fw in summary_lower for fw in forbidden_words):
                 continue
-            content = row.content or {}
-            results.append({
-                "id": str(row.id),
-                "layer": row.layer,
-                "memory_type": row.memory_type or "general",
-                "summary": row.summary,
-                "content": content,
-                "event_at": _format_optional_datetime(row.event_at or _parse_datetime(content.get("event_at"))),
-                "expires_at": _format_optional_datetime(row.expires_at or _parse_datetime(content.get("expires_at"))),
-                "confidence": row.confidence or 0,
-                "observed_count": row.observed_count or 0,
-                "last_observed_at": _format_optional_datetime(
-                    row.last_observed_at or _parse_datetime(content.get("last_observed_at"))
-                ),
-                "review_after": _format_optional_datetime(row.review_after or _parse_datetime(content.get("review_after"))),
-                "user_confirmed": row.user_confirmed,
-                "is_inference": row.is_inference,
-                "created_at": row.created_at.isoformat() if row.created_at else None,
-                "lifecycle": _memory_lifecycle(row.memory_type, content, row.expires_at),
-                "is_expired": _is_expired_memory(row.memory_type, content, row.expires_at),
-                "score": float(row.score) if row.score else 0,
-            })
+            item_data = _row_to_memory_dict(row)
+            semantic_score = float(row.score) if row.score else 0
+            if not is_memory_relevant_to_query(item_data, query, query_topics, semantic_score):
+                continue
+            item_data["score"] = _memory_relevance_score(item_data, query, query_topics, semantic_score)
+            results.append(item_data)
         if results:
+            results.sort(key=lambda item: item.get("score", 0), reverse=True)
             return results[:top_k]
 
-    # 2. 兜底：ILIKE 关键词模糊匹配
+    # 2. 兜底：结构化主题和关键词匹配
     result = await db.execute(
         select(MemoryItem).where(
             MemoryItem.user_id == user_id,
             MemoryItem.status == "active",
-            MemoryItem.layer.in_(CHAT_MEMORY_LAYERS),
+            MemoryItem.layer.in_(target_layers),
         ).order_by(MemoryItem.created_at.desc()).limit(100)
     )
     items = result.scalars().all()
 
-    keywords = set(query.lower().split())
     scored = []
     for item in items:
         if not _is_item_available_for_chat(item):
             continue
-        score = 0.0
-        summary_lower = (item.summary or "").lower()
-        for kw in keywords:
-            if kw in summary_lower:
-                score += 0.3
-        if item.user_confirmed:
-            score += 0.2
-        if item.layer == "co_created":
-            score += 0.1
-        if score > 0:
-            scored.append((score, item))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-
-    results = []
-    for score, item in scored[:top_k]:
+        data = _item_to_dict(item)
         summary_lower = (item.summary or "").lower()
         if any(fw in summary_lower for fw in forbidden_words):
             continue
-        results.append(_item_to_dict(item))
+        if not is_memory_relevant_to_query(data, query, query_topics):
+            continue
+        score = _memory_relevance_score(data, query, query_topics)
+        scored.append((score, data))
 
-    return results
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [dict(item, score=score) for score, item in scored[:top_k]]
 
 
 async def create_co_created(
@@ -156,6 +154,8 @@ async def create_co_created(
     summary: str,
     memory_type: str = "general",
     content: dict | None = None,
+    scope: str | None = None,
+    topic_tags: list[str] | None = None,
     event_at: datetime | None = None,
     expires_at: datetime | None = None,
     confidence: float | None = None,
@@ -187,6 +187,8 @@ async def create_co_created(
         event_at=event_at,
         expires_at=expires_at,
         source="user_explicit",
+        scope=scope,
+        topic_tags=topic_tags,
     )
     structured_fields = _derive_memory_fields(
         layer="co_created",
@@ -199,6 +201,8 @@ async def create_co_created(
         observed_count=observed_count,
         last_observed_at=last_observed_at,
         review_after=review_after,
+        scope=scope,
+        topic_tags=topic_tags,
     )
     reminder_candidate = _build_reminder_candidate(
         memory_type,
@@ -374,6 +378,8 @@ async def add(
     last_observed_at: datetime | None = None,
     dedupe_key: str | None = None,
     review_after: datetime | None = None,
+    scope: str | None = None,
+    topic_tags: list[str] | None = None,
 ) -> MemoryItem:
     memory_type = memory_type or "general"
     structured_fields = _derive_memory_fields(
@@ -388,13 +394,16 @@ async def add(
         last_observed_at=last_observed_at,
         dedupe_key=dedupe_key,
         review_after=review_after,
+        scope=scope,
+        topic_tags=topic_tags,
     )
+    content = _sync_memory_metadata(content or {}, structured_fields)
     item = MemoryItem(
         user_id=user_id,
         layer=layer,
         memory_type=memory_type,
         summary=summary,
-        content=content or {},
+        content=content,
         source_type="user_input",
         user_confirmed=(layer != "tacit"),
         is_inference=(layer == "tacit"),
@@ -462,6 +471,8 @@ async def update_item(user_id: str, item_id: str, data: dict, db: AsyncSession =
             last_observed_at=structured_updates.get("last_observed_at"),
             dedupe_key=structured_updates.get("dedupe_key"),
             review_after=structured_updates.get("review_after"),
+            scope=structured_updates.get("scope"),
+            topic_tags=structured_updates.get("topic_tags"),
         )
         if "event_at" not in structured_updates and "content" not in data:
             structured_fields["event_at"] = item.event_at
@@ -475,8 +486,20 @@ async def update_item(user_id: str, item_id: str, data: dict, db: AsyncSession =
             structured_fields["last_observed_at"] = item.last_observed_at
         if "review_after" not in structured_updates and "content" not in data:
             structured_fields["review_after"] = item.review_after
+        if "scope" not in structured_updates and "content" not in data and "summary" not in data and "memory_type" not in data:
+            structured_fields["scope"] = item.scope
+        if "topic_tags" not in structured_updates and "content" not in data and "summary" not in data and "memory_type" not in data:
+            structured_fields["topic_tags"] = item.topic_tags or []
         if "summary" not in data and "memory_type" not in data and "dedupe_key" not in structured_updates:
             structured_fields["dedupe_key"] = item.dedupe_key
+        if (
+            "content" in data
+            or "summary" in data
+            or "memory_type" in data
+            or "scope" in structured_updates
+            or "topic_tags" in structured_updates
+        ):
+            data["content"] = _sync_memory_metadata(data.get("content", item.content or {}), structured_fields)
         for key, value in structured_fields.items():
             setattr(item, key, value)
 
@@ -597,12 +620,24 @@ def _item_to_dict(item: MemoryItem) -> dict:
     expires_at = item.expires_at or _parse_datetime(content.get("expires_at"))
     last_observed_at = item.last_observed_at or _parse_datetime(content.get("last_observed_at"))
     review_after = item.review_after or _parse_datetime(content.get("review_after"))
+    topic_tags = _normalize_topic_tags(item.topic_tags or content.get("topic_tags"), item.summary or "")
+    scope = _normalize_scope(
+        item.scope or content.get("scope"),
+        item.memory_type or "general",
+        content,
+        item.summary or "",
+        event_at,
+        expires_at,
+        topic_tags,
+    )
     return {
         "id": str(item.id),
         "layer": item.layer,
         "memory_type": item.memory_type or "general",
         "summary": item.summary,
         "content": content,
+        "scope": scope,
+        "topic_tags": topic_tags,
         "event_at": _format_optional_datetime(event_at),
         "expires_at": _format_optional_datetime(expires_at),
         "confidence": item.confidence or _parse_float(content.get("confidence"), 0),
@@ -623,12 +658,59 @@ def _item_to_dict(item: MemoryItem) -> dict:
     }
 
 
+def _row_to_memory_dict(row) -> dict:
+    content = row.content or {}
+    event_at = row.event_at or _parse_datetime(content.get("event_at"))
+    expires_at = row.expires_at or _parse_datetime(content.get("expires_at"))
+    last_observed_at = row.last_observed_at or _parse_datetime(content.get("last_observed_at"))
+    review_after = row.review_after or _parse_datetime(content.get("review_after"))
+    topic_tags = _normalize_topic_tags(row.topic_tags or content.get("topic_tags"), row.summary or "")
+    scope = _normalize_scope(
+        row.scope or content.get("scope"),
+        row.memory_type or "general",
+        content,
+        row.summary or "",
+        event_at,
+        expires_at,
+        topic_tags,
+    )
+    return {
+        "id": str(row.id),
+        "layer": row.layer,
+        "memory_type": row.memory_type or "general",
+        "summary": row.summary,
+        "content": content,
+        "scope": scope,
+        "topic_tags": topic_tags,
+        "event_at": _format_optional_datetime(event_at),
+        "expires_at": _format_optional_datetime(expires_at),
+        "confidence": row.confidence or 0,
+        "observed_count": row.observed_count or 0,
+        "last_observed_at": _format_optional_datetime(last_observed_at),
+        "review_after": _format_optional_datetime(review_after),
+        "user_confirmed": row.user_confirmed,
+        "is_inference": row.is_inference,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "lifecycle": _memory_lifecycle(row.memory_type, content, expires_at),
+        "is_expired": _is_expired_memory(row.memory_type, content, expires_at),
+    }
+
+
+def _sync_memory_metadata(content: dict, structured_fields: dict) -> dict:
+    synced = dict(content or {})
+    synced["scope"] = structured_fields.get("scope", DEFAULT_MEMORY_SCOPE)
+    synced["topic_tags"] = structured_fields.get("topic_tags") or []
+    return synced
+
+
 def _normalize_memory_content(
     memory_type: str,
     content: dict,
     event_at: datetime | None = None,
     expires_at: datetime | None = None,
     source: str | None = None,
+    scope: str | None = None,
+    topic_tags: list[str] | None = None,
 ) -> dict:
     normalized = dict(content or {})
     if source and not normalized.get("source"):
@@ -639,6 +721,10 @@ def _normalize_memory_content(
         normalized["event_at"] = _format_datetime(event_at)
     if expires_at:
         normalized["expires_at"] = _format_datetime(expires_at)
+    if scope:
+        normalized["scope"] = scope
+    if topic_tags is not None:
+        normalized["topic_tags"] = topic_tags
 
     if memory_type == "event":
         parsed_event_at = _parse_datetime(normalized.get("event_at"))
@@ -660,6 +746,8 @@ def _derive_memory_fields(
     last_observed_at: datetime | str | None = None,
     dedupe_key: str | None = None,
     review_after: datetime | str | None = None,
+    scope: str | None = None,
+    topic_tags: list[str] | None = None,
 ) -> dict:
     content = content or {}
     parsed_event_at = _parse_datetime(event_at) or _parse_datetime(content.get("event_at"))
@@ -669,6 +757,19 @@ def _derive_memory_fields(
     parsed_review_after = _parse_datetime(review_after) or _parse_datetime(content.get("review_after"))
     if memory_type == "event" and parsed_expires_at and not parsed_review_after:
         parsed_review_after = parsed_expires_at
+    normalized_tags = _normalize_topic_tags(
+        topic_tags if topic_tags is not None else content.get("topic_tags"),
+        f"{summary}\n{json.dumps(content, ensure_ascii=False, default=str)}",
+    )
+    normalized_scope = _normalize_scope(
+        scope or content.get("scope"),
+        memory_type,
+        content,
+        summary,
+        parsed_event_at,
+        parsed_expires_at,
+        normalized_tags,
+    )
 
     return {
         "event_at": parsed_event_at,
@@ -678,7 +779,156 @@ def _derive_memory_fields(
         "last_observed_at": _parse_datetime(last_observed_at) or _parse_datetime(content.get("last_observed_at")),
         "dedupe_key": (dedupe_key or content.get("dedupe_key") or _build_memory_dedupe_key(layer, memory_type, summary))[:160],
         "review_after": parsed_review_after,
+        "scope": normalized_scope,
+        "topic_tags": normalized_tags,
     }
+
+
+def classify_query_topics(text: str) -> list[str]:
+    return _infer_topic_tags(text or "")
+
+
+def is_memory_relevant_to_query(
+    memory: dict,
+    query: str,
+    query_topics: list[str] | None = None,
+    semantic_score: float = 0.0,
+) -> bool:
+    if not (query or "").strip():
+        return False
+
+    memory_type = memory.get("memory_type") or "general"
+    if memory_type == "boundary":
+        return False
+    if memory.get("needs_cleanup") or memory.get("is_expired"):
+        return False
+
+    scope = _normalize_scope(
+        memory.get("scope"),
+        memory_type,
+        memory.get("content") or {},
+        memory.get("summary") or "",
+        _parse_datetime(memory.get("event_at")),
+        _parse_datetime(memory.get("expires_at")),
+        memory.get("topic_tags") or [],
+    )
+    memory_topics = set(_normalize_topic_tags(memory.get("topic_tags"), memory.get("summary") or ""))
+    current_topics = set(query_topics or classify_query_topics(query))
+    topic_overlap = bool(memory_topics and current_topics and memory_topics & current_topics)
+    keyword_overlap = _keyword_overlap_count(query, memory.get("summary") or "")
+
+    if scope == "ephemeral":
+        return topic_overlap or keyword_overlap >= 2 or semantic_score >= 0.80
+    if scope == "topic":
+        return topic_overlap or keyword_overlap >= 2 or semantic_score >= 0.76
+    if scope == "session":
+        return keyword_overlap >= 2 or semantic_score >= 0.78
+
+    return topic_overlap or keyword_overlap >= 1 or semantic_score >= 0.72
+
+
+def is_text_relevant_to_query(
+    text: str,
+    query: str,
+    query_topics: list[str] | None = None,
+) -> bool:
+    if _asks_for_pending_topic(query):
+        return True
+    text_topics = set(classify_query_topics(text or ""))
+    current_topics = set(query_topics or classify_query_topics(query or ""))
+    return bool(text_topics and current_topics and text_topics & current_topics) or _keyword_overlap_count(query, text) >= 2
+
+
+def _memory_relevance_score(
+    memory: dict,
+    query: str,
+    query_topics: list[str] | None = None,
+    semantic_score: float = 0.0,
+) -> float:
+    memory_topics = set(_normalize_topic_tags(memory.get("topic_tags"), memory.get("summary") or ""))
+    current_topics = set(query_topics or classify_query_topics(query))
+    score = semantic_score
+    if memory_topics and current_topics and memory_topics & current_topics:
+        score += 0.6
+    score += min(_keyword_overlap_count(query, memory.get("summary") or "") * 0.18, 0.54)
+    if memory.get("scope") == "global":
+        score += 0.08
+    if memory.get("user_confirmed"):
+        score += 0.08
+    if memory.get("memory_type") == "event":
+        score -= 0.05
+    return score
+
+
+def _normalize_scope(
+    scope: str | None,
+    memory_type: str | None,
+    content: dict | None,
+    summary: str,
+    event_at: datetime | None,
+    expires_at: datetime | None,
+    topic_tags: list[str] | None,
+) -> str:
+    raw_scope = (scope or "").strip().lower()
+    if raw_scope in MEMORY_SCOPES:
+        return raw_scope
+
+    content = content or {}
+    if memory_type == "event" or event_at or expires_at or content.get("event_at") or content.get("expires_at"):
+        return "ephemeral"
+    if memory_type == "boundary":
+        return "global"
+    if memory_type in {"routine", "preference"} and topic_tags:
+        return "topic"
+    if topic_tags and memory_type in {"general", "insight"}:
+        return "topic"
+    return DEFAULT_MEMORY_SCOPE
+
+
+def _normalize_topic_tags(tags, text: str = "") -> list[str]:
+    normalized = []
+    if isinstance(tags, list):
+        for tag in tags:
+            value = str(tag or "").strip().lower()
+            if value in TOPIC_KEYWORDS and value not in normalized:
+                normalized.append(value)
+    inferred = _infer_topic_tags(text)
+    for tag in inferred:
+        if tag not in normalized:
+            normalized.append(tag)
+    return normalized[:8]
+
+
+def _infer_topic_tags(text: str) -> list[str]:
+    text_lower = (text or "").lower()
+    tags = []
+    for topic, keywords in TOPIC_KEYWORDS.items():
+        if any(keyword.lower() in text_lower for keyword in keywords):
+            tags.append(topic)
+    return tags
+
+
+def _keyword_overlap_count(query: str, text: str) -> int:
+    query_keywords = _known_keywords_in_text(query)
+    text_keywords = _known_keywords_in_text(text)
+    return len(query_keywords & text_keywords)
+
+
+def _known_keywords_in_text(text: str) -> set[str]:
+    text_lower = (text or "").lower()
+    keywords = set()
+    for values in TOPIC_KEYWORDS.values():
+        for keyword in values:
+            value = keyword.lower()
+            if value in text_lower:
+                keywords.add(value)
+    for token in re.findall(r"[a-zA-Z0-9_]{2,}", text_lower):
+        keywords.add(token)
+    return keywords
+
+
+def _asks_for_pending_topic(query: str) -> bool:
+    return any(word in (query or "") for word in ("继续", "上次", "之前", "刚才", "接着"))
 
 
 def _build_memory_dedupe_key(layer: str, memory_type: str | None, summary: str) -> str:
@@ -848,6 +1098,13 @@ async def extract_candidates(user_id: str, message: str, reply: str, db: AsyncSe
     if memory_type == "event":
         event_meta = _extract_event_metadata(f"{message}\n{summary}")
         content.update(event_meta)
+    structured_fields = _derive_memory_fields(
+        layer="co_created",
+        memory_type=memory_type,
+        summary=summary,
+        content=content,
+    )
+    content = _sync_memory_metadata(content, structured_fields)
 
     return [{
         "summary": summary,
@@ -1043,6 +1300,8 @@ async def add_with_embedding(
     last_observed_at: datetime | None = None,
     dedupe_key: str | None = None,
     review_after: datetime | None = None,
+    scope: str | None = None,
+    topic_tags: list[str] | None = None,
 ) -> MemoryItem | None:
     """保存记忆并异步生成 embedding"""
     if user_confirmed is None:
@@ -1059,13 +1318,16 @@ async def add_with_embedding(
         last_observed_at=last_observed_at,
         dedupe_key=dedupe_key,
         review_after=review_after,
+        scope=scope,
+        topic_tags=topic_tags,
     )
+    content = _sync_memory_metadata(content or {}, structured_fields)
     item = MemoryItem(
         user_id=user_id,
         layer=layer,
         memory_type=memory_type,
         summary=summary,
-        content=content or {},
+        content=content,
         source_type=source_type,
         user_confirmed=user_confirmed,
         is_inference=(layer == "tacit"),
