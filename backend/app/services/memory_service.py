@@ -53,6 +53,33 @@ TOPIC_KEYWORDS = {
     "boundary": ("禁区", "不要提", "别提", "不想聊", "不主动", "避开"),
 }
 
+FORBIDDEN_ADD_PATTERNS = (
+    r"(?:以后|之后|后面|接下来|以后都|以后也)?(?:不要|别|别再|不要再|别总是|不要总是|不想|不愿意|不希望)(?:主动)?(?:再)?(?:提起|提到|提及|提(?!醒)|说|聊|谈|讨论|展开|碰|触碰)(?:到|起|及)?(?P<topic>[^，。！？；\n]{1,40})",
+    r"(?:把|将)?(?P<topic>[^，。！？；\n]{1,40}?)(?:设为|列为|加入|放进|当成)(?:禁区|边界|避雷)",
+    r"(?P<topic>[^，。！？；\n]{1,40}?)(?:是|属于|算是)(?:我的)?(?:禁区|边界|避雷)",
+    r"(?P<topic>[^，。！？；\n]{1,40}?)(?:以后|之后|后面)?(?:不要|别|别再|不要再)(?:主动)?(?:再)?(?:提起|提到|提及|提(?!醒)|说|聊|谈|讨论|展开|碰|触碰)(?:了|啦)?",
+)
+
+FORBIDDEN_REMOVE_PATTERNS = (
+    r"(?:可以|能|允许|愿意)(?:重新|继续|再)?(?:提起|提到|提及|提(?!醒)|说|聊|谈|讨论|展开)(?:到|起|及)?(?P<topic>[^，。！？；\n]{1,40})",
+    r"(?:解除|取消|移除|删除|去掉)(?:关于|对)?(?P<topic>[^，。！？；\n]{1,40}?)(?:的)?(?:禁区|边界|避开|避雷)",
+    r"(?P<topic>[^，。！？；\n]{1,40}?)(?:不用|不需要)(?:再)?(?:避开|回避)",
+    r"(?P<topic>[^，。！？；\n]{1,40}?)(?:不再是|不是)(?:禁区|边界|避雷)",
+)
+
+VAGUE_FORBIDDEN_TERMS = {
+    "这个",
+    "那个",
+    "这件事",
+    "那件事",
+    "这事",
+    "那事",
+    "这个话题",
+    "那个话题",
+    "刚才那个",
+    "它",
+}
+
 
 async def search(
     user_id: str,
@@ -71,7 +98,6 @@ async def search(
         return []
 
     forbidden = await get_forbidden(user_id, db)
-    forbidden_words = {f.topic_summary.lower() for f in forbidden}
     query_topics = classify_query_topics(query)
 
     # 1. 尝试 pgvector 语义搜索
@@ -109,10 +135,9 @@ async def search(
         for row in rows:
             if not _is_available_for_chat(row.layer, row.user_confirmed, row.memory_type, row.content, row.expires_at):
                 continue
-            summary_lower = (row.summary or "").lower()
-            if any(fw in summary_lower for fw in forbidden_words):
-                continue
             item_data = _row_to_memory_dict(row)
+            if is_forbidden_text(_memory_dict_text(item_data), forbidden):
+                continue
             semantic_score = float(row.score) if row.score else 0
             if not is_memory_relevant_to_query(item_data, query, query_topics, semantic_score):
                 continue
@@ -137,8 +162,7 @@ async def search(
         if not _is_item_available_for_chat(item):
             continue
         data = _item_to_dict(item)
-        summary_lower = (item.summary or "").lower()
-        if any(fw in summary_lower for fw in forbidden_words):
+        if is_forbidden_text(_memory_dict_text(data), forbidden):
             continue
         if not is_memory_relevant_to_query(data, query, query_topics):
             continue
@@ -569,10 +593,21 @@ async def get_forbidden(user_id: str, db: AsyncSession = None) -> list[Forbidden
 
 
 async def add_forbidden(user_id: str, topic: str, phrase: str = "", db: AsyncSession = None) -> dict:
-    ft = ForbiddenTopic(user_id=user_id, topic_summary=topic, original_phrase=phrase)
+    terms = _extract_forbidden_terms(topic)
+    normalized_topic = next(iter(terms), _compact_forbidden_text(topic))
+    if not normalized_topic:
+        return {"success": False, "message": "禁区话题不能为空"}
+
+    existing = await get_forbidden(user_id, db)
+    for item in existing:
+        if _forbidden_item_matches_terms(item, {normalized_topic}):
+            return {"success": True, "id": str(item.id), "created": False}
+
+    ft = ForbiddenTopic(user_id=user_id, topic_summary=normalized_topic, original_phrase=phrase)
     db.add(ft)
     await db.commit()
-    return {"success": True}
+    await db.refresh(ft)
+    return {"success": True, "id": str(ft.id), "created": True}
 
 
 async def remove_forbidden(user_id: str, topic_id: str, db: AsyncSession = None) -> dict:
@@ -586,6 +621,83 @@ async def remove_forbidden(user_id: str, topic_id: str, db: AsyncSession = None)
     if result.rowcount == 0:
         return {"success": False, "message": "禁区话题不存在或无权操作"}
     return {"success": True}
+
+
+async def sync_forbidden_topics_from_message(user_id: str, message: str, db: AsyncSession = None) -> dict:
+    """根据用户明示边界更新禁区话题，用于模型回复前立即生效。"""
+    add_terms = extract_forbidden_add_terms(message)
+    remove_terms = extract_forbidden_remove_terms(message)
+    changed = {"added": [], "removed": []}
+
+    if remove_terms:
+        changed["removed"] = await remove_forbidden_by_terms(user_id, remove_terms, db)
+
+    if add_terms:
+        for term in sorted(add_terms):
+            result = await add_forbidden(user_id, term, message, db)
+            if result.get("success") and result.get("created", True):
+                changed["added"].append(term)
+
+    return changed
+
+
+async def remove_forbidden_by_terms(user_id: str, terms: set[str], db: AsyncSession = None) -> list[str]:
+    flattened_terms: set[str] = set()
+    for term in terms:
+        flattened_terms.update(_extract_forbidden_terms(term))
+    if not flattened_terms:
+        return []
+
+    existing = await get_forbidden(user_id, db)
+    targets = [item for item in existing if _forbidden_item_matches_terms(item, flattened_terms)]
+    if not targets:
+        return []
+
+    await db.execute(
+        delete(ForbiddenTopic).where(
+            ForbiddenTopic.user_id == user_id,
+            ForbiddenTopic.id.in_([item.id for item in targets]),
+        )
+    )
+    await db.commit()
+    return [item.topic_summary for item in targets]
+
+
+def extract_forbidden_add_terms(text: str) -> set[str]:
+    return _extract_forbidden_request_terms(text, FORBIDDEN_ADD_PATTERNS)
+
+
+def extract_forbidden_remove_terms(text: str) -> set[str]:
+    return _extract_forbidden_request_terms(text, FORBIDDEN_REMOVE_PATTERNS)
+
+
+def forbidden_topics_to_terms(forbidden_topics: list[ForbiddenTopic | dict | str] | None) -> set[str]:
+    terms: set[str] = set()
+    for item in forbidden_topics or []:
+        if isinstance(item, str):
+            pieces = [item]
+        elif isinstance(item, dict):
+            pieces = [str(item.get("topic") or item.get("topic_summary") or ""), str(item.get("original_phrase") or "")]
+        else:
+            pieces = [str(getattr(item, "topic_summary", "") or ""), str(getattr(item, "original_phrase", "") or "")]
+        for piece in pieces:
+            terms.update(_extract_forbidden_terms(piece))
+    return terms
+
+
+def is_forbidden_text(text: str | dict | None, forbidden_topics: list[ForbiddenTopic | dict | str] | None) -> bool:
+    terms = forbidden_topics_to_terms(forbidden_topics)
+    if not terms:
+        return False
+    normalized_text = _normalize_match_text(_stringify_forbidden_text(text))
+    return any(term and _normalize_match_text(term) in normalized_text for term in terms)
+
+
+def filter_forbidden_lines(text: str, forbidden_topics: list[ForbiddenTopic | dict | str] | None) -> str:
+    if not text or not forbidden_topics:
+        return text or ""
+    kept = [line for line in text.splitlines() if not is_forbidden_text(line, forbidden_topics)]
+    return "\n".join(line for line in kept if line.strip()).strip()
 
 
 async def get_anchors(user_id: str, db: AsyncSession = None) -> list[PendingAnchor]:
@@ -1494,6 +1606,79 @@ def _replacement_source_text(item: MemoryItem) -> str:
         item.summary or "",
         str(content.get("source_message") or ""),
         str(content.get("source_reply") or ""),
+    ]
+    return "\n".join(piece for piece in pieces if piece)
+
+
+def _extract_forbidden_request_terms(text: str, patterns: tuple[str, ...]) -> set[str]:
+    terms: set[str] = set()
+    for pattern in patterns:
+        for match in re.finditer(pattern, text or "", flags=re.IGNORECASE):
+            if _is_negated_boundary_action(text or "", match.start()):
+                continue
+            terms.update(_extract_forbidden_terms(match.group("topic")))
+    return terms
+
+
+def _is_negated_boundary_action(text: str, start: int) -> bool:
+    prefix = text[max(0, start - 4):start]
+    return bool(re.search(r"(不要|别|不能|不要再|别再)$", prefix))
+
+
+def _extract_forbidden_terms(text: str) -> set[str]:
+    compacted = _compact_forbidden_text(text)
+    if not compacted:
+        return set()
+
+    terms = set(_extract_topic_terms(compacted))
+    if not terms and _is_useful_forbidden_term(compacted):
+        terms.add(compacted)
+    return {_normalize_match_text(term) for term in terms if _is_useful_forbidden_term(term)}
+
+
+def _compact_forbidden_text(text: str) -> str:
+    compacted = re.sub(r"\s+", "", text or "")
+    compacted = re.sub(r"^(关于|有关|对于|对|把|将|这次|当前|以后|之后|后面|接下来)", "", compacted)
+    compacted = re.sub(r"(这个话题|那个话题|这件事|那件事|这事|那事|的话题)$", "", compacted)
+    compacted = compacted.strip("了啦吧哦呀呢啊吗嘛~～ ，。！？；、")
+    return compacted
+
+
+def _is_useful_forbidden_term(term: str) -> bool:
+    normalized = _normalize_match_text(term)
+    if not normalized or normalized in VAGUE_FORBIDDEN_TERMS:
+        return False
+    if len(normalized) < 2 or len(normalized) > 24:
+        return False
+    return not re.fullmatch(r"[^\w\u4e00-\u9fff]+", normalized)
+
+
+def _forbidden_item_matches_terms(item: ForbiddenTopic, terms: set[str]) -> bool:
+    item_terms = forbidden_topics_to_terms([item])
+    for term in terms:
+        if term in item_terms:
+            return True
+        if any(term in item_term or item_term in term for item_term in item_terms):
+            return True
+    return False
+
+
+def _normalize_match_text(text: str) -> str:
+    return re.sub(r"\s+", "", text or "").lower()
+
+
+def _stringify_forbidden_text(text: str | dict | None) -> str:
+    if text is None:
+        return ""
+    if isinstance(text, dict):
+        return json.dumps(text, ensure_ascii=False)
+    return str(text)
+
+
+def _memory_dict_text(data: dict) -> str:
+    pieces = [
+        str(data.get("summary") or ""),
+        _stringify_forbidden_text(data.get("content") or {}),
     ]
     return "\n".join(piece for piece in pieces if piece)
 

@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.conversation import Message, Session
-from app.services.memory_service import classify_query_topics
+from app.services.memory_service import classify_query_topics, is_forbidden_text
 
 
 TOPIC_NOISE_KEYWORDS = {
@@ -24,6 +24,7 @@ async def get_current_session_context(
     db: AsyncSession,
     query: str | None = None,
     query_topics: list[str] | None = None,
+    forbidden_topics: list | None = None,
     limit: int = 8,
 ) -> str:
     if not session_id:
@@ -45,7 +46,7 @@ async def get_current_session_context(
     current_topics = query_topics if query_topics is not None else classify_query_topics(query or "")
     lines = []
     for message in messages:
-        content = _filter_message_for_query(message.content, query or "", current_topics)
+        content = _filter_message_for_query(message.content, query or "", current_topics, forbidden_topics)
         if not content:
             continue
         speaker = "用户" if message.role == "user" else "伴行"
@@ -58,17 +59,27 @@ def _compact_text(text: str, limit: int) -> str:
     return compacted[:limit]
 
 
-def _filter_message_for_query(text: str, query: str, query_topics: list[str]) -> str:
+def _filter_message_for_query(
+    text: str,
+    query: str,
+    query_topics: list[str],
+    forbidden_topics: list | None = None,
+) -> str:
     content = _compact_text(text, 600)
     if not content:
         return ""
-    if not query_topics:
-        return _compact_text(content, 300)
 
     kept = []
     for chunk in _split_context_chunks(content):
         compacted = _compact_text(chunk, 140)
         if not compacted:
+            continue
+        if is_forbidden_text(compacted, forbidden_topics):
+            continue
+        if not query_topics:
+            kept.append(compacted)
+            if len(kept) >= 3:
+                break
             continue
         if _has_off_topic_noise(compacted, query_topics):
             continue

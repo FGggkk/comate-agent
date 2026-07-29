@@ -11,7 +11,7 @@ from app.db.session import async_session_factory
 from app.models.conversation import Message, Session
 from app.models.memory import MemoryItem
 from app.models.tacit import SessionSummary, TacitProfile, TacitProfileVersion
-from app.services.memory_service import classify_query_topics
+from app.services.memory_service import classify_query_topics, is_forbidden_text
 
 
 APP_TZ = timezone(timedelta(hours=8))
@@ -184,7 +184,12 @@ async def update_tacit_profile(user_id: str, db: AsyncSession) -> dict | None:
     return profile_to_snapshot(profile)
 
 
-async def get_tacit_context(user_id: str, db: AsyncSession, query: str | None = None) -> str:
+async def get_tacit_context(
+    user_id: str,
+    db: AsyncSession,
+    query: str | None = None,
+    forbidden_topics: list | None = None,
+) -> str:
     profile = await _get_active_profile(user_id, db)
     if not profile or (profile.confidence or 0) < HIGH_CONFIDENCE:
         return ""
@@ -196,6 +201,8 @@ async def get_tacit_context(user_id: str, db: AsyncSession, query: str | None = 
         claims = _active_claims(profile_data.get(dimension, []), threshold=HIGH_CONFIDENCE)
         for claim in claims[:2]:
             claim_text = claim.get("claim") or ""
+            if is_forbidden_text(claim_text, forbidden_topics):
+                continue
             if not _is_persona_claim_for_reply(dimension, claim_text, query_topics):
                 continue
             lines.append(f"- {DIMENSIONS[dimension]}: {claim_text}")

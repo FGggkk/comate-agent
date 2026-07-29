@@ -1,7 +1,15 @@
 from app.graph.state import ChatState
 from app.graph.schemas import memory_card_event, status_event
 from app.services.conversation_context_service import get_current_session_context
-from app.services.memory_service import classify_query_topics, get_anchors, is_text_relevant_to_query, search
+from app.services.memory_service import (
+    classify_query_topics,
+    get_anchors,
+    get_forbidden,
+    is_forbidden_text,
+    is_text_relevant_to_query,
+    search,
+    sync_forbidden_topics_from_message,
+)
 from app.services.tacit_profile_service import get_tacit_context
 
 
@@ -13,9 +21,25 @@ async def memory_node(state: ChatState, db):
     events = [status_event("memory", "正在回忆我们的聊天记录")]
     state.query_topics = classify_query_topics(state.message)
 
+    # 0. 禁区边界：先同步用户当前消息里的明示边界，再读取任何记忆。
+    try:
+        state.forbidden_updates = await sync_forbidden_topics_from_message(state.user_id, state.message, db)
+    except Exception as e:
+        print(f"[memory] 禁区话题同步失败: {e}")
+        state.forbidden_updates = {}
+
+    forbidden_topics = await get_forbidden(state.user_id, db)
+    state.forbidden_topics = [{"id": str(f.id), "topic": f.topic_summary} for f in forbidden_topics]
+    state.forbidden_query_blocked = is_forbidden_text(state.message, forbidden_topics)
+
     # 1. 默契层：只作为人物理解和陪伴方式参考。
     try:
-        state.tacit_context = await get_tacit_context(state.user_id, db, query=state.message)
+        state.tacit_context = await get_tacit_context(
+            state.user_id,
+            db,
+            query=state.message,
+            forbidden_topics=forbidden_topics,
+        )
     except Exception as e:
         print(f"[memory] 默契画像读取失败: {e}")
         state.tacit_context = ""
@@ -37,6 +61,7 @@ async def memory_node(state: ChatState, db):
         db,
         query=state.message,
         query_topics=state.query_topics,
+        forbidden_topics=forbidden_topics,
     )
 
     # 读取未完待续锚点
@@ -45,6 +70,7 @@ async def memory_node(state: ChatState, db):
         {"id": str(a.id), "topic": a.topic_summary}
         for a in anchors
         if is_text_relevant_to_query(a.topic_summary, state.message, state.query_topics)
+        and not is_forbidden_text(a.topic_summary, forbidden_topics)
     ]
     # 如果有锚点，也作为卡片展示
     if state.pending_anchors:

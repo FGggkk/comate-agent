@@ -7,6 +7,14 @@ async def actions_node(state: ChatState):
     prompt = None
     candidate_summary = None
 
+    if (
+        state.forbidden_query_blocked
+        or state.forbidden_updates.get("added")
+        or state.forbidden_updates.get("removed")
+    ):
+        state.actions = []
+        return []
+
     if state.memory_candidates:
         candidate = state.memory_candidates[0]
         prompt = "检测到需要关注的内容，请问是否需要记忆？"
