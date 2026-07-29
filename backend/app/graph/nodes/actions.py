@@ -1,5 +1,6 @@
 from app.graph.state import ChatState
 from app.graph.schemas import action_buttons_event
+from app.services.memory_service import is_forbidden_text
 
 
 async def actions_node(state: ChatState):
@@ -14,6 +15,12 @@ async def actions_node(state: ChatState):
     ):
         state.actions = []
         return []
+
+    if state.memory_candidates:
+        state.memory_candidates = [
+            candidate for candidate in state.memory_candidates
+            if not is_forbidden_text(candidate, state.forbidden_topics)
+        ]
 
     if state.memory_candidates:
         candidate = state.memory_candidates[0]

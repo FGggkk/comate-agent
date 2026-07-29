@@ -84,18 +84,79 @@
         <EmptyState v-if="memoryStore.layers.priors.length === 0" text="暂无先验记忆" />
       </section>
 
-      <section v-else-if="activeSection === 'co_created'" class="detail-card">
-        <div v-for="m in memoryStore.layers.co_created" :key="m.id" class="memory-row editable">
-          <div class="row-main">
-            <span :class="['row-tag', m.user_confirmed ? '' : 'pending']">{{ m.user_confirmed ? '已确认' : '待确认' }}</span>
-            <span class="row-text">{{ m.summary }}</span>
+      <section v-else-if="activeSection === 'co_created'" class="detail-card co-created-detail">
+        <div class="memory-add-form">
+          <textarea
+            v-model="newMemorySummary"
+            placeholder="新增共建记忆..."
+            class="edit-input add-memory-input"
+            rows="2"
+          />
+          <div class="type-picker">
+            <button
+              v-for="item in memoryTypeOptions"
+              :key="item.value"
+              type="button"
+              :class="{ active: newMemoryType === item.value }"
+              @click="newMemoryType = item.value"
+            >
+                {{ item.label }}
+            </button>
           </div>
-          <div class="row-actions">
-            <button v-if="!m.user_confirmed" class="action-confirm" @click="confirmMemory(m.id)">确认</button>
-            <button class="action-delete" @click="deleteMemory(m.id)">删除</button>
+          <div class="memory-add-actions">
+            <button class="btn-primary add-btn" :disabled="saving" @click="addCoCreatedMemory">添加</button>
+          </div>
+        </div>
+        <div class="detail-tools">
+          <input v-model="memorySearch" placeholder="搜索共建记忆..." class="form-input" />
+          <div class="segmented">
+            <button
+              v-for="item in coCreatedFilters"
+              :key="item.id"
+              :class="{ active: coCreatedFilter === item.id }"
+              @click="coCreatedFilter = item.id"
+            >
+              {{ item.label }}
+            </button>
+          </div>
+        </div>
+        <div v-if="notice" class="inline-notice">{{ notice }}</div>
+        <div v-if="errorMessage" class="inline-error">{{ errorMessage }}</div>
+
+        <div v-if="filteredCoCreatedMemories.length" class="memory-list-scroll">
+          <div v-for="m in filteredCoCreatedMemories" :key="m.id" class="memory-row editable stacked">
+            <div class="row-main">
+              <span :class="['row-tag', m.user_confirmed ? '' : 'pending']">{{ m.user_confirmed ? '已确认' : '待确认' }}</span>
+              <div class="row-content">
+                <textarea
+                  v-if="editingMemoryId === m.id"
+                  v-model="editingSummary"
+                  class="edit-input"
+                  rows="3"
+                />
+                <span v-else class="row-text">{{ m.summary }}</span>
+                <div class="row-meta">
+                  <span>{{ memoryTypeLabel(m.memory_type) }}</span>
+                  <span>{{ scopeLabel(m.scope) }}</span>
+                  <span v-for="tag in memoryTags(m)" :key="`${m.id}-${tag}`">{{ tag }}</span>
+                </div>
+              </div>
+            </div>
+            <div class="row-actions">
+              <template v-if="editingMemoryId === m.id">
+                <button class="action-confirm" :disabled="saving" @click="saveMemoryEdit(m.id)">保存</button>
+                <button class="action-neutral" :disabled="saving" @click="cancelMemoryEdit">取消</button>
+              </template>
+              <template v-else>
+                <button v-if="!m.user_confirmed" class="action-confirm" :disabled="saving" @click="confirmMemory(m.id)">确认</button>
+                <button class="action-neutral" :disabled="saving" @click="startMemoryEdit(m)">编辑</button>
+                <button class="action-delete" :disabled="saving" @click="deleteMemory(m.id)">删除</button>
+              </template>
+            </div>
           </div>
         </div>
         <EmptyState v-if="memoryStore.layers.co_created.length === 0" text="暂无共建记忆" />
+        <EmptyState v-else-if="filteredCoCreatedMemories.length === 0" text="没有匹配的共建记忆" />
       </section>
 
       <section v-else-if="activeSection === 'tacit'" class="detail-card tacit-detail">
@@ -137,28 +198,22 @@
       <section v-else-if="activeSection === 'forbidden'" class="detail-card">
         <div class="inline-form">
           <input v-model="newForbidden" placeholder="添加禁区话题..." class="form-input" />
-          <button class="btn-primary add-btn" @click="addForbidden">添加</button>
+          <button class="btn-primary add-btn" :disabled="saving" @click="addForbidden">添加</button>
         </div>
-        <div v-for="f in memoryStore.forbiddenTopics" :key="f.id" class="memory-row editable">
+        <input v-if="memoryStore.forbiddenTopics.length" v-model="forbiddenSearch" placeholder="搜索禁区话题..." class="form-input search-input" />
+        <div v-if="notice" class="inline-notice">{{ notice }}</div>
+        <div v-if="errorMessage" class="inline-error">{{ errorMessage }}</div>
+        <div v-for="f in filteredForbiddenTopics" :key="f.id" class="memory-row editable">
           <div class="row-main">
             <span class="row-tag forbidden">禁区</span>
             <span class="row-text">{{ f.topic }}</span>
           </div>
-          <button class="action-delete" @click="removeForbidden(f.id)">解除</button>
+          <button class="action-delete" :disabled="saving" @click="removeForbidden(f.id)">解除</button>
         </div>
         <EmptyState v-if="memoryStore.forbiddenTopics.length === 0" text="暂无禁区话题" />
+        <EmptyState v-else-if="filteredForbiddenTopics.length === 0" text="没有匹配的禁区话题" />
       </section>
 
-      <section v-else-if="activeSection === 'anchors'" class="detail-card">
-        <div v-for="a in memoryStore.pendingAnchors" :key="a.id" class="memory-row editable">
-          <div class="row-main">
-            <span class="row-tag anchor">待续</span>
-            <span class="row-text">{{ a.topic }}</span>
-          </div>
-          <button class="action-confirm" @click="fulfillAnchor(a.id)">已完成</button>
-        </div>
-        <EmptyState v-if="memoryStore.pendingAnchors.length === 0" text="暂无待续话题" />
-      </section>
     </div>
   </div>
 </template>
@@ -166,7 +221,7 @@
 <script setup>
 import { computed, defineComponent, h, ref, onMounted, watch } from 'vue'
 import { useMemoryStore } from '../stores/memory'
-import { apiGetMemories, apiUpdateMemory, apiDeleteMemory, apiAddForbidden, apiRemoveForbidden, apiFulfillAnchor } from '../api/index'
+import { apiGetMemories, apiCreateMemory, apiUpdateMemory, apiDeleteMemory, apiAddForbidden, apiRemoveForbidden } from '../api/index'
 import SoulOrb from '../components/SoulOrb.vue'
 
 const props = defineProps({
@@ -178,6 +233,16 @@ const loaded = ref(false)
 const loading = ref(false)
 const activeSection = ref('')
 const newForbidden = ref('')
+const newMemorySummary = ref('')
+const newMemoryType = ref('general')
+const memorySearch = ref('')
+const forbiddenSearch = ref('')
+const coCreatedFilter = ref('all')
+const editingMemoryId = ref('')
+const editingSummary = ref('')
+const saving = ref(false)
+const notice = ref('')
+const errorMessage = ref('')
 const showTacitEvidence = ref(false)
 
 const MemoryRow = defineComponent({
@@ -206,7 +271,6 @@ const icons = {
   co_created: '<svg viewBox="0 0 32 32" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 17l-3 3a5 5 0 0 0 7 7l3-3"/><path d="M21 15l3-3a5 5 0 0 0-7-7l-3 3"/><path d="M13 19l6-6"/></svg>',
   tacit: '<svg viewBox="0 0 32 32" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 22c-3-2-5-5-5-9a9 9 0 0 1 18 0c0 4-2 7-5 9"/><path d="M12 25h8M13 29h6"/><path d="M13 13c1.8-2 4.2-2 6 0"/></svg>',
   forbidden: '<svg viewBox="0 0 32 32" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="16" cy="16" r="11"/><path d="M8 24L24 8"/></svg>',
-  anchors: '<svg viewBox="0 0 32 32" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 4l10 10"/><path d="M9 17l6-6 6 6-6 11z"/><path d="M4 28h24"/></svg>',
 }
 
 const memoryEntries = computed(() => [
@@ -214,10 +278,49 @@ const memoryEntries = computed(() => [
   { id: 'co_created', label: '共建层', desc: '你确认留下的事实', count: countLayer('co_created'), unit: '条', icon: icons.co_created },
   { id: 'tacit', label: '默契层', desc: '跨会话形成的人物画像', count: countLayer('tacit'), unit: '份', icon: icons.tacit },
   { id: 'forbidden', label: '禁区话题', desc: '不主动触碰的边界', count: memoryStore.forbiddenTopics.length, unit: '条', icon: icons.forbidden },
-  { id: 'anchors', label: '未完待续', desc: '短期保留的对话断点', count: memoryStore.pendingAnchors.length, unit: '个', icon: icons.anchors },
 ])
 
 const currentEntry = computed(() => memoryEntries.value.find(item => item.id === activeSection.value))
+
+const coCreatedFilters = [
+  { id: 'all', label: '全部' },
+  { id: 'confirmed', label: '已确认' },
+  { id: 'pending', label: '待确认' },
+]
+
+const memoryTypeOptions = [
+  { value: 'general', label: '一般' },
+  { value: 'preference', label: '偏好' },
+  { value: 'routine', label: '习惯' },
+  { value: 'event', label: '事件' },
+  { value: 'insight', label: '洞察' },
+  { value: 'boundary', label: '边界' },
+]
+
+const filteredCoCreatedMemories = computed(() => {
+  const keyword = normalizeKeyword(memorySearch.value)
+  return (memoryStore.layers.co_created || [])
+    .filter(item => {
+      if (coCreatedFilter.value === 'confirmed') return item.user_confirmed
+      if (coCreatedFilter.value === 'pending') return !item.user_confirmed
+      return true
+    })
+    .filter(item => {
+      if (!keyword) return true
+      return normalizeKeyword([
+        item.summary,
+        item.memory_type,
+        item.scope,
+        ...(item.topic_tags || []),
+      ].join(' ')).includes(keyword)
+    })
+})
+
+const filteredForbiddenTopics = computed(() => {
+  const keyword = normalizeKeyword(forbiddenSearch.value)
+  if (!keyword) return memoryStore.forbiddenTopics
+  return memoryStore.forbiddenTopics.filter(item => normalizeKeyword(item.topic).includes(keyword))
+})
 
 const profileSummary = computed(() => {
   return memoryStore.tacitProfile?.summary || '伴行正在认识你的节奏、偏好和处事方式。多聊几次后，这里会慢慢长出更像你的画像。'
@@ -263,6 +366,8 @@ const profileOrbTemplate = computed(() => {
 
 function openSection(id) {
   activeSection.value = id
+  clearFeedback()
+  cancelMemoryEdit()
   if (id === 'tacit') showTacitEvidence.value = true
 }
 
@@ -309,6 +414,68 @@ function formatTime(value) {
   }
 }
 
+function normalizeKeyword(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function memoryTypeLabel(value) {
+  const map = {
+    general: '一般',
+    preference: '偏好',
+    profile: '画像',
+    event: '事件',
+    routine: '习惯',
+    boundary: '边界',
+    insight: '洞察',
+  }
+  return map[value] || value || '一般'
+}
+
+function scopeLabel(value) {
+  const map = {
+    global: '长期',
+    topic: '主题',
+    session: '会话',
+    ephemeral: '短期',
+  }
+  return map[value] || '长期'
+}
+
+function memoryTags(item) {
+  return Array.isArray(item.topic_tags) ? item.topic_tags.slice(0, 4) : []
+}
+
+function startMemoryEdit(item) {
+  clearFeedback()
+  editingMemoryId.value = item.id
+  editingSummary.value = item.summary || ''
+}
+
+function cancelMemoryEdit() {
+  editingMemoryId.value = ''
+  editingSummary.value = ''
+}
+
+function clearFeedback() {
+  notice.value = ''
+  errorMessage.value = ''
+}
+
+async function runAction(action, successText) {
+  if (saving.value) return
+  saving.value = true
+  clearFeedback()
+  try {
+    await action()
+    notice.value = successText
+    await refreshMemories()
+  } catch (error) {
+    errorMessage.value = error?.message || '操作失败'
+  } finally {
+    saving.value = false
+  }
+}
+
 async function refreshMemories() {
   if (loading.value) return
   loading.value = true
@@ -328,36 +495,64 @@ onMounted(async () => {
 watch(() => props.active, async (active) => {
   if (active) {
     activeSection.value = ''
+    clearFeedback()
+    cancelMemoryEdit()
     await refreshMemories()
   }
 })
 
 async function addForbidden() {
   if (!newForbidden.value.trim()) return
-  await apiAddForbidden(newForbidden.value, '')
-  newForbidden.value = ''
-  await refreshMemories()
+  const topic = newForbidden.value.trim()
+  await runAction(async () => {
+    await apiAddForbidden(topic, '')
+    newForbidden.value = ''
+  }, '已加入禁区')
+}
+
+async function addCoCreatedMemory() {
+  const summary = newMemorySummary.value.trim()
+  if (!summary) {
+    errorMessage.value = '记忆内容不能为空'
+    return
+  }
+  await runAction(async () => {
+    const result = await apiCreateMemory({
+      summary,
+      memory_type: newMemoryType.value || 'general',
+    })
+    if (result?.success === false) {
+      throw new Error(result.message || '新增记忆失败')
+    }
+    newMemorySummary.value = ''
+    newMemoryType.value = 'general'
+  }, '已新增记忆')
 }
 
 async function removeForbidden(id) {
-  await apiRemoveForbidden(id)
-  await refreshMemories()
+  await runAction(() => apiRemoveForbidden(id), '已解除禁区')
 }
 
 async function confirmMemory(id) {
-  await apiUpdateMemory(id, { user_confirmed: true })
-  await refreshMemories()
+  await runAction(() => apiUpdateMemory(id, { user_confirmed: true }), '已确认记忆')
 }
 
 async function deleteMemory(id) {
-  await apiDeleteMemory(id)
-  await refreshMemories()
+  await runAction(() => apiDeleteMemory(id), '已删除记忆')
 }
 
-async function fulfillAnchor(id) {
-  await apiFulfillAnchor(id)
-  await refreshMemories()
+async function saveMemoryEdit(id) {
+  const summary = editingSummary.value.trim()
+  if (!summary) {
+    errorMessage.value = '记忆内容不能为空'
+    return
+  }
+  await runAction(async () => {
+    await apiUpdateMemory(id, { summary })
+    cancelMemoryEdit()
+  }, '已保存记忆')
 }
+
 </script>
 
 <style scoped>
@@ -466,12 +661,6 @@ async function fulfillAnchor(id) {
   background: #FFF3F3;
   border-color: #F5C8C8;
   color: #E88D8D;
-}
-
-.entry-anchors {
-  background: #F3FBF5;
-  border-color: #B8E8C8;
-  color: #5FBE63;
 }
 
 .entry-icon {
@@ -737,11 +926,6 @@ async function fulfillAnchor(id) {
   background: var(--berry-soft);
 }
 
-.row-tag.anchor {
-  color: var(--sprout);
-  background: var(--sprout-soft);
-}
-
 .row-text {
   flex: 1;
   min-width: 0;
@@ -754,14 +938,18 @@ async function fulfillAnchor(id) {
 .row-actions {
   flex-shrink: 0;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 4px;
 }
 
 .action-confirm,
-.action-delete {
+.action-delete,
+.action-neutral {
   flex-shrink: 0;
   padding: 4px 6px;
   font-size: 12px;
+  border-radius: 8px;
 }
 
 .action-confirm {
@@ -770,6 +958,195 @@ async function fulfillAnchor(id) {
 
 .action-delete {
   color: var(--berry);
+}
+
+.action-neutral {
+  color: var(--ink-soft);
+}
+
+.co-created-detail {
+  max-height: calc(100vh - 176px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.memory-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 10px;
+}
+
+.add-memory-input {
+  min-height: 68px;
+}
+
+.type-picker {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.type-picker button {
+  min-width: 0;
+  min-height: 36px;
+  padding: 8px 6px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255,255,255,.78);
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.type-picker button.active {
+  border-color: var(--honey-deep);
+  background: var(--honey-soft);
+  color: var(--honey-deep);
+}
+
+.memory-add-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.memory-list-scroll {
+  flex: 1;
+  min-height: 220px;
+  max-height: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 8px 0 0;
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(166,145,109,.42) rgba(255,255,255,.5);
+}
+
+.memory-list-scroll .memory-row:first-child {
+  padding-top: 10px;
+}
+
+.memory-list-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.memory-list-scroll::-webkit-scrollbar-track {
+  background: rgba(255,255,255,.58);
+  border-radius: 999px;
+}
+
+.memory-list-scroll::-webkit-scrollbar-thumb {
+  background: rgba(166,145,109,.46);
+  border-radius: 999px;
+}
+
+@media (max-width: 420px) {
+  .type-picker {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .memory-add-actions .add-btn {
+    width: 100%;
+  }
+}
+
+.detail-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--cream-2);
+}
+
+.segmented button {
+  min-height: 30px;
+  border-radius: 8px;
+  color: var(--sub);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.segmented button.active {
+  background: var(--card);
+  color: var(--honey-deep);
+  box-shadow: var(--shadow-sm);
+}
+
+.row-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.row-meta span {
+  max-width: 100%;
+  padding: 2px 6px;
+  border-radius: 7px;
+  background: var(--cream-2);
+  color: var(--sub);
+  font-size: 10px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.edit-input {
+  width: 100%;
+  min-height: 74px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255,255,255,.9);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+}
+
+.edit-input:focus {
+  border-color: var(--honey-deep);
+  box-shadow: 0 0 0 3px rgba(255,159,69,.14);
+}
+
+.inline-notice,
+.inline-error {
+  margin: 8px 0 2px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.inline-notice {
+  color: var(--sprout);
+  background: var(--sprout-soft);
+}
+
+.inline-error {
+  color: var(--berry);
+  background: var(--berry-soft);
 }
 
 .inline-form {
@@ -783,6 +1160,10 @@ async function fulfillAnchor(id) {
 .inline-form .form-input {
   flex: 1;
   min-width: 0;
+}
+
+.search-input {
+  margin: 8px 0 2px;
 }
 
 .add-btn {
@@ -921,12 +1302,6 @@ async function fulfillAnchor(id) {
   background: #FFF3F3;
   border-color: #F5C8C8;
   color: #E88D8D;
-}
-
-.memory-root .entry-anchors {
-  background: #F3FBF5;
-  border-color: #B8E8C8;
-  color: #5FBE63;
 }
 
 .memory-root .entry-icon {

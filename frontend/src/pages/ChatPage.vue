@@ -95,6 +95,20 @@
             @edit="startEdit(msg,i)"
             @delete="confirmDelete(msg,i)"
           />
+          <div v-else-if="msg.type === 'thinking_trace'" class="thinking-trace">
+            <button class="thinking-header" @click="msg.collapsed = !msg.collapsed">
+              <span>{{ msg.active ? '正在整理思考过程' : '思考过程' }}</span>
+              <span>{{ msg.memories?.length || 0 }} 条线索 {{ msg.collapsed ? '展开' : '收起' }}</span>
+            </button>
+            <div v-if="!msg.collapsed" class="thinking-body">
+              <MemoryCard
+                v-for="(memory, memoryIndex) in msg.memories"
+                :key="`${memory.layer}-${memory.summary}-${memoryIndex}`"
+                :summary="memory.summary"
+                :layer="memory.layer"
+              />
+            </div>
+          </div>
           <MemoryCard v-else-if="msg.type === 'memory_card'" :summary="msg.summary" :layer="msg.layer" />
           <ActionButtons
             v-else-if="msg.type === 'actions' && !msg.handled"
@@ -313,7 +327,10 @@ async function handleAction(payload, actionMessage = null) {
         content: candidate.content || {},
       })
       const failed = res?.success === false
-      const savedMessage = res?.superseded_count > 0
+      const alreadyExists = !failed && res?.already_exists
+      const savedMessage = alreadyExists
+        ? '这条我已经记着了。'
+        : res?.superseded_count > 0
         ? '好，我记住了，也更新了相关旧记忆。'
         : '好，我记住了。'
       if (actionMessage) actionMessage.handled = true
@@ -323,7 +340,7 @@ async function handleAction(payload, actionMessage = null) {
         content: failed ? (res.message || '这条记忆保存失败了，稍后再试。') : savedMessage,
         soul: snapshotSoul(activeSoul.value),
       })
-      if (!failed && res?.reminder_candidate) {
+      if (!failed && !alreadyExists && res?.reminder_candidate) {
         chatStore.addMessage({
           type: 'actions',
           prompt: '这件事有时间点，要不要我提前提醒你？',
@@ -449,7 +466,7 @@ async function handleSend(text) {
               chatStore.setLastAgentSoul(snapshotSoul(event.data))
               break
             case 'memory_card':
-              chatStore.addMessage({ type: 'memory_card', summary: event.data.summary, layer: event.data.layer })
+              chatStore.addThinkingMemory({ summary: event.data.summary, layer: event.data.layer })
               break
             case 'text_chunk':
               chatStore.appendToStream(event.data.text)
@@ -658,6 +675,36 @@ async function confirmRename(session) {
 }
 .chat-hero-orb.squish {
   animation: chat-hero-squish .45s cubic-bezier(.34,1.56,.64,1);
+}
+.thinking-trace {
+  margin: 6px 0 8px 52px;
+  max-width: calc(100% - 76px);
+}
+.thinking-header {
+  width: 100%;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.72);
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: left;
+}
+.thinking-header span:last-child {
+  flex-shrink: 0;
+  color: var(--honey-deep);
+}
+.thinking-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
 }
 @keyframes chat-hero-bob {
   0%,100% { transform: translateY(0) rotate(-1.5deg); }

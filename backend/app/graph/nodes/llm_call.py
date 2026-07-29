@@ -38,18 +38,13 @@ async def llm_call_node(state: ChatState):
     # 注入已通过当前问题匹配的共建事实
     if state.memories:
         memory_context = "\n".join(
-            f"- {m['summary']}" for m in state.memories[:3]
+            f"- {m['summary']}" for m in state.memories
         )
         system_parts.append(f"\n# 与当前问题匹配的共建事实\n{memory_context}")
 
     # 注入当前会话上下文
     if state.session_context:
         system_parts.append(f"\n# 当前会话上下文\n{state.session_context}")
-
-    # 注入未完待续
-    if state.pending_anchors:
-        anchor_line = "\n".join(f"- 上次提到: {a['topic']}" for a in state.pending_anchors)
-        system_parts.append(f"\n# 上次未完成的话题\n{anchor_line}")
 
     system = "\n".join(system_parts)
 

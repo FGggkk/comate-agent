@@ -116,7 +116,6 @@ export const apiUpdateMemory = (id, data) => put(`/memories/${id}`, data)
 export const apiDeleteMemory = (id) => del(`/memories/${id}`)
 export const apiAddForbidden = (topic, phrase) => post('/memories/forbidden', { topic_summary: topic, original_phrase: phrase })
 export const apiRemoveForbidden = (id) => del(`/memories/forbidden/${id}`)
-export const apiFulfillAnchor = (id) => post(`/memories/anchor/${id}/fulfill`, {})
 
 // Interview
 export const apiStartInterview = (data) => post('/interview/start', data)

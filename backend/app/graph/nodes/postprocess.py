@@ -1,5 +1,5 @@
 from app.graph.state import ChatState
-from app.services.memory_service import extract_candidates, update_anchors
+from app.services.memory_service import extract_candidates
 
 
 async def postprocess_node(state: ChatState, db):
@@ -11,9 +11,12 @@ async def postprocess_node(state: ChatState, db):
     ):
         state.memory_candidates = []
     else:
-        state.memory_candidates = await extract_candidates(state.user_id, state.message, state.reply, db=db)
-
-    # 更新未完待续锚点
-    await update_anchors(state.user_id, state.message, state.reply, db=db)
+        state.memory_candidates = await extract_candidates(
+            state.user_id,
+            state.message,
+            state.reply,
+            db=db,
+            forbidden_topics=state.forbidden_topics,
+        )
 
     return []  # 不输出事件

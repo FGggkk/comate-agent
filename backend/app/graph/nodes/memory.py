@@ -2,13 +2,12 @@ from app.config.settings import get_settings
 from app.graph.state import ChatState
 from app.graph.schemas import memory_card_event, status_event
 from app.services.conversation_context_service import get_current_session_context
-from app.services.memory_gate_service import append_gate_trace, log_gate_trace
+from app.services.memory_gate_service import log_gate_trace
 from app.services.memory_service import (
     classify_query_topics,
-    explain_text_relevance,
-    get_anchors,
     get_forbidden,
     is_forbidden_text,
+    memory_search_limit,
     search,
     sync_forbidden_topics_from_message,
 )
@@ -49,17 +48,18 @@ async def memory_node(state: ChatState, db):
         state.tacit_context = ""
 
     # 2. 共建层：只取和当前问题相关的事实。
+    memory_limit = memory_search_limit(state.message)
     memories = await search(
         state.user_id,
         state.message,
-        top_k=3,
+        top_k=memory_limit,
         db=db,
         gate_trace=state.memory_gate_trace,
     )
     state.memories = memories
 
-    # 记忆卡片（最多 2 条）
-    for m in memories[:2]:
+    # 思考过程里展示本轮实际注入的相关共建线索。
+    for m in memories:
         card = memory_card_event(m["summary"], m["layer"])
         if card:
             events.append(card)
@@ -75,39 +75,7 @@ async def memory_node(state: ChatState, db):
         gate_trace=state.memory_gate_trace,
     )
 
-    # 读取未完待续锚点
-    anchors = await get_anchors(state.user_id, db=db)
     state.pending_anchors = []
-    for a in anchors:
-        if is_forbidden_text(a.topic_summary, forbidden_topics):
-            append_gate_trace(
-                state.memory_gate_trace,
-                source="pending_anchor",
-                kept=False,
-                reason="forbidden",
-                item_id=str(a.id),
-                text=a.topic_summary,
-            )
-            continue
-        relevance = explain_text_relevance(a.topic_summary, state.message, state.query_topics)
-        append_gate_trace(
-            state.memory_gate_trace,
-            source="pending_anchor",
-            kept=relevance["kept"],
-            reason=relevance["reason"],
-            item_id=str(a.id),
-            text=a.topic_summary,
-            metadata=relevance["metadata"],
-        )
-        if relevance["kept"]:
-            state.pending_anchors.append({"id": str(a.id), "topic": a.topic_summary})
-
-    # 如果有锚点，也作为卡片展示
-    if state.pending_anchors:
-        for a in state.pending_anchors[:1]:
-            card = memory_card_event(f"上次提到: {a['topic']}", "anchor")
-            if card:
-                events.append(card)
 
     settings = get_settings()
     log_gate_trace(
