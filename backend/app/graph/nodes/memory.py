@@ -35,6 +35,8 @@ async def memory_node(state: ChatState, db):
         state.user_id,
         state.conversation_id,
         db,
+        query=state.message,
+        query_topics=state.query_topics,
     )
 
     # 读取未完待续锚点
