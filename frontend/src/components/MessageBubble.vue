@@ -5,8 +5,8 @@
       <div :class="role === 'user' ? 'bubble-user' : 'bubble-bot'" v-html="role === 'user' ? content : renderMd(content)"></div>
       <!-- 用户消息 hover 操作 -->
       <div v-if="role === 'user' && hover" class="msg-actions">
-        <button @click="$emit('edit', content)" class="msg-action-btn">编辑</button>
-        <button @click="$emit('delete')" class="msg-action-btn" style="color:var(--berry);">删除</button>
+        <button @mousedown.prevent.stop @click.stop="$emit('edit', content)" class="msg-action-btn">编辑</button>
+        <button @mousedown.prevent.stop @click.stop="$emit('delete')" class="msg-action-btn" style="color:var(--berry);">删除</button>
       </div>
     </div>
   </div>

@@ -43,7 +43,13 @@ STRUCTURED_MEMORY_FIELDS = {
 
 TOPIC_KEYWORDS = {
     "fitness": ("健身", "跑步", "运动", "训练", "锻炼", "公里", "肌肉", "体能", "力量", "瑜伽"),
-    "food": ("水果", "橘子", "香蕉", "苹果", "葡萄", "猕猴桃", "西瓜", "超市", "饮食", "吃", "喝", "酒", "饮料", "牛肉", "牛肉面", "补充", "维生素"),
+    "food": (
+        "水果", "橘子", "香蕉", "苹果", "葡萄", "猕猴桃", "西瓜",
+        "超市", "饮食", "美食", "菜", "菜品", "饭", "晚饭", "晚餐", "正餐",
+        "餐品", "餐食", "餐馆", "吃", "喝", "酒", "饮料",
+        "羊肉", "牛肉", "牛肉面", "鸡肉", "鱼", "番茄", "西红柿",
+        "补充", "维生素",
+    ),
     "interview": ("面试", "求职", "简历", "offer", "岗位", "招聘", "hr", "HR", "技术岗"),
     "work": ("项目", "代码", "分支", "提交", "pr", "PR", "bug", "需求", "上线", "开发"),
     "emotion": ("焦虑", "压力", "烦", "累", "紧张", "情绪", "崩", "难受", "开心", "低落"),
@@ -305,6 +311,7 @@ async def create_co_created(
         data["already_exists"] = True
         return {"success": True, "data": data, "message": "已存在相同记忆"}
 
+    write_topic_tags = _derive_write_topic_tags(summary, content or {}, topic_tags)
     normalized_content = _normalize_memory_content(
         memory_type=memory_type,
         content=content or {},
@@ -312,7 +319,7 @@ async def create_co_created(
         expires_at=expires_at,
         source="user_explicit",
         scope=scope,
-        topic_tags=topic_tags,
+        topic_tags=write_topic_tags,
     )
     structured_fields = _derive_memory_fields(
         layer="co_created",
@@ -326,8 +333,9 @@ async def create_co_created(
         last_observed_at=last_observed_at,
         review_after=review_after,
         scope=scope,
-        topic_tags=topic_tags,
+        topic_tags=write_topic_tags,
     )
+    normalized_content = _sync_memory_metadata(normalized_content, structured_fields)
     reminder_candidate = _build_reminder_candidate(
         memory_type,
         summary,
@@ -946,6 +954,11 @@ def _normalize_memory_content(
     return normalized
 
 
+def _derive_write_topic_tags(summary: str, content: dict | None, topic_tags: list[str] | None = None) -> list[str]:
+    source_text = f"{summary}\n{json.dumps(content or {}, ensure_ascii=False, default=str)}"
+    return _normalize_topic_tags(topic_tags, source_text)
+
+
 def _derive_memory_fields(
     layer: str,
     memory_type: str,
@@ -1011,6 +1024,8 @@ def _is_expanded_memory_query(query: str) -> bool:
     if not normalized:
         return False
     if any(word in normalized for word in ("分别", "哪些", "有什么", "列一下", "总结一下", "都有什么")):
+        return True
+    if _is_food_decision_query(query):
         return True
     if _is_preference_lookup_query(query):
         return True
@@ -1153,6 +1168,10 @@ def _memory_relevance_score(
         score += 0.08
     if memory_type == "preference" and _is_preference_lookup_query(query):
         score += 0.16
+    if memory_type == "preference" and _is_food_decision_query(query) and "food" in memory_topics:
+        score += 0.36
+        if _preference_polarity(_memory_dict_text(memory)) == "positive":
+            score += 0.18
 
     query_polarities = _preference_polarities(query)
     memory_polarity = _preference_polarity(_memory_dict_text(memory))
@@ -1172,6 +1191,28 @@ def _is_preference_lookup_query(text: str) -> bool:
     if "什么" not in normalized and "哪些" not in normalized:
         return False
     return any(word in normalized for word in ("喜欢", "爱吃", "爱喝", "讨厌", "不喜欢", "不爱", "不吃", "不喝", "偏好", "推荐", "不推荐"))
+
+
+def _is_food_decision_query(text: str) -> bool:
+    normalized = _normalize_match_text(text)
+    if "food" not in classify_query_topics(text):
+        return False
+    return any(
+        phrase in normalized
+        for phrase in (
+            "吃什么",
+            "吃啥",
+            "什么菜",
+            "做什么菜",
+            "吃点什么",
+            "吃些什么",
+            "晚饭",
+            "晚餐",
+            "正餐",
+            "推荐菜",
+            "推荐美食",
+        )
+    )
 
 
 def _preference_polarities(text: str) -> set[str]:
