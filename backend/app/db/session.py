@@ -74,6 +74,11 @@ MIGRATION_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_finance_records_user_date ON finance_records(user_id, record_date)",
     "CREATE TABLE IF NOT EXISTS finance_messages (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id), role VARCHAR(16) NOT NULL, content TEXT NOT NULL, record_id UUID REFERENCES finance_records(id), created_at TIMESTAMPTZ DEFAULT NOW())",
     "CREATE INDEX IF NOT EXISTS idx_finance_messages_user ON finance_messages(user_id)",
+
+    "CREATE TABLE IF NOT EXISTS travel_plans (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id), title VARCHAR(255) DEFAULT '', destination VARCHAR(255) NOT NULL, start_date DATE NOT NULL, days INTEGER NOT NULL, budget INTEGER DEFAULT 0, adults INTEGER DEFAULT 1, children INTEGER DEFAULT 0, preferences JSONB DEFAULT '[]', note TEXT DEFAULT '', saved BOOLEAN DEFAULT FALSE, budget_detail JSONB, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW())",
+    "CREATE INDEX IF NOT EXISTS idx_travel_plans_user ON travel_plans(user_id)",
+    "CREATE TABLE IF NOT EXISTS travel_days (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), plan_id UUID NOT NULL REFERENCES travel_plans(id) ON DELETE CASCADE, day_number INTEGER NOT NULL, date DATE NOT NULL, segments JSONB DEFAULT '[]', total_cost INTEGER DEFAULT 0)",
+    "CREATE INDEX IF NOT EXISTS idx_travel_days_plan ON travel_days(plan_id)",
 ]
 
 LOCK_ID = 20240724  # 迁移锁 ID（唯一整数）

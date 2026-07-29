@@ -1,5 +1,5 @@
 <template>
-  <div class="scroll">
+  <div :class="['scroll', activeTab === 'chat' ? 'scroll-chat' : '']">
     <div class="back-bar">
       <button @click="$emit('back')" class="back-btn">
         <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="13,4 7,10 13,16"/></svg>
@@ -16,27 +16,59 @@
 
     <!-- 会话标签 -->
     <div v-if="activeTab === 'chat'" class="chat-section">
-      <div class="msg-list">
-        <div v-for="m in messages" :key="m.id" :class="['msg', m.role === 'user' ? 'msg-user' : 'msg-ai']">
-          <div class="msg-bubble" :class="m.role">
-            <div v-if="m.role === 'assistant' && m.parsed" class="confirm-card">
-              <div class="confirm-category">{{ m.parsed.category }}</div>
-              <div class="confirm-amount" :class="m.parsed.type">{{ m.parsed.type === 'income' ? '+' : '-' }}¥{{ (m.parsed.amount / 100).toFixed(2) }}</div>
-              <div class="confirm-note">{{ m.parsed.note }}</div>
-              <div v-if="!m.confirmed" class="confirm-actions">
-                <button @click="confirmRecord(m)" class="btn-sm primary">✓ 确认</button>
-                <button @click="editRecord(m)" class="btn-sm">✎ 修改</button>
-                <button @click="cancelRecord(m)" class="btn-sm cancel">取消</button>
-              </div>
-              <div v-else class="confirmed-badge">✓ 已记账</div>
+      <!-- 消息区 -->
+      <div class="msg-list" ref="chatScrollRef">
+        <div v-for="(m, mi) in messages" :key="m.id" :class="['msg-row', m.role === 'user' ? 'user' : 'ai']">
+          <div v-if="m.role === 'assistant'" class="msg-orb">
+            <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="var(--honey)" stroke-width="1.5">
+              <circle cx="10" cy="10" r="8"/><path d="M6 14c0-2.2 1.8-4 4-4s4 1.8 4 4"/>
+            </svg>
+          </div>
+          <div style="position:relative;max-width:80%;">
+            <div :class="['msg-bubble', m.role]">
+              <template v-if="m.role === 'user'">
+                {{ m.content }}
+                <div class="msg-menu-trigger" @click.stop="toggleMsgMenu(mi)">
+                  <span class="msg-dots">⋯</span>
+                </div>
+              </template>
+              <template v-else-if="m.parsed">
+                <div class="confirm-card">
+                  <div style="font-size:13px;font-weight:600;">{{ categoryIcon(m.parsed.category) }} {{ m.parsed.category }}</div>
+                  <div :class="['confirm-amount', m.parsed.type]">{{ m.parsed.type === 'income' ? '+' : '-' }}¥{{ (m.parsed.amount / 100).toFixed(2) }}</div>
+                  <div v-if="m.parsed.note" class="confirm-note">{{ m.parsed.note }}</div>
+                  <div v-if="!m.confirmed" class="confirm-actions">
+                    <button @click="confirmRecord(m)" class="btn-sm primary">✓ 确认</button>
+                    <button @click="editRecord(m)" class="btn-sm">✎ 修改</button>
+                    <button @click="cancelRecord(m)" class="btn-sm cancel">取消</button>
+                  </div>
+                  <div v-else class="confirmed-badge">✓ 已记账</div>
+                </div>
+              </template>
+              <template v-else>{{ m.content }}</template>
             </div>
-            <template v-else>{{ m.content }}</template>
+            <!-- 菜单遮罩 -->
+            <div v-if="openMsgMenu === mi" class="menu-overlay" @click="openMsgMenu = -1"></div>
+            <!-- 消息操作菜单 -->
+            <div v-if="openMsgMenu === mi" class="msg-menu" @click.stop>
+              <button @click="resendMsg(mi)" class="msg-menu-item">重新回答</button>
+              <button @click="deleteMsgPair(mi)" class="msg-menu-item" style="color:var(--berry);">删除</button>
+            </div>
           </div>
         </div>
       </div>
-      <div class="input-bar">
-        <input v-model="chatInput" @keydown.enter="sendChat" placeholder="输入花销，如：中午吃饭花了32" class="form-input" />
-        <button @click="sendChat" class="send-btn">发送</button>
+
+      <!-- 底部固定区 -->
+      <div class="chat-bottom">
+        <div class="quickbar">
+          <button v-for="q in quickItems" :key="q.label" class="qa" @click="quickRecord(q)">{{ q.label }}</button>
+        </div>
+        <div class="inputbar">
+          <input v-model="chatInput" @keydown.enter="sendChat" placeholder="说点什么…" />
+          <button @click="sendChat" :disabled="!chatInput.trim()" class="send-btn">
+            <svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -133,6 +165,18 @@ const records = ref([])
 const summary = ref({ total_income: 0, total_expense: 0, balance: 0, categories: [] })
 const menuRecord = ref(null)
 const editingRecord = ref(null)
+const chatScrollRef = ref(null)
+const openMsgMenu = ref(-1)
+const editingMsgIdx = ref(-1)
+const editingText = ref('')
+
+const quickItems = [
+  { label: '🍜 午饭¥30', category: '餐饮', amount: 3000 },
+  { label: '🚕 打车¥15', category: '交通', amount: 1500 },
+  { label: '☕ 咖啡¥25', category: '餐饮', amount: 2500 },
+  { label: '🛒 超市¥100', category: '购物', amount: 10000 },
+  { label: '🏠 房租¥3000', category: '居住', amount: 300000 },
+]
 
 const categories = ['餐饮', '交通', '购物', '居住', '娱乐', '其他支出', '薪资', '其他收入']
 const categoryIcons = { '餐饮': '🍜', '交通': '🚕', '购物': '🛒', '居住': '🏠', '娱乐': '🎮', '其他支出': '📌', '薪资': '💰', '其他收入': '📦' }
@@ -177,11 +221,21 @@ async function loadData() {
 
 async function loadMessages() {
   const msgs = await apiGetFinanceMessages()
-  messages.value = (msgs || []).map(m => ({
-    ...m,
-    parsed: null,
-    confirmed: false,
-  }))
+  messages.value = (msgs || []).map(m => {
+    const msg = { ...m, parsed: null, confirmed: !!m.record_id }
+    // 尝试解析 assistant 消息中的 JSON
+    if (m.role === 'assistant') {
+      try {
+        const parsed = JSON.parse(m.content)
+        if (parsed && parsed.amount) {
+          msg.parsed = parsed
+          msg.content = ''
+        }
+      } catch {}
+    }
+    return msg
+  })
+  scrollToBottom()
 }
 
 async function sendChat() {
@@ -190,12 +244,14 @@ async function sendChat() {
   chatInput.value = ''
   messages.value.push({ id: Date.now().toString(), role: 'user', content: text, parsed: null, confirmed: false })
   await apiSaveFinanceMessage('user', text, null)
+  scrollToBottom()
 
   // AI 解析
   const res = await apiAiParse(text)
   if (res && res.amount) {
     const parsed = { ...res, amount: res.amount }
     messages.value.push({ id: 'ai-' + Date.now(), role: 'assistant', content: '', parsed, confirmed: false })
+    scrollToBottom()
   } else {
     messages.value.push({ id: 'ai-' + Date.now(), role: 'assistant', content: '没识别到金额，请重新描述～', parsed: null, confirmed: false })
   }
@@ -236,6 +292,50 @@ function cancelRecord(msg) {
   messages.value = messages.value.filter(m => m.id !== msg.id)
 }
 
+async function deleteMsgPair(idx) {
+  const userMsg = messages.value[idx]
+  if (!userMsg || userMsg.role !== 'user') return
+  const aiMsg = messages.value[idx + 1]
+  if (aiMsg?.record_id) {
+    try { await apiDeleteRecord(aiMsg.record_id) } catch {}
+  }
+  messages.value.splice(idx, 2)
+  openMsgMenu.value = -1
+  await loadData()
+}
+
+function toggleMsgMenu(idx) {
+  openMsgMenu.value = openMsgMenu.value === idx ? -1 : idx
+}
+
+function resendMsg(idx) {
+  const userMsg = messages.value[idx]
+  if (!userMsg) return
+  chatInput.value = userMsg.content
+  deleteMsgPair(idx)
+}
+
+function quickRecord(q) {
+  chatInput.value = `${q.label}`
+}
+
+function scrollToBottom() {
+  setTimeout(() => {
+    if (chatScrollRef.value) chatScrollRef.value.scrollTop = chatScrollRef.value.scrollHeight
+  }, 50)
+}
+
+function startEditMsg(m, idx) {
+  editingMsgIdx.value = idx
+  editingText.value = m.content
+}
+
+function confirmEditMsg(idx) {
+  if (!editingText.value.trim()) { editingMsgIdx.value = -1; return }
+  messages.value[idx].content = editingText.value.trim()
+  editingMsgIdx.value = -1
+}
+
 function showRecordMenu(r) {
   menuRecord.value = r
 }
@@ -269,18 +369,40 @@ async function saveRecord() {
 .chat-section, .bill-section { animation: tabFadeIn .25s ease; }
 @keyframes tabFadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
-/* 会话 */
-.chat-section { display: flex; flex-direction: column; height: calc(100vh - 180px); }
-.msg-list { flex: 1; overflow-y: auto; padding-bottom: 8px; }
-.msg { display: flex; margin-bottom: 10px; }
-.msg-user { justify-content: flex-end; }
-.msg-ai { justify-content: flex-start; }
-.msg-bubble { max-width: 85%; padding: 10px 14px; border-radius: var(--r-lg); font-size: 14px; line-height: 1.5; }
-.msg-bubble.user { background: var(--sprout-soft); border-radius: 12px 12px 4px 12px; }
-.msg-bubble.assistant { background: var(--honey-soft); border-radius: 12px 12px 12px 4px; }
-.input-bar { display: flex; gap: 8px; padding: 8px 0; }
-.input-bar input { flex: 1; }
-.send-btn { padding: 8px 16px; background: var(--honey); color: #fff; border: none; border-radius: var(--r-sm); font-size: 14px; cursor: pointer; }
+/* ── 会话（匹配主聊天样式）── */
+.scroll-chat { display: flex; flex-direction: column; }
+.scroll-chat .chat-section { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.chat-section .msg-list { flex: 1; overflow-y: auto; padding: 4px 0; min-height: 0; }
+.chat-bottom { flex-shrink: 0; }
+.msg-row { display: flex; align-items: flex-end; margin-bottom: 10px; gap: 6px; }
+.msg-row.user { flex-direction: row-reverse; }
+.msg-orb { flex-shrink: 0; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; background: var(--honey-soft); border-radius: 50%; }
+.msg-bubble { max-width: 80%; padding: 10px 14px; font-size: 14px; line-height: 1.5; word-break: break-word; position: relative; }
+.msg-bubble.user { background: var(--sprout-soft); border-radius: 14px 14px 4px 14px; color: var(--ink); }
+.msg-bubble.assistant { background: var(--honey-soft); border-radius: 14px 14px 14px 4px; }
+.msg-actions { position: absolute; top: -24px; right: 0; display: flex; gap: 2px; background: var(--card); border-radius: 8px; padding: 2px 4px; box-shadow: 0 2px 8px rgba(0,0,0,.1); z-index: 10; }
+.msg-menu-trigger { display: inline-flex; align-items: center; margin-left: 6px; cursor: pointer; opacity: .35; transition: opacity .15s; vertical-align: middle; }
+.msg-menu-trigger:hover { opacity: .8; }
+.msg-dots { font-size: 16px; letter-spacing: 1px; line-height: 1; color: var(--sub); }
+.menu-overlay { position: fixed; inset: 0; z-index: 15; background: transparent; }
+.msg-menu { position: absolute; top: 100%; right: 0; z-index: 20; margin-top: 4px; min-width: 110px; background: var(--card); border: 1px solid var(--line); border-radius: var(--r-sm); box-shadow: 0 4px 12px rgba(0,0,0,.1); padding: 4px 0; }
+.msg-menu-item { display: block; width: 100%; text-align: left; padding: 8px 14px; font-size: 13px; color: var(--ink); background: none; border: none; cursor: pointer; }
+.msg-menu-item:hover { background: var(--honey-soft); }
+.msg-action-btn { font-size: 11px; padding: 2px 6px; border-radius: 4px; color: var(--ink-soft); border: none; background: none; cursor: pointer; }
+.edit-input { width: 100%; border: none; outline: none; background: transparent; font-size: 14px; font-family: inherit; }
+
+/* 快捷栏 */
+.quickbar { display: flex; gap: 6px; overflow-x: auto; padding: 6px 0; margin: 0 -4px; }
+.qa { white-space: nowrap; padding: 5px 12px; border-radius: 100px; border: 1.5px solid var(--line); font-size: 12px; background: var(--card); cursor: pointer; transition: all .15s; }
+.qa:active { background: var(--honey-soft); transform: scale(.96); }
+
+/* 输入框 */
+.inputbar { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); }
+.inputbar input { flex: 1; padding: 10px 14px; border: none; border-radius: 100px; background: var(--cream); font-size: 14px; outline: none; }
+.inputbar .send-btn { width: 38px; height: 38px; border-radius: 50%; background: var(--honey); border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; transition: all .15s; }
+.inputbar .send-btn:disabled { opacity: .3; }
+.inputbar .send-btn svg { width: 18px; height: 18px; stroke: #fff; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.inputbar .send-btn:active { transform: scale(.9); }
 
 /* 确认卡片 */
 .confirm-card { min-width: 200px; }

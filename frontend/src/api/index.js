@@ -1,4 +1,4 @@
-const BASE = '/api'
+const BASE = 'http://localhost:8000/api'
 
 let _refreshing = null
 
@@ -101,7 +101,7 @@ export function apiSendMessage(message, sessionId) {
   const token = localStorage.getItem('comate_token')
   const body = { message }
   if (sessionId) body.session_id = sessionId
-  return fetch('/api/chat/send', {
+  return fetch(`${BASE}/chat/send`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
     body: JSON.stringify(body),
@@ -126,7 +126,7 @@ export const apiNextQuestion = (id) => {
   const token = localStorage.getItem('comate_token')
   const headers = { 'Content-Type': 'application/json' }
   if (token) headers['Authorization'] = `Bearer ${token}`
-  return fetch(`/api/interview/${id}/next`, { method: 'POST', headers })
+  return fetch(`${BASE}/interview/${id}/next`, { method: 'POST', headers })
 }
 export const apiEndInterview = (id) => post(`/interview/${id}/end`, {})
 export const apiDeleteInterview = (id) => del(`/interview/${id}`)
@@ -137,7 +137,7 @@ export const apiAnswerQuestionStream = (id, answer) => {
   const token = localStorage.getItem('comate_token')
   const headers = { 'Content-Type': 'application/json' }
   if (token) headers['Authorization'] = `Bearer ${token}`
-  return fetch(`/api/interview/${id}/answer/stream`, {
+  return fetch(`${BASE}/interview/${id}/answer/stream`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ answer }),
@@ -157,6 +157,14 @@ export const apiAiParse = (text) => post('/finance/ai-parse', { text })
 export const apiGetFinanceMessages = () => get('/finance/messages')
 export const apiSaveFinanceMessage = (role, content, recordId) => post('/finance/messages', { role, content, record_id: recordId })
 
+// Travel
+export const apiGenerateTravelPlan = (data) => post('/travel/plan', data)
+export const apiGetTravelPlans = () => get('/travel/plans')
+export const apiGetTravelPlan = (id) => get(`/travel/plan/${id}`)
+export const apiUpdateTravelPlan = (id, data) => put(`/travel/plan/${id}`, data)
+export const apiDeleteTravelPlan = (id) => del(`/travel/plan/${id}`)
+export const apiRegenerateTravelDay = (id, dayNumber) => post(`/travel/plan/${id}/regenerate-day`, { day_number: dayNumber })
+
 // User Profile
 export const apiGetProfile = () => get('/user/me')
 export const apiUpdateProfile = (data) => put('/user/me', data)
@@ -164,7 +172,7 @@ export const apiUploadAvatar = async (file) => {
   const token = localStorage.getItem('comate_token')
   const form = new FormData()
   form.append('file', file)
-  const res = await fetch('/api/user/avatar', {
+  const res = await fetch(`${BASE}/user/avatar`, {
     method: 'POST',
     headers: token ? { 'Authorization': `Bearer ${token}` } : {},
     body: form,

@@ -7,6 +7,7 @@ from .verification_code import VerificationCode
 from .conversation import Session, Message
 from .tacit import SessionSummary, TacitProfile, TacitProfileVersion
 from .finance import FinanceRecord, FinanceMessage
+from .travel import TravelPlan, TravelDay
 
 __all__ = [
     "User",
@@ -27,4 +28,6 @@ __all__ = [
     "TacitProfileVersion",
     "FinanceRecord",
     "FinanceMessage",
+    "TravelPlan",
+    "TravelDay",
 ]

@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     # App
     app_name: str = "comate-agent"
     debug: bool = False
-    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    cors_origins: list[str] = ["*"]
 
     # Database
     database_url: str = "postgresql+asyncpg://postgres:${DB_PASSWORD}@localhost:5432/comate"
@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
+    deepseek_max_tokens: int = 16384
 
     # JWT
     jwt_secret: str = "dev-secret-change-in-production"
@@ -95,6 +96,7 @@ class Settings(BaseSettings):
             deepseek_api_key=os.path.expandvars(raw.get("model", {}).get("default", {}).get("api_key", "")),
             deepseek_base_url=raw.get("model", {}).get("default", {}).get("base_url", cls().deepseek_base_url),
             deepseek_model=raw.get("model", {}).get("default", {}).get("model", cls().deepseek_model),
+            deepseek_max_tokens=raw.get("model", {}).get("default", {}).get("max_tokens", cls().deepseek_max_tokens),
             jwt_secret=os.path.expandvars(raw.get("jwt", {}).get("secret", cls().jwt_secret)),
             jwt_algorithm=raw.get("jwt", {}).get("algorithm", cls().jwt_algorithm),
             jwt_expire_hours=raw.get("jwt", {}).get("expire_hours", cls().jwt_expire_hours),

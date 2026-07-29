@@ -26,13 +26,13 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
     # 注册路由
-    from app.api import auth, chat, souls, memories, interview, reminders, user, sessions, messages, finance
+    from app.api import auth, chat, souls, memories, interview, reminders, user, sessions, messages, finance, travel
     app.include_router(auth.router)
     app.include_router(chat.router)
     app.include_router(souls.router)
@@ -43,6 +43,7 @@ def create_app() -> FastAPI:
     app.include_router(sessions.router)
     app.include_router(messages.router)
     app.include_router(finance.router)
+    app.include_router(travel.router)
 
     @app.get("/api/health")
     async def health():
