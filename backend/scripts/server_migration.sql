@@ -13,6 +13,8 @@ ALTER TABLE memory_items ADD COLUMN IF NOT EXISTS observed_count INTEGER DEFAULT
 ALTER TABLE memory_items ADD COLUMN IF NOT EXISTS last_observed_at TIMESTAMPTZ;
 ALTER TABLE memory_items ADD COLUMN IF NOT EXISTS dedupe_key VARCHAR(160);
 ALTER TABLE memory_items ADD COLUMN IF NOT EXISTS review_after TIMESTAMPTZ;
+ALTER TABLE memory_items ADD COLUMN IF NOT EXISTS scope VARCHAR(16) DEFAULT 'global';
+ALTER TABLE memory_items ADD COLUMN IF NOT EXISTS topic_tags JSONB DEFAULT '[]';
 
 UPDATE memory_items
 SET event_at = (content->>'event_at')::timestamptz
@@ -26,6 +28,16 @@ WHERE expires_at IS NULL
   AND content ? 'expires_at'
   AND content->>'expires_at' ~ '^\d{4}-\d{2}-\d{2}';
 
+UPDATE memory_items
+SET scope = content->>'scope'
+WHERE content ? 'scope'
+  AND content->>'scope' IN ('global', 'topic', 'session', 'ephemeral');
+
+UPDATE memory_items
+SET topic_tags = content->'topic_tags'
+WHERE content ? 'topic_tags'
+  AND jsonb_typeof(content->'topic_tags') = 'array';
+
 CREATE INDEX IF NOT EXISTS idx_memory_items_expiry
 ON memory_items (user_id, expires_at)
 WHERE status = 'active' AND expires_at IS NOT NULL;
@@ -35,6 +47,11 @@ WHERE status = 'active' AND review_after IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_memory_items_dedupe
 ON memory_items (user_id, layer, memory_type, dedupe_key)
 WHERE status = 'active' AND dedupe_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_memory_items_scope
+ON memory_items (user_id, layer, scope)
+WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_memory_items_topic_tags
+ON memory_items USING GIN (topic_tags);
 
 CREATE TABLE IF NOT EXISTS memory_observations (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

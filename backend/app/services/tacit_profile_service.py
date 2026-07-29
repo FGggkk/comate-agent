@@ -11,6 +11,7 @@ from app.db.session import async_session_factory
 from app.models.conversation import Message, Session
 from app.models.memory import MemoryItem
 from app.models.tacit import SessionSummary, TacitProfile, TacitProfileVersion
+from app.services.memory_service import classify_query_topics
 
 
 APP_TZ = timezone(timedelta(hours=8))
@@ -40,6 +41,13 @@ DIMENSION_ORDER = [
     "communication_style",
     "support_preferences",
 ]
+
+ALWAYS_PERSONA_DIMENSIONS = {
+    "decision_style",
+    "emotional_patterns",
+    "communication_style",
+    "support_preferences",
+}
 
 
 def schedule_tacit_refresh(user_id: str, session_id: str) -> None:
@@ -176,17 +184,21 @@ async def update_tacit_profile(user_id: str, db: AsyncSession) -> dict | None:
     return profile_to_snapshot(profile)
 
 
-async def get_tacit_context(user_id: str, db: AsyncSession) -> str:
+async def get_tacit_context(user_id: str, db: AsyncSession, query: str | None = None) -> str:
     profile = await _get_active_profile(user_id, db)
     if not profile or (profile.confidence or 0) < HIGH_CONFIDENCE:
         return ""
 
     lines = []
+    query_topics = set(classify_query_topics(query or ""))
     profile_data = profile.profile or {}
     for dimension in DIMENSION_ORDER:
         claims = _active_claims(profile_data.get(dimension, []), threshold=HIGH_CONFIDENCE)
         for claim in claims[:2]:
-            lines.append(f"- {DIMENSIONS[dimension]}: {claim.get('claim')}")
+            claim_text = claim.get("claim") or ""
+            if not _is_persona_claim_for_reply(dimension, claim_text, query_topics):
+                continue
+            lines.append(f"- {DIMENSIONS[dimension]}: {claim_text}")
         if len(lines) >= 6:
             break
 
@@ -194,7 +206,7 @@ async def get_tacit_context(user_id: str, db: AsyncSession) -> str:
         return ""
 
     return "\n".join([
-        "以下是跨会话沉淀出的默契画像，只用于理解用户和调整陪伴方式，不要生硬复述标签：",
+        "以下是跨会话沉淀出的默契画像，只用于理解用户、调整语气和支持方式，不要主动提及用户当前问题没有触发的具体事件：",
         *lines[:6],
     ])
 
@@ -210,6 +222,42 @@ async def get_profile_snapshot(user_id: str, db: AsyncSession) -> dict:
             "dimensions": {},
         }
     return profile_to_snapshot(profile)
+
+
+def _is_persona_claim_for_reply(dimension: str, claim: str, query_topics: set[str]) -> bool:
+    if not claim:
+        return False
+    if _looks_like_specific_event(claim):
+        return False
+    if dimension in ALWAYS_PERSONA_DIMENSIONS:
+        return True
+
+    claim_topics = set(classify_query_topics(claim))
+    if not query_topics:
+        return False
+    if not claim_topics:
+        return dimension in {"routines"}
+    return bool(claim_topics & query_topics)
+
+
+def _looks_like_specific_event(text: str) -> bool:
+    time_words = (
+        "今天",
+        "明天",
+        "后天",
+        "大后天",
+        "三天后",
+        "下周",
+        "上午",
+        "下午",
+        "晚上",
+        "点",
+        "截止",
+        "ddl",
+        "DDL",
+    )
+    event_words = ("面试", "考试", "会议", "预约", "提醒", "计划", "安排")
+    return any(word in text for word in time_words) and any(word in text for word in event_words)
 
 
 def profile_to_snapshot(profile: TacitProfile) -> dict:

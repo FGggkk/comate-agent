@@ -23,6 +23,8 @@ class MemoryItem(Base):
     user_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     is_inference: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(16), default="active")
+    scope: Mapped[str] = mapped_column(String(16), default="global", index=True)
+    topic_tags: Mapped[list[str]] = mapped_column(JSONB, default=list)
     event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     confidence: Mapped[float] = mapped_column(Float, default=0.0)

@@ -17,6 +17,8 @@ class UpdateMemoryRequest(BaseModel):
     memory_type: str | None = None
     content: dict | None = None
     user_confirmed: bool | None = None
+    scope: str | None = None
+    topic_tags: list[str] | None = None
     event_at: datetime | None = None
     expires_at: datetime | None = None
     confidence: float | None = None
@@ -29,6 +31,8 @@ class CreateMemoryRequest(BaseModel):
     summary: str
     memory_type: str = "general"
     content: dict | None = None
+    scope: str | None = None
+    topic_tags: list[str] | None = None
     event_at: datetime | None = None
     expires_at: datetime | None = None
     confidence: float | None = None
@@ -58,6 +62,8 @@ async def api_create_memory(
         summary=req.summary,
         memory_type=req.memory_type,
         content=req.content,
+        scope=req.scope,
+        topic_tags=req.topic_tags,
         event_at=req.event_at,
         expires_at=req.expires_at,
         confidence=req.confidence,
@@ -93,6 +99,10 @@ async def api_update_memory(
         data["content"] = req.content
     if req.user_confirmed is not None:
         data["user_confirmed"] = req.user_confirmed
+    if req.scope is not None:
+        data["scope"] = req.scope
+    if req.topic_tags is not None:
+        data["topic_tags"] = req.topic_tags
     if req.event_at is not None:
         data["event_at"] = req.event_at
     if req.expires_at is not None:
