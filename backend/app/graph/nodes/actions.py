@@ -1,11 +1,26 @@
 from app.graph.state import ChatState
 from app.graph.schemas import action_buttons_event
+from app.services.memory_service import is_forbidden_text
 
 
 async def actions_node(state: ChatState):
     """Step 8: 根据意图生成快捷操作按钮"""
     prompt = None
     candidate_summary = None
+
+    if (
+        state.forbidden_query_blocked
+        or state.forbidden_updates.get("added")
+        or state.forbidden_updates.get("removed")
+    ):
+        state.actions = []
+        return []
+
+    if state.memory_candidates:
+        state.memory_candidates = [
+            candidate for candidate in state.memory_candidates
+            if not is_forbidden_text(candidate, state.forbidden_topics)
+        ]
 
     if state.memory_candidates:
         candidate = state.memory_candidates[0]

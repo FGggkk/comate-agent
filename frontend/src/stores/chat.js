@@ -17,6 +17,26 @@ export const useChatStore = defineStore('chat', () => {
     messages.value.push({ ...msg, timestamp: msg.timestamp || Date.now() })
   }
 
+  function addThinkingMemory(memory) {
+    const trace = [...messages.value].reverse().find(m => m.type === 'thinking_trace' && m.active)
+    const item = {
+      summary: memory.summary,
+      layer: memory.layer,
+    }
+    if (trace) {
+      const exists = trace.memories?.some(m => m.summary === item.summary && m.layer === item.layer)
+      if (!exists) trace.memories.push(item)
+      return
+    }
+    messages.value.push({
+      type: 'thinking_trace',
+      active: true,
+      collapsed: false,
+      memories: [item],
+      timestamp: Date.now(),
+    })
+  }
+
   function setStreaming(val) {
     isStreaming.value = val
   }
@@ -46,6 +66,12 @@ export const useChatStore = defineStore('chat', () => {
   function finishStream() {
     isStreaming.value = false
     streamBuffer.value = ''
+    messages.value.forEach((m) => {
+      if (m.type === 'thinking_trace' && m.active) {
+        m.active = false
+        m.collapsed = true
+      }
+    })
   }
 
   function clearHistory() {
@@ -84,7 +110,7 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     messages, isStreaming, streamBuffer, sessions, currentSessionId, showSessionList, currentSession,
-    addMessage, setStreaming, appendToStream, setLastAgentSoul, finishStream, clearHistory,
+    addMessage, addThinkingMemory, setStreaming, appendToStream, setLastAgentSoul, finishStream, clearHistory,
     setSessions, setCurrentSession, toggleSessionList, closeSessionList,
     replaceSessions, removeSession,
   }

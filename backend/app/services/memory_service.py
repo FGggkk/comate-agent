@@ -13,6 +13,7 @@ from app.db.session import async_session_factory
 from app.models.memory import ForbiddenTopic, MemoryItem, MemoryObservation, PendingAnchor
 from app.services.embedding_service import get_embedding
 from app.services import reminder_service
+from app.services.memory_gate_service import append_gate_trace
 
 
 CHAT_MEMORY_LAYERS = ("co_created",)
@@ -42,7 +43,7 @@ STRUCTURED_MEMORY_FIELDS = {
 
 TOPIC_KEYWORDS = {
     "fitness": ("健身", "跑步", "运动", "训练", "锻炼", "公里", "肌肉", "体能", "力量", "瑜伽"),
-    "food": ("水果", "橘子", "香蕉", "苹果", "葡萄", "猕猴桃", "超市", "饮食", "吃", "补充", "维生素"),
+    "food": ("水果", "橘子", "香蕉", "苹果", "葡萄", "猕猴桃", "西瓜", "超市", "饮食", "吃", "喝", "酒", "饮料", "牛肉", "牛肉面", "补充", "维生素"),
     "interview": ("面试", "求职", "简历", "offer", "岗位", "招聘", "hr", "HR", "技术岗"),
     "work": ("项目", "代码", "分支", "提交", "pr", "PR", "bug", "需求", "上线", "开发"),
     "emotion": ("焦虑", "压力", "烦", "累", "紧张", "情绪", "崩", "难受", "开心", "低落"),
@@ -53,6 +54,36 @@ TOPIC_KEYWORDS = {
     "boundary": ("禁区", "不要提", "别提", "不想聊", "不主动", "避开"),
 }
 
+DEFAULT_CHAT_MEMORY_LIMIT = 3
+EXPANDED_CHAT_MEMORY_LIMIT = 8
+
+FORBIDDEN_ADD_PATTERNS = (
+    r"(?:以后|之后|后面|接下来|以后都|以后也)?(?:不要|别|别再|不要再|别总是|不要总是|不想|不愿意|不希望)(?:主动)?(?:再)?(?:提起|提到|提及|提(?!醒)|说|聊|谈|讨论|展开|碰|触碰)(?:到|起|及)?(?P<topic>[^，。！？；\n]{1,40})",
+    r"(?:把|将)?(?P<topic>[^，。！？；\n]{1,40}?)(?:设为|列为|加入|放进|当成)(?:禁区|边界|避雷)",
+    r"(?P<topic>[^，。！？；\n]{1,40}?)(?:是|属于|算是)(?:我的)?(?:禁区|边界|避雷)",
+    r"(?P<topic>[^，。！？；\n]{1,40}?)(?:以后|之后|后面)?(?:不要|别|别再|不要再)(?:主动)?(?:再)?(?:提起|提到|提及|提(?!醒)|说|聊|谈|讨论|展开|碰|触碰)(?:了|啦)?",
+)
+
+FORBIDDEN_REMOVE_PATTERNS = (
+    r"(?:可以|能|允许|愿意)(?:重新|继续|再)?(?:提起|提到|提及|提(?!醒)|说|聊|谈|讨论|展开)(?:到|起|及)?(?P<topic>[^，。！？；\n]{1,40})",
+    r"(?:解除|取消|移除|删除|去掉)(?:关于|对)?(?P<topic>[^，。！？；\n]{1,40}?)(?:的)?(?:禁区|边界|避开|避雷)",
+    r"(?P<topic>[^，。！？；\n]{1,40}?)(?:不用|不需要)(?:再)?(?:避开|回避)",
+    r"(?P<topic>[^，。！？；\n]{1,40}?)(?:不再是|不是)(?:禁区|边界|避雷)",
+)
+
+VAGUE_FORBIDDEN_TERMS = {
+    "这个",
+    "那个",
+    "这件事",
+    "那件事",
+    "这事",
+    "那事",
+    "这个话题",
+    "那个话题",
+    "刚才那个",
+    "它",
+}
+
 
 async def search(
     user_id: str,
@@ -60,6 +91,7 @@ async def search(
     top_k: int = 5,
     db: AsyncSession = None,
     layers: tuple[str, ...] | None = None,
+    gate_trace: list[dict] | None = None,
 ) -> list[dict]:
     """检索可用于当前问题的共建记忆。
 
@@ -71,8 +103,8 @@ async def search(
         return []
 
     forbidden = await get_forbidden(user_id, db)
-    forbidden_words = {f.topic_summary.lower() for f in forbidden}
     query_topics = classify_query_topics(query)
+    results_by_id: dict[str, dict] = {}
 
     # 1. 尝试 pgvector 语义搜索
     query_vec = await get_embedding(query)
@@ -105,24 +137,61 @@ async def search(
             },
         )
         rows = result.fetchall()
-        results = []
         for row in rows:
             if not _is_available_for_chat(row.layer, row.user_confirmed, row.memory_type, row.content, row.expires_at):
-                continue
-            summary_lower = (row.summary or "").lower()
-            if any(fw in summary_lower for fw in forbidden_words):
+                append_gate_trace(
+                    gate_trace,
+                    source="co_created",
+                    kept=False,
+                    reason="unavailable_for_chat",
+                    item_id=str(row.id),
+                    text=row.summary or "",
+                    metadata={
+                        "path": "vector",
+                        "layer": row.layer,
+                        "memory_type": row.memory_type,
+                        "user_confirmed": row.user_confirmed,
+                    },
+                )
                 continue
             item_data = _row_to_memory_dict(row)
+            if is_forbidden_text(item_data.get("summary") or "", forbidden):
+                append_gate_trace(
+                    gate_trace,
+                    source="co_created",
+                    kept=False,
+                    reason="forbidden",
+                    item_id=item_data["id"],
+                    text=item_data.get("summary") or "",
+                    metadata={"path": "vector"},
+                )
+                continue
             semantic_score = float(row.score) if row.score else 0
-            if not is_memory_relevant_to_query(item_data, query, query_topics, semantic_score):
+            relevance = explain_memory_relevance(item_data, query, query_topics, semantic_score)
+            if not relevance["kept"]:
+                append_gate_trace(
+                    gate_trace,
+                    source="co_created",
+                    kept=False,
+                    reason=relevance["reason"],
+                    item_id=item_data["id"],
+                    text=item_data.get("summary") or "",
+                    metadata={**relevance["metadata"], "path": "vector"},
+                )
                 continue
             item_data["score"] = _memory_relevance_score(item_data, query, query_topics, semantic_score)
-            results.append(item_data)
-        if results:
-            results.sort(key=lambda item: item.get("score", 0), reverse=True)
-            return results[:top_k]
+            append_gate_trace(
+                gate_trace,
+                source="co_created",
+                kept=True,
+                reason=relevance["reason"],
+                item_id=item_data["id"],
+                text=item_data.get("summary") or "",
+                metadata={**relevance["metadata"], "path": "vector", "score": item_data["score"]},
+            )
+            _merge_memory_search_result(results_by_id, item_data)
 
-    # 2. 兜底：结构化主题和关键词匹配
+    # 2. 结构化主题和关键词匹配兜底，与向量结果合并排序。
     result = await db.execute(
         select(MemoryItem).where(
             MemoryItem.user_id == user_id,
@@ -132,21 +201,71 @@ async def search(
     )
     items = result.scalars().all()
 
-    scored = []
     for item in items:
         if not _is_item_available_for_chat(item):
+            append_gate_trace(
+                gate_trace,
+                source="co_created",
+                kept=False,
+                reason="unavailable_for_chat",
+                item_id=str(item.id),
+                text=item.summary or "",
+                metadata={
+                    "path": "fallback",
+                    "layer": item.layer,
+                    "memory_type": item.memory_type,
+                    "user_confirmed": item.user_confirmed,
+                },
+            )
             continue
         data = _item_to_dict(item)
-        summary_lower = (item.summary or "").lower()
-        if any(fw in summary_lower for fw in forbidden_words):
+        if is_forbidden_text(data.get("summary") or "", forbidden):
+            append_gate_trace(
+                gate_trace,
+                source="co_created",
+                kept=False,
+                reason="forbidden",
+                item_id=data["id"],
+                text=data.get("summary") or "",
+                metadata={"path": "fallback"},
+            )
             continue
-        if not is_memory_relevant_to_query(data, query, query_topics):
+        relevance = explain_memory_relevance(data, query, query_topics)
+        if not relevance["kept"]:
+            append_gate_trace(
+                gate_trace,
+                source="co_created",
+                kept=False,
+                reason=relevance["reason"],
+                item_id=data["id"],
+                text=data.get("summary") or "",
+                metadata={**relevance["metadata"], "path": "fallback"},
+            )
             continue
         score = _memory_relevance_score(data, query, query_topics)
-        scored.append((score, data))
+        append_gate_trace(
+            gate_trace,
+            source="co_created",
+            kept=True,
+            reason=relevance["reason"],
+            item_id=data["id"],
+            text=data.get("summary") or "",
+            metadata={**relevance["metadata"], "path": "fallback", "score": score},
+        )
+        data["score"] = score
+        _merge_memory_search_result(results_by_id, data)
 
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [dict(item, score=score) for score, item in scored[:top_k]]
+    ranked = sorted(results_by_id.values(), key=lambda item: item.get("score", 0), reverse=True)
+    return ranked[:top_k]
+
+
+def _merge_memory_search_result(results_by_id: dict[str, dict], item: dict) -> None:
+    item_id = str(item.get("id") or "")
+    if not item_id:
+        return
+    existing = results_by_id.get(item_id)
+    if existing is None or item.get("score", 0) > existing.get("score", 0):
+        results_by_id[item_id] = item
 
 
 async def create_co_created(
@@ -170,6 +289,9 @@ async def create_co_created(
         return {"success": False, "message": "记忆内容不能为空"}
     if memory_type not in ALLOWED_MEMORY_TYPES:
         return {"success": False, "message": "不支持的记忆类型"}
+    forbidden = await get_forbidden(user_id, db)
+    if is_forbidden_text({"summary": summary, "content": content or {}}, forbidden):
+        return {"success": False, "message": "该内容命中禁区，不会保存为记忆"}
 
     existing = await _get_existing_active_memory(
         user_id=user_id,
@@ -179,7 +301,9 @@ async def create_co_created(
         db=db,
     )
     if existing:
-        return {"success": True, "data": _item_to_dict(existing), "message": "已存在相同记忆"}
+        data = _item_to_dict(existing)
+        data["already_exists"] = True
+        return {"success": True, "data": data, "message": "已存在相同记忆"}
 
     normalized_content = _normalize_memory_content(
         memory_type=memory_type,
@@ -569,10 +693,21 @@ async def get_forbidden(user_id: str, db: AsyncSession = None) -> list[Forbidden
 
 
 async def add_forbidden(user_id: str, topic: str, phrase: str = "", db: AsyncSession = None) -> dict:
-    ft = ForbiddenTopic(user_id=user_id, topic_summary=topic, original_phrase=phrase)
+    terms = _extract_forbidden_terms(topic)
+    normalized_topic = next(iter(terms), _compact_forbidden_text(topic))
+    if not normalized_topic:
+        return {"success": False, "message": "禁区话题不能为空"}
+
+    existing = await get_forbidden(user_id, db)
+    for item in existing:
+        if _forbidden_item_matches_terms(item, {normalized_topic}):
+            return {"success": True, "id": str(item.id), "created": False}
+
+    ft = ForbiddenTopic(user_id=user_id, topic_summary=normalized_topic, original_phrase=phrase)
     db.add(ft)
     await db.commit()
-    return {"success": True}
+    await db.refresh(ft)
+    return {"success": True, "id": str(ft.id), "created": True}
 
 
 async def remove_forbidden(user_id: str, topic_id: str, db: AsyncSession = None) -> dict:
@@ -586,6 +721,83 @@ async def remove_forbidden(user_id: str, topic_id: str, db: AsyncSession = None)
     if result.rowcount == 0:
         return {"success": False, "message": "禁区话题不存在或无权操作"}
     return {"success": True}
+
+
+async def sync_forbidden_topics_from_message(user_id: str, message: str, db: AsyncSession = None) -> dict:
+    """根据用户明示边界更新禁区话题，用于模型回复前立即生效。"""
+    add_terms = extract_forbidden_add_terms(message)
+    remove_terms = extract_forbidden_remove_terms(message)
+    changed = {"added": [], "removed": []}
+
+    if remove_terms:
+        changed["removed"] = await remove_forbidden_by_terms(user_id, remove_terms, db)
+
+    if add_terms:
+        for term in sorted(add_terms):
+            result = await add_forbidden(user_id, term, message, db)
+            if result.get("success") and result.get("created", True):
+                changed["added"].append(term)
+
+    return changed
+
+
+async def remove_forbidden_by_terms(user_id: str, terms: set[str], db: AsyncSession = None) -> list[str]:
+    flattened_terms: set[str] = set()
+    for term in terms:
+        flattened_terms.update(_extract_forbidden_terms(term))
+    if not flattened_terms:
+        return []
+
+    existing = await get_forbidden(user_id, db)
+    targets = [item for item in existing if _forbidden_item_matches_terms(item, flattened_terms)]
+    if not targets:
+        return []
+
+    await db.execute(
+        delete(ForbiddenTopic).where(
+            ForbiddenTopic.user_id == user_id,
+            ForbiddenTopic.id.in_([item.id for item in targets]),
+        )
+    )
+    await db.commit()
+    return [item.topic_summary for item in targets]
+
+
+def extract_forbidden_add_terms(text: str) -> set[str]:
+    return _extract_forbidden_request_terms(text, FORBIDDEN_ADD_PATTERNS)
+
+
+def extract_forbidden_remove_terms(text: str) -> set[str]:
+    return _extract_forbidden_request_terms(text, FORBIDDEN_REMOVE_PATTERNS)
+
+
+def forbidden_topics_to_terms(forbidden_topics: list[ForbiddenTopic | dict | str] | None) -> set[str]:
+    terms: set[str] = set()
+    for item in forbidden_topics or []:
+        if isinstance(item, str):
+            pieces = [item]
+        elif isinstance(item, dict):
+            pieces = [str(item.get("topic") or item.get("topic_summary") or ""), str(item.get("original_phrase") or "")]
+        else:
+            pieces = [str(getattr(item, "topic_summary", "") or ""), str(getattr(item, "original_phrase", "") or "")]
+        for piece in pieces:
+            terms.update(_extract_forbidden_terms(piece))
+    return terms
+
+
+def is_forbidden_text(text: str | dict | None, forbidden_topics: list[ForbiddenTopic | dict | str] | None) -> bool:
+    terms = forbidden_topics_to_terms(forbidden_topics)
+    if not terms:
+        return False
+    normalized_text = _normalize_match_text(_stringify_forbidden_text(text))
+    return any(term and _normalize_match_text(term) in normalized_text for term in terms)
+
+
+def filter_forbidden_lines(text: str, forbidden_topics: list[ForbiddenTopic | dict | str] | None) -> str:
+    if not text or not forbidden_topics:
+        return text or ""
+    kept = [line for line in text.splitlines() if not is_forbidden_text(line, forbidden_topics)]
+    return "\n".join(line for line in kept if line.strip()).strip()
 
 
 async def get_anchors(user_id: str, db: AsyncSession = None) -> list[PendingAnchor]:
@@ -788,20 +1000,46 @@ def classify_query_topics(text: str) -> list[str]:
     return _infer_topic_tags(text or "")
 
 
+def memory_search_limit(query: str) -> int:
+    if _is_expanded_memory_query(query):
+        return EXPANDED_CHAT_MEMORY_LIMIT
+    return DEFAULT_CHAT_MEMORY_LIMIT
+
+
+def _is_expanded_memory_query(query: str) -> bool:
+    normalized = _normalize_match_text(query)
+    if not normalized:
+        return False
+    if any(word in normalized for word in ("分别", "哪些", "有什么", "列一下", "总结一下", "都有什么")):
+        return True
+    if _is_preference_lookup_query(query):
+        return True
+    return False
+
+
 def is_memory_relevant_to_query(
     memory: dict,
     query: str,
     query_topics: list[str] | None = None,
     semantic_score: float = 0.0,
 ) -> bool:
+    return explain_memory_relevance(memory, query, query_topics, semantic_score)["kept"]
+
+
+def explain_memory_relevance(
+    memory: dict,
+    query: str,
+    query_topics: list[str] | None = None,
+    semantic_score: float = 0.0,
+) -> dict:
     if not (query or "").strip():
-        return False
+        return _memory_gate_decision(False, "empty_query")
 
     memory_type = memory.get("memory_type") or "general"
     if memory_type == "boundary":
-        return False
+        return _memory_gate_decision(False, "boundary_memory")
     if memory.get("needs_cleanup") or memory.get("is_expired"):
-        return False
+        return _memory_gate_decision(False, "expired_or_cleanup")
 
     scope = _normalize_scope(
         memory.get("scope"),
@@ -816,15 +1054,54 @@ def is_memory_relevant_to_query(
     current_topics = set(query_topics or classify_query_topics(query))
     topic_overlap = bool(memory_topics and current_topics and memory_topics & current_topics)
     keyword_overlap = _keyword_overlap_count(query, memory.get("summary") or "")
+    metadata = {
+        "scope": scope,
+        "memory_type": memory_type,
+        "memory_topics": sorted(memory_topics),
+        "query_topics": sorted(current_topics),
+        "keyword_overlap": keyword_overlap,
+        "semantic_score": round(float(semantic_score or 0), 4),
+    }
+
+    query_polarities = _preference_polarities(query)
+    if _is_preference_lookup_query(query) and len(query_polarities) == 1:
+        memory_polarity = _preference_polarity(_memory_dict_text(memory))
+        if memory_polarity not in query_polarities:
+            metadata["query_polarities"] = sorted(query_polarities)
+            metadata["memory_polarity"] = memory_polarity
+            return _memory_gate_decision(False, "preference_polarity_mismatch", metadata)
+
+    if topic_overlap:
+        return _memory_gate_decision(True, "topic_overlap", metadata)
 
     if scope == "ephemeral":
-        return topic_overlap or keyword_overlap >= 2 or semantic_score >= 0.80
+        if keyword_overlap >= 2:
+            return _memory_gate_decision(True, "keyword_overlap", metadata)
+        if semantic_score >= 0.80:
+            return _memory_gate_decision(True, "semantic_match", metadata)
+        return _memory_gate_decision(False, "unrelated", metadata)
     if scope == "topic":
-        return topic_overlap or keyword_overlap >= 2 or semantic_score >= 0.76
+        if keyword_overlap >= 2:
+            return _memory_gate_decision(True, "keyword_overlap", metadata)
+        if semantic_score >= 0.76:
+            return _memory_gate_decision(True, "semantic_match", metadata)
+        return _memory_gate_decision(False, "unrelated", metadata)
     if scope == "session":
-        return keyword_overlap >= 2 or semantic_score >= 0.78
+        if keyword_overlap >= 2:
+            return _memory_gate_decision(True, "keyword_overlap", metadata)
+        if semantic_score >= 0.78:
+            return _memory_gate_decision(True, "semantic_match", metadata)
+        return _memory_gate_decision(False, "unrelated", metadata)
 
-    return topic_overlap or keyword_overlap >= 1 or semantic_score >= 0.72
+    if keyword_overlap >= 1:
+        return _memory_gate_decision(True, "keyword_overlap", metadata)
+    if semantic_score >= 0.72:
+        return _memory_gate_decision(True, "semantic_match", metadata)
+    return _memory_gate_decision(False, "unrelated", metadata)
+
+
+def _memory_gate_decision(kept: bool, reason: str, metadata: dict | None = None) -> dict:
+    return {"kept": kept, "reason": reason, "metadata": metadata or {}}
 
 
 def is_text_relevant_to_query(
@@ -832,11 +1109,29 @@ def is_text_relevant_to_query(
     query: str,
     query_topics: list[str] | None = None,
 ) -> bool:
+    return explain_text_relevance(text, query, query_topics)["kept"]
+
+
+def explain_text_relevance(
+    text: str,
+    query: str,
+    query_topics: list[str] | None = None,
+) -> dict:
     if _asks_for_pending_topic(query):
-        return True
+        return _memory_gate_decision(True, "pending_topic_requested")
     text_topics = set(classify_query_topics(text or ""))
     current_topics = set(query_topics or classify_query_topics(query or ""))
-    return bool(text_topics and current_topics and text_topics & current_topics) or _keyword_overlap_count(query, text) >= 2
+    keyword_overlap = _keyword_overlap_count(query, text)
+    metadata = {
+        "text_topics": sorted(text_topics),
+        "query_topics": sorted(current_topics),
+        "keyword_overlap": keyword_overlap,
+    }
+    if text_topics and current_topics and text_topics & current_topics:
+        return _memory_gate_decision(True, "topic_overlap", metadata)
+    if keyword_overlap >= 2:
+        return _memory_gate_decision(True, "keyword_overlap", metadata)
+    return _memory_gate_decision(False, "unrelated", metadata)
 
 
 def _memory_relevance_score(
@@ -845,6 +1140,7 @@ def _memory_relevance_score(
     query_topics: list[str] | None = None,
     semantic_score: float = 0.0,
 ) -> float:
+    memory_type = memory.get("memory_type") or "general"
     memory_topics = set(_normalize_topic_tags(memory.get("topic_tags"), memory.get("summary") or ""))
     current_topics = set(query_topics or classify_query_topics(query))
     score = semantic_score
@@ -855,9 +1151,63 @@ def _memory_relevance_score(
         score += 0.08
     if memory.get("user_confirmed"):
         score += 0.08
-    if memory.get("memory_type") == "event":
+    if memory_type == "preference" and _is_preference_lookup_query(query):
+        score += 0.16
+
+    query_polarities = _preference_polarities(query)
+    memory_polarity = _preference_polarity(_memory_dict_text(memory))
+    if memory_type == "preference" and query_polarities:
+        if memory_polarity in query_polarities:
+            score += 0.48
+        elif memory_polarity and len(query_polarities) == 1:
+            score -= 0.34
+
+    if memory_type == "event":
         score -= 0.05
     return score
+
+
+def _is_preference_lookup_query(text: str) -> bool:
+    normalized = _normalize_match_text(text)
+    if "什么" not in normalized and "哪些" not in normalized:
+        return False
+    return any(word in normalized for word in ("喜欢", "爱吃", "爱喝", "讨厌", "不喜欢", "不爱", "不吃", "不喝", "偏好", "推荐", "不推荐"))
+
+
+def _preference_polarities(text: str) -> set[str]:
+    normalized = _normalize_match_text(text)
+    polarities: set[str] = set()
+    negative_words = (
+        "讨厌",
+        "不推荐",
+        "不喜欢",
+        "不爱",
+        "不吃",
+        "不喝",
+        "不能吃",
+        "不能喝",
+        "不想吃",
+        "不想喝",
+        "避开",
+        "忌口",
+        "过敏",
+    )
+    if any(word in normalized for word in negative_words):
+        polarities.add("negative")
+
+    positive_words = ("喜欢", "爱吃", "爱喝", "偏好", "想吃", "想喝")
+    if re.search(r"(?<!不)推荐", normalized) or any(word in normalized for word in positive_words):
+        polarities.add("positive")
+    return polarities
+
+
+def _preference_polarity(text: str) -> str | None:
+    polarities = _preference_polarities(text)
+    if "negative" in polarities:
+        return "negative"
+    if "positive" in polarities:
+        return "positive"
+    return None
 
 
 def _normalize_scope(
@@ -1083,10 +1433,21 @@ def _is_available_for_chat(
     return True
 
 
-async def extract_candidates(user_id: str, message: str, reply: str, db: AsyncSession = None) -> list[dict]:
+async def extract_candidates(
+    user_id: str,
+    message: str,
+    reply: str,
+    db: AsyncSession = None,
+    forbidden_topics: list[ForbiddenTopic | dict | str] | None = None,
+) -> list[dict]:
     """对话后用 LLM 提取记忆候选，等待用户确认后再保存。"""
+    if is_forbidden_text(message, forbidden_topics) or is_forbidden_text(reply, forbidden_topics):
+        return []
+
     summary = await _extract_memory_summary(message, reply)
     if not summary:
+        return []
+    if is_forbidden_text(summary, forbidden_topics):
         return []
 
     memory_type = _guess_memory_type(f"{message}\n{summary}")
@@ -1105,13 +1466,101 @@ async def extract_candidates(user_id: str, message: str, reply: str, db: AsyncSe
         content=content,
     )
     content = _sync_memory_metadata(content, structured_fields)
-
-    return [{
+    candidate = {
         "summary": summary,
         "layer": "co_created",
         "memory_type": memory_type,
         "content": content,
-    }]
+    }
+    if is_forbidden_text(candidate, forbidden_topics):
+        return []
+    if await _has_existing_candidate_memory(user_id, candidate, db):
+        return []
+
+    return [candidate]
+
+
+async def _has_existing_candidate_memory(user_id: str, candidate: dict, db: AsyncSession | None) -> bool:
+    if db is None:
+        return False
+
+    summary = candidate.get("summary") or ""
+    memory_type = candidate.get("memory_type") or "general"
+    candidate_text = _normalize_memory_match_text(summary)
+    candidate_topics = set(_normalize_topic_tags(candidate.get("topic_tags"), summary))
+    if not candidate_text:
+        return False
+
+    result = await db.execute(
+        select(MemoryItem)
+        .where(
+            MemoryItem.user_id == user_id,
+            MemoryItem.layer == "co_created",
+            MemoryItem.status == "active",
+        )
+        .order_by(MemoryItem.updated_at.desc())
+        .limit(200)
+    )
+    for item in result.scalars().all():
+        if _is_duplicate_candidate_memory(
+            candidate_text=candidate_text,
+            candidate_topics=candidate_topics,
+            candidate_type=memory_type,
+            existing=item,
+        ):
+            return True
+    return False
+
+
+def _is_duplicate_candidate_memory(
+    candidate_text: str,
+    candidate_topics: set[str],
+    candidate_type: str,
+    existing: MemoryItem,
+) -> bool:
+    existing_text = _normalize_memory_match_text(_memory_text(existing))
+    if not existing_text:
+        return False
+    if candidate_text in existing_text or existing_text in candidate_text:
+        return True
+
+    existing_topics = set(_normalize_topic_tags(existing.topic_tags, existing.summary or ""))
+    same_type = (existing.memory_type or "general") == (candidate_type or "general")
+    has_topic_overlap = bool(candidate_topics and existing_topics and candidate_topics & existing_topics)
+    if same_type and has_topic_overlap and _jaccard_similarity(candidate_text, existing_text) >= 0.68:
+        return True
+    return False
+
+
+def _normalize_memory_match_text(text: str) -> str:
+    normalized = _normalize_match_text(text)
+    for prefix in (
+        "用户偏好",
+        "用户喜好",
+        "用户习惯",
+        "用户画像",
+        "用户事实",
+        "用户",
+        "偏好",
+        "习惯",
+        "事实",
+    ):
+        normalized = normalized.replace(prefix, "")
+    return normalized.strip("：:，。！？；、")
+
+
+def _jaccard_similarity(left: str, right: str) -> float:
+    left_terms = set(_character_bigrams(left))
+    right_terms = set(_character_bigrams(right))
+    if not left_terms or not right_terms:
+        return 0.0
+    return len(left_terms & right_terms) / len(left_terms | right_terms)
+
+
+def _character_bigrams(text: str) -> list[str]:
+    if len(text) <= 2:
+        return [text] if text else []
+    return [text[index:index + 2] for index in range(len(text) - 1)]
 
 
 def _guess_memory_type(summary: str) -> str:
@@ -1494,6 +1943,98 @@ def _replacement_source_text(item: MemoryItem) -> str:
         item.summary or "",
         str(content.get("source_message") or ""),
         str(content.get("source_reply") or ""),
+    ]
+    return "\n".join(piece for piece in pieces if piece)
+
+
+def _extract_forbidden_request_terms(text: str, patterns: tuple[str, ...]) -> set[str]:
+    terms: set[str] = set()
+    for pattern in patterns:
+        for match in re.finditer(pattern, text or "", flags=re.IGNORECASE):
+            if _is_negated_boundary_action(text or "", match.start()):
+                continue
+            terms.update(_extract_forbidden_terms(match.group("topic")))
+    return terms
+
+
+def _is_negated_boundary_action(text: str, start: int) -> bool:
+    prefix = text[max(0, start - 4):start]
+    return bool(re.search(r"(不要|别|不能|不要再|别再)$", prefix))
+
+
+def _extract_forbidden_terms(text: str) -> set[str]:
+    compacted = _compact_forbidden_text(text)
+    if not compacted:
+        return set()
+
+    terms = set(_extract_topic_terms(compacted))
+    terms.update(_extract_dietary_forbidden_terms(compacted))
+    if not terms and _is_useful_forbidden_term(compacted):
+        terms.add(compacted)
+    return {_normalize_match_text(term) for term in terms if _is_useful_forbidden_term(term)}
+
+
+def _compact_forbidden_text(text: str) -> str:
+    compacted = re.sub(r"\s+", "", text or "")
+    compacted = re.sub(r"^(关于|有关|对于|对|把|将|这次|当前|以后|之后|后面|接下来)", "", compacted)
+    compacted = re.sub(r"(?:的)?(?:禁区|边界|避雷)$", "", compacted)
+    compacted = re.sub(r"(这个话题|那个话题|这件事|那件事|这事|那事|的话题)$", "", compacted)
+    compacted = compacted.strip("了啦吧哦呀呢啊吗嘛的~～ ，。！？；、")
+    return compacted
+
+
+def _extract_dietary_forbidden_terms(text: str) -> set[str]:
+    terms: set[str] = set()
+    patterns = (
+        r"^(?:用户|我|自己|本人|我的)?(?:不吃|不喝|不能吃|不能喝|不想吃|不想喝|不要吃|不要喝|别吃|别喝|避免吃|避免喝|少吃|少喝|忌口|不碰)(?P<topic>[^，。！？；、\n]{1,18})",
+        r"^(?:用户|我|自己|本人|我的)?对(?P<topic>[^，。！？；、\n]{1,18})(?:过敏|不耐受)$",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, text or ""):
+            topic = match.group("topic")
+            topic = re.sub(r"(相关|这类|这类食物|这类东西|食物|食品|东西)$", "", topic)
+            topic = topic.strip("了啦吧哦呀呢啊吗嘛的~～ ，。！？；、")
+            terms.update(_extract_topic_terms(topic))
+            if _is_useful_forbidden_term(topic):
+                terms.add(topic)
+    return terms
+
+
+def _is_useful_forbidden_term(term: str) -> bool:
+    normalized = _normalize_match_text(term)
+    if not normalized or normalized in VAGUE_FORBIDDEN_TERMS:
+        return False
+    if len(normalized) < 2 or len(normalized) > 24:
+        return False
+    return not re.fullmatch(r"[^\w\u4e00-\u9fff]+", normalized)
+
+
+def _forbidden_item_matches_terms(item: ForbiddenTopic, terms: set[str]) -> bool:
+    item_terms = forbidden_topics_to_terms([item])
+    for term in terms:
+        if term in item_terms:
+            return True
+        if any(term in item_term or item_term in term for item_term in item_terms):
+            return True
+    return False
+
+
+def _normalize_match_text(text: str) -> str:
+    return re.sub(r"\s+", "", text or "").lower()
+
+
+def _stringify_forbidden_text(text: str | dict | None) -> str:
+    if text is None:
+        return ""
+    if isinstance(text, dict):
+        return json.dumps(text, ensure_ascii=False)
+    return str(text)
+
+
+def _memory_dict_text(data: dict) -> str:
+    pieces = [
+        str(data.get("summary") or ""),
+        _stringify_forbidden_text(data.get("content") or {}),
     ]
     return "\n".join(piece for piece in pieces if piece)
 

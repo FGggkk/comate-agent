@@ -11,7 +11,8 @@ from app.db.session import async_session_factory
 from app.models.conversation import Message, Session
 from app.models.memory import MemoryItem
 from app.models.tacit import SessionSummary, TacitProfile, TacitProfileVersion
-from app.services.memory_service import classify_query_topics
+from app.services.memory_gate_service import append_gate_trace
+from app.services.memory_service import classify_query_topics, is_forbidden_text
 
 
 APP_TZ = timezone(timedelta(hours=8))
@@ -184,9 +185,22 @@ async def update_tacit_profile(user_id: str, db: AsyncSession) -> dict | None:
     return profile_to_snapshot(profile)
 
 
-async def get_tacit_context(user_id: str, db: AsyncSession, query: str | None = None) -> str:
+async def get_tacit_context(
+    user_id: str,
+    db: AsyncSession,
+    query: str | None = None,
+    forbidden_topics: list | None = None,
+    gate_trace: list[dict] | None = None,
+) -> str:
     profile = await _get_active_profile(user_id, db)
     if not profile or (profile.confidence or 0) < HIGH_CONFIDENCE:
+        append_gate_trace(
+            gate_trace,
+            source="tacit_profile",
+            kept=False,
+            reason="profile_unavailable_or_low_confidence",
+            metadata={"confidence": profile.confidence if profile else 0},
+        )
         return ""
 
     lines = []
@@ -196,8 +210,35 @@ async def get_tacit_context(user_id: str, db: AsyncSession, query: str | None = 
         claims = _active_claims(profile_data.get(dimension, []), threshold=HIGH_CONFIDENCE)
         for claim in claims[:2]:
             claim_text = claim.get("claim") or ""
-            if not _is_persona_claim_for_reply(dimension, claim_text, query_topics):
+            if is_forbidden_text(claim_text, forbidden_topics):
+                append_gate_trace(
+                    gate_trace,
+                    source="tacit_profile",
+                    kept=False,
+                    reason="forbidden",
+                    text=claim_text,
+                    metadata={"dimension": dimension},
+                )
                 continue
+            decision = _explain_persona_claim_for_reply(dimension, claim_text, query_topics)
+            if not decision["kept"]:
+                append_gate_trace(
+                    gate_trace,
+                    source="tacit_profile",
+                    kept=False,
+                    reason=decision["reason"],
+                    text=claim_text,
+                    metadata={"dimension": dimension, **decision["metadata"]},
+                )
+                continue
+            append_gate_trace(
+                gate_trace,
+                source="tacit_profile",
+                kept=True,
+                reason=decision["reason"],
+                text=claim_text,
+                metadata={"dimension": dimension, **decision["metadata"]},
+            )
             lines.append(f"- {DIMENSIONS[dimension]}: {claim_text}")
         if len(lines) >= 6:
             break
@@ -225,19 +266,36 @@ async def get_profile_snapshot(user_id: str, db: AsyncSession) -> dict:
 
 
 def _is_persona_claim_for_reply(dimension: str, claim: str, query_topics: set[str]) -> bool:
+    return _explain_persona_claim_for_reply(dimension, claim, query_topics)["kept"]
+
+
+def _explain_persona_claim_for_reply(dimension: str, claim: str, query_topics: set[str]) -> dict:
     if not claim:
-        return False
+        return _persona_gate_decision(False, "empty_claim")
     if _looks_like_specific_event(claim):
-        return False
+        return _persona_gate_decision(False, "specific_event")
     if dimension in ALWAYS_PERSONA_DIMENSIONS:
-        return True
+        return _persona_gate_decision(True, "persona_dimension")
 
     claim_topics = set(classify_query_topics(claim))
     if not query_topics:
-        return False
+        return _persona_gate_decision(False, "no_query_topics", {"claim_topics": sorted(claim_topics)})
     if not claim_topics:
-        return dimension in {"routines"}
-    return bool(claim_topics & query_topics)
+        return _persona_gate_decision(
+            dimension in {"routines"},
+            "routine_without_topic" if dimension in {"routines"} else "no_claim_topics",
+            {"claim_topics": [], "query_topics": sorted(query_topics)},
+        )
+    kept = bool(claim_topics & query_topics)
+    return _persona_gate_decision(
+        kept,
+        "topic_overlap" if kept else "unrelated",
+        {"claim_topics": sorted(claim_topics), "query_topics": sorted(query_topics)},
+    )
+
+
+def _persona_gate_decision(kept: bool, reason: str, metadata: dict | None = None) -> dict:
+    return {"kept": kept, "reason": reason, "metadata": metadata or {}}
 
 
 def _looks_like_specific_event(text: str) -> bool:
