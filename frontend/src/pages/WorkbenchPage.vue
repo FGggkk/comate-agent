@@ -37,7 +37,7 @@
           </svg>
           <span>最近使用</span>
         </div>
-        <div v-for="item in recentItems" :key="item.id" class="recent-item" @click="openRecent(item)">
+        <div v-for="item in showAllRecent ? recentItems : recentItems.slice(0, 3)" :key="item.id" class="recent-item" @click="openRecent(item)">
           <div class="recent-dot" :style="{background: item.color}"></div>
           <div class="recent-body">
             <div class="recent-title">{{ item.title }}</div>
@@ -48,10 +48,14 @@
           </svg>
         </div>
       </div>
+      <div v-if="hasMoreRecent" style="text-align:center;margin-top:8px;">
+        <button class="more-btn" @click="showAllRecent = !showAllRecent">{{ showAllRecent ? '收起' : '查看更多' }}</button>
+      </div>
     </div>
 
     <InterviewPage v-else-if="activeTool === 'interview'" :embedded="true" @back="activeTool = ''" />
     <FinancePage v-else-if="activeTool === 'finance'" @back="activeTool = ''" />
+    <TravelPage v-else-if="activeTool === 'travel'" @back="activeTool = ''" />
     <div v-else class="placeholder-page">
       <div class="back-bar">
         <button @click="activeTool = ''" class="back-btn">
@@ -74,6 +78,7 @@
 import { ref, computed, onMounted } from 'vue'
 import InterviewPage from './InterviewPage.vue'
 import FinancePage from './FinancePage.vue'
+import TravelPage from './TravelPage.vue'
 
 const activeTool = ref('')
 
@@ -103,30 +108,53 @@ const tools = [
 const currentTool = computed(() => tools.find(t => t.id === activeTool.value))
 
 const recentItems = ref([])
+const hasMoreRecent = ref(false)
+const showAllRecent = ref(false)
 
 onMounted(loadRecent)
 
 async function loadRecent() {
   try {
     const token = localStorage.getItem('comate_token')
-    const res = await fetch('/api/interview', {
-      headers: { 'Authorization': `Bearer ${token}` }
-    })
-    const data = await res.json()
-    const sessions = data.data?.sessions || data.sessions || []
-    recentItems.value = sessions.slice(0, 5).map(s => ({
-      id: s.id,
-      toolId: 'interview',
-      toolLabel: '面试训练',
-      color: '#FF9F45',
+    const headers = { 'Authorization': `Bearer ${token}` }
+    const now = new Date()
+
+    // 面试记录
+    const interviewRes = await fetch('/api/interview', { headers })
+    const interviewData = await interviewRes.json()
+    const sessions = (interviewData.data?.sessions || interviewData.sessions || []).map(s => ({
+      id: s.id, toolId: 'interview', toolLabel: '面试训练', color: '#FF9F45',
       title: s.title || s.target_role || '未命名',
-      time: s.created_at ? new Date(s.created_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }) : '',
+      sortTime: s.created_at || '',
+      time: s.created_at ? new Date(s.created_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '',
     }))
+
+    // 记账记录（最近 2 条）
+    let financeItems = []
+    try {
+      const finRes = await fetch(`/api/finance/records?year=${now.getFullYear()}&month=${now.getMonth() + 1}`, { headers })
+      if (finRes.ok) {
+        const finData = await finRes.json()
+        const records = finData.data || finData || []
+        financeItems = records.slice(0, 2).map(r => ({
+          id: r.id, toolId: 'finance', toolLabel: '记账', color: '#9B6FD8',
+          title: `${r.type === 'income' ? '+' : '-'}¥${(r.amount / 100).toFixed(2)} ${r.category}`,
+          sortTime: r.created_at || r.record_date || '',
+          time: r.created_at ? new Date(r.created_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : (r.record_date || ''),
+        }))
+      }
+    } catch {}
+
+    // 合并、排序、截取 4 条
+    const all = [...sessions, ...financeItems].sort((a, b) => (b.sortTime || '').localeCompare(a.sortTime || ''))
+    recentItems.value = all
+    hasMoreRecent.value = all.length > 3
   } catch {}
 }
 
 function openRecent(item) {
   if (item.toolId === 'interview') activeTool.value = 'interview'
+  if (item.toolId === 'finance') activeTool.value = 'finance'
 }
 </script>
 
@@ -168,6 +196,8 @@ function openRecent(item) {
 .recent-title { font-size: 14px; font-weight: 500; color: var(--ink); }
 .recent-meta { font-size: 12px; color: var(--sub); margin-top: 1px; }
 .recent-arrow { flex-shrink: 0; opacity: .4; }
+.more-btn { font-size: 13px; color: var(--honey); padding: 6px 16px; border: 1px solid var(--honey-soft); border-radius: var(--r-sm); background: none; cursor: pointer; transition: background .15s; }
+.more-btn:hover { background: var(--honey-soft); }
 .placeholder-page { display: flex; flex-direction: column; height: 100%; }
 .back-bar { display: flex; align-items: center; padding: 4px 4px; }
 .back-btn { display: flex; align-items: center; gap: 4px; font-size: 14px; color: var(--ink-soft); padding: 6px 8px; background: none; border: none; cursor: pointer; }
