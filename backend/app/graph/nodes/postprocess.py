@@ -1,5 +1,6 @@
 from app.graph.state import ChatState
 from app.services.memory_service import extract_candidates
+from app.services.reminder_service import parse_reminder_request
 
 
 async def postprocess_node(state: ChatState, db):
@@ -9,6 +10,8 @@ async def postprocess_node(state: ChatState, db):
         or state.forbidden_updates.get("added")
         or state.forbidden_updates.get("removed")
     ):
+        state.memory_candidates = []
+    elif parse_reminder_request(state.message):
         state.memory_candidates = []
     else:
         state.memory_candidates = await extract_candidates(
