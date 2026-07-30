@@ -145,7 +145,37 @@
 
       <!-- 底部 -->
       <QuickBar :items="quickItems" @action="handleQuickAction" />
-      <InputBar v-if="editingMsgIndex < 0" :disabled="chatStore.isStreaming" @send="handleSend" />
+      <Transition name="writing-panel">
+        <section v-if="showWritingPanel && editingMsgIndex < 0" class="writing-panel" aria-label="帮我写作">
+          <div class="writing-panel-head">
+            <div class="writing-panel-title">
+              <span>✍️</span>
+              <strong>帮我写作</strong>
+            </div>
+            <button class="writing-close-btn" @click="showWritingPanel = false" aria-label="收起写作面板">×</button>
+          </div>
+          <div class="writing-grid">
+            <button
+              v-for="item in writingScenarios"
+              :key="item.id"
+              :class="['writing-card', activeWritingScenario === item.id ? 'active' : '']"
+              @click="applyWritingScenario(item)"
+            >
+              <span class="writing-icon">{{ item.icon }}</span>
+              <span class="writing-copy">
+                <span class="writing-card-title">{{ item.title }}</span>
+                <span class="writing-card-desc">{{ item.desc }}</span>
+              </span>
+            </button>
+          </div>
+        </section>
+      </Transition>
+      <InputBar
+        v-if="editingMsgIndex < 0"
+        ref="inputBarRef"
+        :disabled="chatStore.isStreaming"
+        @send="handleSend"
+      />
     </div>
   </div>
 </template>
@@ -176,11 +206,72 @@ const templates = ref([])
 const selectedTemplate = ref(null)
 const previewMessages = ref([])
 const heroSquished = ref(false)
+const inputBarRef = ref(null)
+const showWritingPanel = ref(false)
+const activeWritingScenario = ref('')
 const activeSoul = computed(() => props.currentSoul || null)
 const quickItems = [
-  { label: '🔍 帮我分析', action: 'analyze' },
+  { label: '✍️ 帮我写作', action: 'writing' },
   { label: '📌 设定提醒', action: 'remind' },
   { label: '🎯 模拟面试', action: 'interview' },
+]
+const writingScenarios = [
+  {
+    id: 'create',
+    icon: '🪄',
+    title: '创作',
+    desc: '从零起草',
+    draft: '帮我创作一段内容。\n主题：\n用途：\n希望风格：自然、有画面感\n补充信息：',
+  },
+  {
+    id: 'polish',
+    icon: '✨',
+    title: '润色',
+    desc: '改顺改清楚',
+    draft: '帮我润色下面这段话，要求更清楚、自然、有礼貌：\n\n',
+  },
+  {
+    id: 'email',
+    icon: '📧',
+    title: '发邮件',
+    desc: '正式不生硬',
+    draft: '帮我写一封邮件。\n收件人：\n主题：\n背景：\n希望语气：正式、清楚、自然\n我想表达：',
+  },
+  {
+    id: 'leader',
+    icon: '💬',
+    title: '与领导交流',
+    desc: '稳妥表达诉求',
+    draft: '帮我组织一段发给领导的话。\n背景：\n我的诉求：\n需要注意的分寸：\n语气：稳妥、清楚、不卑不亢',
+  },
+  {
+    id: 'social',
+    icon: '📮',
+    title: '朋友圈/小红书',
+    desc: '日常分享文案',
+    draft: '帮我写一段朋友圈/小红书文案。\n主题：\n想表达的感受：\n希望风格：轻松、真诚、不夸张\n素材：',
+  },
+  {
+    id: 'mentor',
+    icon: '🎓',
+    title: '给导师汇报',
+    desc: '进展问题计划',
+    draft: '帮我写一段给导师的汇报。\n最近进展：\n遇到的问题：\n下一步计划：\n希望语气：简洁、尊重、有条理',
+  },
+  {
+    id: 'summary',
+    icon: '🧾',
+    title: '工作总结',
+    desc: '提炼成果',
+    draft: '帮我写一份工作总结。\n时间范围：\n主要工作：\n成果数据：\n遇到的问题：\n下一步计划：',
+  },
+  {
+    id: 'reply',
+    icon: '↩️',
+    title: '消息回复',
+    desc: '得体回应',
+    draft: '帮我回复这条消息。\n对方原话：\n我的态度：\n希望语气：自然、得体、不过度热情\n需要表达：',
+  },
 ]
 
 const emit = defineEmits(['tab-change'])
@@ -298,8 +389,23 @@ function shouldShowTimeSep(i) {
 
 // ── 对话 ──
 
+function toggleWritingPanel() {
+  showWritingPanel.value = !showWritingPanel.value
+  if (showWritingPanel.value) {
+    nextTick(() => inputBarRef.value?.focus())
+  }
+}
+
+function applyWritingScenario(item) {
+  if (!item?.draft) return
+  activeWritingScenario.value = item.id
+  nextTick(() => {
+    inputBarRef.value?.applyDraft(item.draft, { mode: 'replace' })
+  })
+}
+
 function handleQuickAction(action) {
-  if (action === 'analyze') handleSend('帮我分析一下')
+  if (action === 'writing') toggleWritingPanel()
   else if (action === 'remind') emit('tab-change', 'settings')
   else if (action === 'interview') emit('tab-change', 'interview')
 }
@@ -419,12 +525,14 @@ async function handleAction(payload, actionMessage = null) {
     return
   }
   if (action === 'interview' || action === 'start_interview') emit('tab-change', 'interview')
+  else if (action === 'writing') toggleWritingPanel()
   else if (action === 'remind' || action === 'set_reminder') emit('tab-change', 'settings')
   else if (action === 'view_memory') emit('tab-change', 'memory')
-  else handleSend('帮我分析一下')
+  else handleSend('给我一些建议')
 }
 
 async function handleSend(text, options = {}) {
+  showWritingPanel.value = false
   // 确保有会话
   let sessionId = chatStore.currentSessionId
   if (!sessionId) {
@@ -691,6 +799,110 @@ async function confirmRename(session) {
 .edit-bar {
   padding: 6px 12px; border-top: 1px solid var(--line);
   background: var(--honey-soft); flex-shrink: 0;
+}
+.writing-panel {
+  flex-shrink: 0;
+  margin: 4px 12px 6px;
+  padding: 10px;
+  border: 1px solid rgba(226, 214, 195, .86);
+  border-radius: 14px;
+  background: rgba(255, 252, 247, .94);
+  box-shadow: 0 8px 24px rgba(104, 84, 55, .08);
+}
+.writing-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.writing-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink);
+  font-size: 14px;
+}
+.writing-panel-title strong {
+  font-weight: 700;
+}
+.writing-close-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: var(--sub);
+  font-size: 22px;
+  line-height: 1;
+}
+.writing-close-btn:active {
+  background: var(--cream-2);
+  color: var(--ink);
+}
+.writing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  max-height: 252px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.writing-card {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .86);
+  text-align: left;
+  box-shadow: var(--shadow-sm);
+}
+.writing-card.active {
+  border-color: #FF9F7A;
+  background: #FFF3EB;
+}
+.writing-icon {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--honey-soft);
+  font-size: 15px;
+}
+.writing-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.writing-card-title {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 17px;
+  overflow-wrap: anywhere;
+}
+.writing-card-desc {
+  color: var(--sub);
+  font-size: 11px;
+  line-height: 15px;
+  overflow-wrap: anywhere;
+}
+.writing-panel-enter-active,
+.writing-panel-leave-active {
+  transition: opacity .18s ease, transform .18s ease;
+}
+.writing-panel-enter-from,
+.writing-panel-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
 }
 .session-rename-input {
   width: 100%; padding: 2px 6px; font-size: 14px; font-weight: 500;

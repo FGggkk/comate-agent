@@ -298,12 +298,13 @@ input { font-family: inherit; }
 }
 
 /* ── Input ── */
-.inputbar { display: flex; gap: 8px; align-items: center; padding: 4px 12px 6px; flex-shrink: 0; }
-.inputbar input {
-  flex: 1; padding: 8px 14px; border-radius: 20px; border: 1.5px solid var(--line);
-  font-size: 14px; outline: none; background: rgba(255,255,255,.85); color: var(--ink);
+.inputbar { display: flex; gap: 8px; align-items: flex-end; padding: 4px 12px 6px; flex-shrink: 0; }
+.inputbar textarea {
+  flex: 1; min-height: 36px; max-height: 120px; padding: 8px 14px; border-radius: 20px; border: 1.5px solid var(--line);
+  font-size: 14px; line-height: 20px; outline: none; background: rgba(255,255,255,.85); color: var(--ink);
+  resize: none; overflow-y: auto; font-family: inherit;
 }
-.inputbar input::placeholder { color: var(--hint); }
+.inputbar textarea::placeholder { color: var(--hint); }
 .send-btn {
   width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
   background: linear-gradient(135deg, #FFB78A, #FF8F6E);
