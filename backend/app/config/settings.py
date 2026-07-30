@@ -46,6 +46,15 @@ class Settings(BaseSettings):
     jwt_expire_hours: int = 72
     jwt_refresh_expire_days: int = 7
 
+    # Search - Firecrawl
+    firecrawl_api_key: str = ""
+    firecrawl_base_url: str = "https://api.firecrawl.dev"
+    search_max_results: int = 5
+
+    # Weather - 和风天气
+    heweather_api_key: str = ""
+    heweather_base_url: str = "https://devapi.qweather.com"
+
     model_config: ClassVar[dict] = {
         "env_file": "../config/.env",
         "env_file_encoding": "utf-8",
@@ -100,6 +109,13 @@ class Settings(BaseSettings):
             jwt_secret=os.path.expandvars(raw.get("jwt", {}).get("secret", cls().jwt_secret)),
             jwt_algorithm=raw.get("jwt", {}).get("algorithm", cls().jwt_algorithm),
             jwt_expire_hours=raw.get("jwt", {}).get("expire_hours", cls().jwt_expire_hours),
+            # Search
+            firecrawl_api_key=os.path.expandvars(raw.get("search", {}).get("api_key", "")),
+            firecrawl_base_url=os.path.expandvars(raw.get("search", {}).get("base_url", cls().firecrawl_base_url)),
+            search_max_results=raw.get("search", {}).get("max_results", cls().search_max_results),
+            # Weather
+            heweather_api_key=os.path.expandvars(raw.get("weather", {}).get("api_key", "")),
+            heweather_base_url=os.path.expandvars(raw.get("weather", {}).get("base_url", cls().heweather_base_url)),
         )
 
 

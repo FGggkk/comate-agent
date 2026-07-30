@@ -47,7 +47,43 @@ class ModelGateway:
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
+        async for chunk in self._stream_messages(messages):
+            yield chunk
 
+    async def chat_with_tools(
+        self, messages: list[dict], tools: list[dict] | None = None
+    ) -> dict:
+        """非流式调用，支持 tools。返回完整 response dict"""
+        body = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+            "stream": False,
+        }
+        if tools:
+            body["tools"] = tools
+            body["tool_choice"] = "auto"
+
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                f"{self.base_url}/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=body,
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def stream_messages(self, messages: list[dict]):
+        """从完整的 messages 数组流式生成"""
+        async for chunk in self._stream_messages(messages):
+            yield chunk
+
+    async def _stream_messages(self, messages: list[dict]):
+        """内部方法：流式生成"""
         async with httpx.AsyncClient(timeout=120) as client:
             async with client.stream(
                 "POST",
