@@ -21,6 +21,8 @@ class ChatState:
     memory_candidates: list[dict] = field(default_factory=list)
     pending_anchors: list[dict] = field(default_factory=list)
     intent: str = "daily"  # daily / interview / complex
+    search_results: list[dict] = field(default_factory=list)
+    weather_info: dict | None = None
     reply: str = ""
     actions: list[dict] = field(default_factory=list)
     error: str | None = None

@@ -1,3 +1,14 @@
+search:
+  provider: firecrawl
+  api_key: "${FIRECRAWL_API_KEY}"
+  base_url: "${FIRECRAWL_BASE_URL}"
+  max_results: 5
+
+weather:
+  provider: heweather
+  api_key: "${HEWEATHER_API_KEY}"
+  base_url: "${HEWEATHER_BASE_URL}"
+
 app:
   name: comate-agent
   debug: true

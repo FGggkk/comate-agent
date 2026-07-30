@@ -6,6 +6,7 @@ from app.graph.schemas import SSEEvent, done_event, error_event
 from app.graph.nodes.safety import safety_input_node
 from app.graph.nodes.soul_loader import load_soul_node
 from app.graph.nodes.memory import memory_node
+from app.graph.nodes.search_node import search_node
 from app.graph.nodes.router import router_node
 from app.graph.nodes.llm_call import llm_call_node
 from app.graph.nodes.postprocess import postprocess_node
@@ -36,6 +37,10 @@ async def run_engine(
 
         # Step 3: 读取记忆
         for event in await memory_node(state, db):
+            yield event
+
+        # Step 3.5: 搜索（检测是否需要联网搜索）
+        for event in await search_node(state):
             yield event
 
         # Step 4: 路由
