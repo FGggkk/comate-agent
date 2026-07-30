@@ -1,6 +1,7 @@
 from .user import User
 from .soul import SoulTemplate, UserSoul, UserSoulInventory
 from .memory import MemoryItem, ForbiddenTopic, PendingAnchor
+from .memory_document import MemoryDocument
 from .interview import InterviewSession, InterviewQuestion
 from .reminder import Reminder
 from .verification_code import VerificationCode
@@ -15,6 +16,7 @@ __all__ = [
     "UserSoul",
     "UserSoulInventory",
     "MemoryItem",
+    "MemoryDocument",
     "ForbiddenTopic",
     "PendingAnchor",
     "InterviewSession",

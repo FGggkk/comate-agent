@@ -179,6 +179,41 @@ ON tacit_profile_versions (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tacit_profile_versions_profile
 ON tacit_profile_versions (profile_id, version_no DESC);
 
+CREATE TABLE IF NOT EXISTS memory_documents (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id),
+    doc_type VARCHAR(16) NOT NULL,
+    content TEXT DEFAULT '',
+    version_no INTEGER DEFAULT 1,
+    char_limit INTEGER DEFAULT 0,
+    item_limit INTEGER DEFAULT 0,
+    source_hash VARCHAR(64) DEFAULT '',
+    file_path VARCHAR(1024) DEFAULT '',
+    file_hash VARCHAR(64) DEFAULT '',
+    status VARCHAR(16) DEFAULT 'active',
+    sync_status VARCHAR(16) DEFAULT 'synced',
+    edited_by VARCHAR(16) DEFAULT 'app',
+    metadata JSONB DEFAULT '{}',
+    generated_at TIMESTAMPTZ DEFAULT now(),
+    last_imported_at TIMESTAMPTZ,
+    last_exported_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ,
+    next_review_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_documents_user_type_status
+ON memory_documents (user_id, doc_type, status);
+CREATE INDEX IF NOT EXISTS idx_memory_documents_sync
+ON memory_documents (user_id, doc_type, sync_status);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_memory_documents_active
+ON memory_documents (user_id, doc_type)
+WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_memory_documents_review
+ON memory_documents (next_review_at)
+WHERE status = 'active' AND next_review_at IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS forbidden_topics (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID REFERENCES users(id),
