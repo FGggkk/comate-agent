@@ -32,7 +32,7 @@ def create_app() -> FastAPI:
     )
 
     # 注册路由
-    from app.api import auth, chat, souls, memories, interview, reminders, user, sessions, messages, finance, travel
+    from app.api import auth, chat, souls, memories, interview, reminders, user, sessions, messages, finance, travel, shopping
     app.include_router(auth.router)
     app.include_router(chat.router)
     app.include_router(souls.router)
@@ -44,6 +44,7 @@ def create_app() -> FastAPI:
     app.include_router(messages.router)
     app.include_router(finance.router)
     app.include_router(travel.router)
+    app.include_router(shopping.router)
 
     @app.get("/api/health")
     async def health():
