@@ -56,6 +56,7 @@
     <InterviewPage v-else-if="activeTool === 'interview'" :embedded="true" @back="activeTool = ''" />
     <FinancePage v-else-if="activeTool === 'finance'" @back="activeTool = ''" />
     <TravelPage v-else-if="activeTool === 'travel'" @back="activeTool = ''" />
+    <ShoppingPage v-else-if="activeTool === 'shopping'" @back="activeTool = ''" />
     <div v-else class="placeholder-page">
       <div class="back-bar">
         <button @click="activeTool = ''" class="back-btn">
@@ -79,6 +80,7 @@ import { ref, computed, onMounted } from 'vue'
 import InterviewPage from './InterviewPage.vue'
 import FinancePage from './FinancePage.vue'
 import TravelPage from './TravelPage.vue'
+import ShoppingPage from './ShoppingPage.vue'
 
 const activeTool = ref('')
 

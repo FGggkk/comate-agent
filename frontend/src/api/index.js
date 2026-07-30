@@ -172,6 +172,15 @@ export const apiUpdateTravelPlan = (id, data) => put(`/travel/plan/${id}`, data)
 export const apiDeleteTravelPlan = (id) => del(`/travel/plan/${id}`)
 export const apiRegenerateTravelDay = (id, dayNumber) => post(`/travel/plan/${id}/regenerate-day`, { day_number: dayNumber })
 
+// Shopping
+export const apiGenerateShoppingPlan = (demand) => post('/shopping/generate', { demand })
+export const apiGetShoppingProgress = (taskId) => `/api/shopping/progress/${taskId}`
+export const apiSaveShoppingPlan = (taskId) => post('/shopping/save', { task_id: taskId })
+export const apiGetShoppingHistory = () => get('/shopping/history')
+export const apiGetShoppingPlan = (id) => get(`/shopping/plan/${id}`)
+export const apiDeleteShoppingPlan = (id) => del(`/shopping/plan/${id}`)
+export const apiFavoriteShoppingPlan = (id) => post(`/shopping/plan/${id}/favorite`, {})
+
 // User Profile
 export const apiGetProfile = () => get('/user/me')
 export const apiUpdateProfile = (data) => put('/user/me', data)

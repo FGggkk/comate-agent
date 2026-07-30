@@ -90,6 +90,10 @@ MIGRATION_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_travel_plans_user ON travel_plans(user_id)",
     "CREATE TABLE IF NOT EXISTS travel_days (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), plan_id UUID NOT NULL REFERENCES travel_plans(id) ON DELETE CASCADE, day_number INTEGER NOT NULL, date DATE NOT NULL, segments JSONB DEFAULT '[]', total_cost INTEGER DEFAULT 0)",
     "CREATE INDEX IF NOT EXISTS idx_travel_days_plan ON travel_days(plan_id)",
+    # 购物计划
+    "CREATE TABLE IF NOT EXISTS shopping_plans (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id), demand TEXT NOT NULL, plans JSONB NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW())",
+    "CREATE INDEX IF NOT EXISTS idx_shopping_plans_user ON shopping_plans(user_id)",
+    "ALTER TABLE shopping_plans ADD COLUMN IF NOT EXISTS favorited VARCHAR(16) DEFAULT 'false'",
 ]
 
 LOCK_ID = 20240724  # 迁移锁 ID（唯一整数）

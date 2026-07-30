@@ -23,16 +23,20 @@ class SearchTool(BaseTool):
         if not query:
             return "搜索失败：未提供搜索关键词"
 
-        results = await search_web(query, max_results=5)
+        results = await search_web(query, max_results=8)
         if not results:
             return f"未搜索到关于「{query}」的结果"
 
+        # 优先展示商品详情页链接
+        product_domains = ["item.jd.com", "detail.tmall.com", "detail.1688.com", "product.dangdang.com", "item.taobao.com"]
+        product_results = [r for r in results if any(d in (r.get("url","") or "") for d in product_domains)]
+        other_results = [r for r in results if r not in product_results]
+        sorted_results = product_results + other_results
+
         lines = [f"关于「{query}」的搜索结果："]
-        for i, r in enumerate(results, 1):
+        for i, r in enumerate(sorted_results[:5], 1):
             lines.append(f"\n{i}. {r['title']}")
             if r.get("description"):
                 lines.append(f"   {r['description']}")
-            if r.get("content"):
-                lines.append(f"   {r['content'][:300]}")
-            lines.append(f"   来源: {r['url']}")
+            lines.append(f"   链接: {r['url']}")
         return "\n".join(lines)
