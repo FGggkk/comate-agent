@@ -182,6 +182,7 @@ async def update_tacit_profile(user_id: str, db: AsyncSession) -> dict | None:
     profile.status = "active"
     await db.commit()
     await db.refresh(profile)
+    await _safe_rebuild_tacit_docs(user_id, db, version)
     return profile_to_snapshot(profile)
 
 
@@ -346,6 +347,16 @@ async def _get_active_profile(user_id: str, db: AsyncSession) -> TacitProfile | 
         select(TacitProfile).where(TacitProfile.user_id == user_id, TacitProfile.status == "active")
     )
     return result.scalar_one_or_none()
+
+
+async def _safe_rebuild_tacit_docs(user_id: str, db: AsyncSession, version: TacitProfileVersion | None = None) -> None:
+    try:
+        from app.services.memory_document_service import rebuild_delta_doc, rebuild_user_doc
+        await rebuild_user_doc(user_id, db)
+        await rebuild_delta_doc(user_id, db, version=version)
+    except Exception as e:
+        await db.rollback()
+        print(f"[memory_doc] USER.md/DELTA.md 重建失败: {e}")
 
 
 async def _summarize_messages(messages: list[Message]) -> dict:

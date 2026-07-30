@@ -214,6 +214,43 @@
         <EmptyState v-else-if="filteredForbiddenTopics.length === 0" text="没有匹配的禁区话题" />
       </section>
 
+      <section v-else-if="activeSection === 'documents'" class="detail-card document-detail">
+        <div class="document-tabs">
+          <button
+            v-for="doc in documentTabs"
+            :key="doc.type"
+            :class="{ active: activeDocumentType === doc.type }"
+            @click="selectDocument(doc.type)"
+          >
+            {{ doc.file }}
+          </button>
+        </div>
+
+        <div class="document-toolbar">
+          <button class="action-neutral" :disabled="documentBusy" @click="rebuildCurrentDocument">重建</button>
+          <button class="action-neutral" :disabled="documentBusy" @click="exportCurrentDocument">导出文件</button>
+          <button class="action-neutral" :disabled="documentBusy" @click="importCurrentDocument">从文件导入</button>
+          <button class="action-confirm" :disabled="documentBusy" @click="saveCurrentDocument">保存并同步</button>
+        </div>
+
+        <div v-if="documentNotice" class="inline-notice">{{ documentNotice }}</div>
+        <div v-if="documentError" class="inline-error">{{ documentError }}</div>
+
+        <div class="document-meta">
+          <span>{{ documentStatusLabel(selectedDocument?.sync_status, selectedDocument?.file_status?.state) }}</span>
+          <span>v{{ selectedDocument?.version_no || 0 }}</span>
+          <span>{{ documentContent.length }}/{{ selectedDocument?.char_limit || 0 }}</span>
+        </div>
+        <div class="document-path">{{ selectedDocumentPath }}</div>
+
+        <textarea
+          v-model="documentContent"
+          class="document-editor"
+          spellcheck="false"
+          :placeholder="documentBusy ? '加载中...' : '暂无文档内容'"
+        />
+      </section>
+
     </div>
   </div>
 </template>
@@ -221,7 +258,20 @@
 <script setup>
 import { computed, defineComponent, h, ref, onMounted, watch } from 'vue'
 import { useMemoryStore } from '../stores/memory'
-import { apiGetMemories, apiCreateMemory, apiUpdateMemory, apiDeleteMemory, apiAddForbidden, apiRemoveForbidden } from '../api/index'
+import {
+  apiGetMemories,
+  apiCreateMemory,
+  apiUpdateMemory,
+  apiDeleteMemory,
+  apiAddForbidden,
+  apiRemoveForbidden,
+  apiGetMemoryDocuments,
+  apiGetMemoryDocument,
+  apiRebuildMemoryDocuments,
+  apiUpdateMemoryDocument,
+  apiExportMemoryDocument,
+  apiImportMemoryDocument,
+} from '../api/index'
 import SoulOrb from '../components/SoulOrb.vue'
 
 const props = defineProps({
@@ -244,6 +294,11 @@ const saving = ref(false)
 const notice = ref('')
 const errorMessage = ref('')
 const showTacitEvidence = ref(false)
+const activeDocumentType = ref('USER')
+const documentContent = ref('')
+const documentBusy = ref(false)
+const documentNotice = ref('')
+const documentError = ref('')
 
 const MemoryRow = defineComponent({
   props: {
@@ -271,6 +326,7 @@ const icons = {
   co_created: '<svg viewBox="0 0 32 32" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 17l-3 3a5 5 0 0 0 7 7l3-3"/><path d="M21 15l3-3a5 5 0 0 0-7-7l-3 3"/><path d="M13 19l6-6"/></svg>',
   tacit: '<svg viewBox="0 0 32 32" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 22c-3-2-5-5-5-9a9 9 0 0 1 18 0c0 4-2 7-5 9"/><path d="M12 25h8M13 29h6"/><path d="M13 13c1.8-2 4.2-2 6 0"/></svg>',
   forbidden: '<svg viewBox="0 0 32 32" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="16" cy="16" r="11"/><path d="M8 24L24 8"/></svg>',
+  documents: '<svg viewBox="0 0 32 32" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 4h10l5 5v19H9z"/><path d="M19 4v6h5"/><path d="M13 15h7M13 20h7M13 25h4"/></svg>',
 }
 
 const memoryEntries = computed(() => [
@@ -278,9 +334,25 @@ const memoryEntries = computed(() => [
   { id: 'co_created', label: '共建层', desc: '你确认留下的事实', count: countLayer('co_created'), unit: '条', icon: icons.co_created },
   { id: 'tacit', label: '默契层', desc: '跨会话形成的人物画像', count: countLayer('tacit'), unit: '份', icon: icons.tacit },
   { id: 'forbidden', label: '禁区话题', desc: '不主动触碰的边界', count: memoryStore.forbiddenTopics.length, unit: '条', icon: icons.forbidden },
+  { id: 'documents', label: '记忆文档', desc: 'USER.md 与 MEMORY.md', count: countDocuments(), unit: '份', icon: icons.documents },
 ])
 
 const currentEntry = computed(() => memoryEntries.value.find(item => item.id === activeSection.value))
+
+const documentTabs = [
+  { type: 'USER', file: 'USER.md' },
+  { type: 'MEMORY', file: 'MEMORY.md' },
+  { type: 'BOUNDARY', file: 'BOUNDARY.md' },
+  { type: 'DELTA', file: 'DELTA.md' },
+]
+
+const selectedDocument = computed(() => {
+  return (memoryStore.documents || []).find(item => item.doc_type === activeDocumentType.value) || null
+})
+
+const selectedDocumentPath = computed(() => {
+  return selectedDocument.value?.file_status?.path || selectedDocument.value?.file_path || `${activeDocumentType.value}.md`
+})
 
 const coCreatedFilters = [
   { id: 'all', label: '全部' },
@@ -369,11 +441,19 @@ function openSection(id) {
   clearFeedback()
   cancelMemoryEdit()
   if (id === 'tacit') showTacitEvidence.value = true
+  if (id === 'documents') {
+    clearDocumentFeedback()
+    loadActiveDocument()
+  }
 }
 
 function countLayer(layer) {
   const base = (memoryStore.layers[layer] || []).length
   return layer === 'tacit' && hasTacitProfile() ? base + 1 : base
+}
+
+function countDocuments() {
+  return (memoryStore.documents || []).filter(item => item.id).length
 }
 
 function hasTacitProfile() {
@@ -461,6 +541,11 @@ function clearFeedback() {
   errorMessage.value = ''
 }
 
+function clearDocumentFeedback() {
+  documentNotice.value = ''
+  documentError.value = ''
+}
+
 async function runAction(action, successText) {
   if (saving.value) return
   saving.value = true
@@ -480,12 +565,21 @@ async function refreshMemories() {
   if (loading.value) return
   loading.value = true
   try {
-    const data = await apiGetMemories()
+    const [data, documents] = await Promise.all([
+      apiGetMemories(),
+      apiGetMemoryDocuments(),
+    ])
     memoryStore.load(data)
+    memoryStore.loadDocuments(documents)
     loaded.value = true
   } finally {
     loading.value = false
   }
+}
+
+async function refreshDocuments() {
+  const documents = await apiGetMemoryDocuments()
+  memoryStore.loadDocuments(documents)
 }
 
 onMounted(async () => {
@@ -551,6 +645,93 @@ async function saveMemoryEdit(id) {
     await apiUpdateMemory(id, { summary })
     cancelMemoryEdit()
   }, '已保存记忆')
+}
+
+async function loadActiveDocument() {
+  if (documentBusy.value) return
+  documentBusy.value = true
+  clearDocumentFeedback()
+  try {
+    const document = await apiGetMemoryDocument(activeDocumentType.value)
+    documentContent.value = document?.content || ''
+    await refreshDocuments()
+  } catch (error) {
+    documentError.value = error?.message || '文档加载失败'
+  } finally {
+    documentBusy.value = false
+  }
+}
+
+async function selectDocument(type) {
+  if (activeDocumentType.value === type) return
+  activeDocumentType.value = type
+  await loadActiveDocument()
+}
+
+async function runDocumentAction(action, successText) {
+  if (documentBusy.value) return
+  documentBusy.value = true
+  clearDocumentFeedback()
+  try {
+    const result = await action()
+    if (result?.success === false) {
+      throw new Error(result.message || '文档操作失败')
+    }
+    if (result?.detail) {
+      throw new Error(result.detail)
+    }
+    documentNotice.value = successText
+    const document = await apiGetMemoryDocument(activeDocumentType.value)
+    documentContent.value = document?.content || ''
+    await refreshDocuments()
+  } catch (error) {
+    documentError.value = error?.message || '文档操作失败'
+  } finally {
+    documentBusy.value = false
+  }
+}
+
+async function rebuildCurrentDocument() {
+  await runDocumentAction(
+    () => apiRebuildMemoryDocuments(activeDocumentType.value, false),
+    '已重建文档',
+  )
+}
+
+async function exportCurrentDocument() {
+  await runDocumentAction(
+    () => apiExportMemoryDocument(activeDocumentType.value),
+    '已导出文件',
+  )
+}
+
+async function importCurrentDocument() {
+  await runDocumentAction(
+    () => apiImportMemoryDocument(activeDocumentType.value),
+    '已导入文件',
+  )
+}
+
+async function saveCurrentDocument() {
+  await runDocumentAction(
+    () => apiUpdateMemoryDocument(activeDocumentType.value, documentContent.value, true),
+    '已保存文档',
+  )
+}
+
+function documentStatusLabel(syncStatus, fileState) {
+  if (fileState === 'file_changed') return '文件有更新'
+  if (fileState === 'missing_file') return '未导出'
+  if (fileState === 'missing_document') return '待生成'
+  if (fileState === 'unreadable_file') return '文件不可读'
+  const map = {
+    synced: '已同步',
+    stale: '待刷新',
+    conflict: '有冲突',
+    import_pending: '待导入',
+    export_pending: '待导出',
+  }
+  return map[syncStatus] || '未同步'
 }
 
 </script>
@@ -661,6 +842,12 @@ async function saveMemoryEdit(id) {
   background: #FFF3F3;
   border-color: #F5C8C8;
   color: #E88D8D;
+}
+
+.entry-documents {
+  background: #F1FBF6;
+  border-color: #BFE8D0;
+  color: #55AD72;
 }
 
 .entry-icon {
@@ -1160,6 +1347,94 @@ async function saveMemoryEdit(id) {
 .inline-form .form-input {
   flex: 1;
   min-width: 0;
+}
+
+.document-detail {
+  max-height: calc(100vh - 176px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.document-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--cream-2);
+}
+
+.document-tabs button {
+  min-height: 34px;
+  padding: 7px 5px;
+  border-radius: 9px;
+  color: var(--sub);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.document-tabs button.active {
+  background: var(--card);
+  color: var(--sprout);
+  box-shadow: var(--shadow-sm);
+}
+
+.document-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.document-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.document-meta span {
+  padding: 3px 7px;
+  border-radius: 8px;
+  background: var(--cream-2);
+  color: var(--ink-soft);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.document-path {
+  padding: 7px 9px;
+  border-radius: 9px;
+  background: rgba(255,255,255,.7);
+  color: var(--sub);
+  font-size: 11px;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+.document-editor {
+  flex: 1;
+  min-height: 320px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255,255,255,.92);
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  resize: none;
+  outline: none;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(112,166,125,.42) rgba(255,255,255,.5);
+}
+
+.document-editor:focus {
+  border-color: var(--sprout);
+  box-shadow: 0 0 0 3px rgba(91,179,112,.14);
 }
 
 .search-input {

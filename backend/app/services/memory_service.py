@@ -365,6 +365,7 @@ async def create_co_created(
             await update_tacit_profile(user_id, db)
         except Exception as e:
             print(f"[memory] 更新默契画像失败: {e}")
+    await _safe_rebuild_memory_doc(user_id, db)
     data = _item_to_dict(item)
     data["superseded_count"] = superseded_count
     return {"success": True, "data": data, "message": "ok"}
@@ -638,6 +639,8 @@ async def update_item(user_id: str, item_id: str, data: dict, db: AsyncSession =
     for key, value in data.items():
         setattr(item, key, value)
     await db.commit()
+    if item.layer == "co_created":
+        await _safe_rebuild_memory_doc(user_id, db)
     return {"success": True}
 
 
@@ -657,6 +660,8 @@ async def delete_item(user_id: str, item_id: str, db: AsyncSession = None) -> di
 
     item.status = "deleted"
     await db.commit()
+    if item.layer == "co_created":
+        await _safe_rebuild_memory_doc(user_id, db)
     return {"success": True}
 
 
@@ -715,6 +720,7 @@ async def add_forbidden(user_id: str, topic: str, phrase: str = "", db: AsyncSes
     db.add(ft)
     await db.commit()
     await db.refresh(ft)
+    await _safe_rebuild_boundary_doc(user_id, db)
     return {"success": True, "id": str(ft.id), "created": True}
 
 
@@ -728,6 +734,7 @@ async def remove_forbidden(user_id: str, topic_id: str, db: AsyncSession = None)
     await db.commit()
     if result.rowcount == 0:
         return {"success": False, "message": "禁区话题不存在或无权操作"}
+    await _safe_rebuild_boundary_doc(user_id, db)
     return {"success": True}
 
 
@@ -768,6 +775,7 @@ async def remove_forbidden_by_terms(user_id: str, terms: set[str], db: AsyncSess
         )
     )
     await db.commit()
+    await _safe_rebuild_boundary_doc(user_id, db)
     return [item.topic_summary for item in targets]
 
 
@@ -806,6 +814,24 @@ def filter_forbidden_lines(text: str, forbidden_topics: list[ForbiddenTopic | di
         return text or ""
     kept = [line for line in text.splitlines() if not is_forbidden_text(line, forbidden_topics)]
     return "\n".join(line for line in kept if line.strip()).strip()
+
+
+async def _safe_rebuild_memory_doc(user_id: str, db: AsyncSession) -> None:
+    try:
+        from app.services.memory_document_service import rebuild_memory_doc
+        await rebuild_memory_doc(user_id, db)
+    except Exception as e:
+        await db.rollback()
+        print(f"[memory_doc] MEMORY.md 重建失败: {e}")
+
+
+async def _safe_rebuild_boundary_doc(user_id: str, db: AsyncSession) -> None:
+    try:
+        from app.services.memory_document_service import rebuild_boundary_doc
+        await rebuild_boundary_doc(user_id, db)
+    except Exception as e:
+        await db.rollback()
+        print(f"[memory_doc] BOUNDARY.md 重建失败: {e}")
 
 
 async def get_anchors(user_id: str, db: AsyncSession = None) -> list[PendingAnchor]:
