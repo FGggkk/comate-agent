@@ -1,6 +1,7 @@
 from app.graph.state import ChatState
 from app.graph.schemas import action_buttons_event
 from app.services.memory_service import is_forbidden_text
+from app.services.reminder_service import parse_reminder_request
 
 
 async def actions_node(state: ChatState):
@@ -15,6 +16,21 @@ async def actions_node(state: ChatState):
     ):
         state.actions = []
         return []
+
+    reminder_candidate = parse_reminder_request(state.message)
+    if reminder_candidate:
+        prompt = "识别到你想设定提醒，请确认内容和时间。"
+        buttons = [
+            {"label": "确认提醒", "action": "set_reminder", "reminder": reminder_candidate},
+        ]
+        state.actions = buttons
+        return [
+            action_buttons_event(
+                buttons,
+                prompt=prompt,
+                candidate_summary=reminder_candidate.get("label"),
+            )
+        ]
 
     if state.memory_candidates:
         state.memory_candidates = [

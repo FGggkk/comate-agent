@@ -1,8 +1,11 @@
 <template>
   <div class="flex items-center gap-2 px-3 py-2 inputbar">
-    <input
+    <textarea
+      ref="inputRef"
       v-model="text"
-      @keydown.enter="send"
+      rows="1"
+      @input="resizeInput"
+      @keydown.enter.exact.prevent="send"
       placeholder="说点什么…"
       :disabled="disabled"
     />
@@ -13,15 +16,44 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 
 const props = defineProps({ disabled: Boolean })
 const emit = defineEmits(['send'])
 const text = ref('')
+const inputRef = ref(null)
 
 function send() {
   if (!text.value.trim() || props.disabled) return
   emit('send', text.value)
   text.value = ''
+  nextTick(resizeInput)
 }
+
+function focus() {
+  nextTick(() => inputRef.value?.focus())
+}
+
+function resizeInput() {
+  const el = inputRef.value
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = `${Math.min(el.scrollHeight, 120)}px`
+}
+
+function applyDraft(draft, options = {}) {
+  if (props.disabled) return
+  const prompt = draft || ''
+  if (!text.value.trim() || options.mode === 'replace') {
+    text.value = prompt
+  } else if (!text.value.startsWith(prompt)) {
+    text.value = `${prompt}\n\n${text.value}`
+  }
+  nextTick(() => {
+    resizeInput()
+    inputRef.value?.focus()
+  })
+}
+
+defineExpose({ focus, applyDraft })
 </script>

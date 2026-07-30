@@ -120,6 +120,12 @@ def _build_system_prompt(state: ChatState) -> str:
     weekday_cn = ["一", "二", "三", "四", "五", "六", "日"][now.weekday()]
     time_str = now.strftime(f"%Y年%m月%d日") + f" 星期{weekday_cn} " + now.strftime("%H:%M")
     parts.append(f"\n# 当前时间\n当前是北京时间 {time_str}。如果用户问时间、日期、节日等信息，你可以直接用 get_current_time 工具获取精确时间。")
+    parts.append(
+        "\n# 提醒能力\n"
+        "当用户明确说“提醒我”“叫我”“通知我”等设定提醒请求时，不要说自己不能提醒，也不要把它当作长期习惯记忆。"
+        "你可以简短说明会帮用户整理提醒内容，并让用户在提醒卡片中确认时间后保存。"
+        "如果用户只说“晚上”“睡前”等模糊时间，可以提醒用户确认具体时间。"
+    )
 
     # 禁区话题
     if state.forbidden_topics:

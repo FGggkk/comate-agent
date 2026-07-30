@@ -145,7 +145,73 @@
 
       <!-- 底部 -->
       <QuickBar :items="quickItems" @action="handleQuickAction" />
-      <InputBar v-if="editingMsgIndex < 0" :disabled="chatStore.isStreaming" @send="handleSend" />
+      <Transition name="writing-panel">
+        <section v-if="showWritingPanel && editingMsgIndex < 0" class="writing-panel" aria-label="帮我写作">
+          <div class="writing-panel-head">
+            <div class="writing-panel-title">
+              <span>✍️</span>
+              <strong>帮我写作</strong>
+            </div>
+            <button class="writing-close-btn" @click="showWritingPanel = false" aria-label="收起写作面板">×</button>
+          </div>
+          <div class="writing-grid">
+            <button
+              v-for="item in writingScenarios"
+              :key="item.id"
+              :class="['writing-card', activeWritingScenario === item.id ? 'active' : '']"
+              @click="applyWritingScenario(item)"
+            >
+              <span class="writing-icon">{{ item.icon }}</span>
+              <span class="writing-copy">
+                <span class="writing-card-title">{{ item.title }}</span>
+                <span class="writing-card-desc">{{ item.desc }}</span>
+              </span>
+            </button>
+          </div>
+        </section>
+      </Transition>
+      <Transition name="writing-panel">
+        <section v-if="showReminderPanel && editingMsgIndex < 0" class="reminder-panel" aria-label="设定提醒">
+          <div class="reminder-panel-head">
+            <div class="reminder-panel-title">
+              <span>📌</span>
+              <strong>设定提醒</strong>
+            </div>
+            <button class="writing-close-btn" @click="showReminderPanel = false" aria-label="收起提醒面板">×</button>
+          </div>
+          <div class="reminder-form">
+            <input
+              v-model="reminderDraft.content"
+              class="reminder-input"
+              placeholder="提醒我做什么..."
+              :disabled="reminderSaving"
+            />
+            <input
+              v-model="reminderDraft.time"
+              class="reminder-input time"
+              type="datetime-local"
+              :disabled="reminderSaving"
+            />
+          </div>
+          <div class="reminder-shortcuts">
+            <button v-for="item in reminderShortcuts" :key="item.id" @click="applyReminderShortcut(item)">
+              {{ item.label }}
+            </button>
+          </div>
+          <div class="reminder-actions">
+            <span :class="['reminder-msg', reminderMsgType]">{{ reminderMsg }}</span>
+            <button class="reminder-save-btn" :disabled="reminderSaving" @click="createReminderFromCard">
+              {{ reminderSaving ? '保存中...' : '保存提醒' }}
+            </button>
+          </div>
+        </section>
+      </Transition>
+      <InputBar
+        v-if="editingMsgIndex < 0"
+        ref="inputBarRef"
+        :disabled="chatStore.isStreaming"
+        @send="handleSend"
+      />
     </div>
   </div>
 </template>
@@ -154,7 +220,7 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useUserStore } from '../stores/user'
-import { apiGetTemplates, apiPreview, apiConfirmSoul, apiSendMessage, apiListSessions, apiCreateSession, apiDeleteSession, apiGetMessages, apiEditMessage, apiDeleteMessage, apiUpdateSession, apiGetSoulInventory, apiCreateMemory, apiCreateMemoryReminder } from '../api/index'
+import { apiGetTemplates, apiPreview, apiConfirmSoul, apiSendMessage, apiListSessions, apiCreateSession, apiDeleteSession, apiGetMessages, apiEditMessage, apiDeleteMessage, apiUpdateSession, apiGetSoulInventory, apiCreateMemory, apiCreateMemoryReminder, apiCreateReminder } from '../api/index'
 import MessageBubble from '../components/MessageBubble.vue'
 import MemoryCard from '../components/MemoryCard.vue'
 import ActionButtons from '../components/ActionButtons.vue'
@@ -176,14 +242,90 @@ const templates = ref([])
 const selectedTemplate = ref(null)
 const previewMessages = ref([])
 const heroSquished = ref(false)
+const inputBarRef = ref(null)
+const showWritingPanel = ref(false)
+const activeWritingScenario = ref('')
+const showReminderPanel = ref(false)
+const reminderSaving = ref(false)
+const reminderMsg = ref('')
+const reminderMsgType = ref('')
+const reminderDraft = ref({
+  content: '',
+  time: '',
+})
 const activeSoul = computed(() => props.currentSoul || null)
 const quickItems = [
-  { label: '🔍 帮我分析', action: 'analyze' },
+  { label: '✍️ 帮我写作', action: 'writing' },
   { label: '📌 设定提醒', action: 'remind' },
-  { label: '🎯 模拟面试', action: 'interview' },
+  { label: '🎯 模拟面试', action: 'workbench:interview' },
+  { label: '🧳 旅游规划', action: 'workbench:travel' },
+  { label: '💰 记账', action: 'workbench:finance' },
+]
+const writingScenarios = [
+  {
+    id: 'create',
+    icon: '🪄',
+    title: '创作',
+    desc: '从零起草',
+    draft: '帮我创作一段内容。\n主题：\n用途：\n希望风格：自然、有画面感\n补充信息：',
+  },
+  {
+    id: 'polish',
+    icon: '✨',
+    title: '润色',
+    desc: '改顺改清楚',
+    draft: '帮我润色下面这段话，要求更清楚、自然、有礼貌：\n\n',
+  },
+  {
+    id: 'email',
+    icon: '📧',
+    title: '发邮件',
+    desc: '正式不生硬',
+    draft: '帮我写一封邮件。\n收件人：\n主题：\n背景：\n希望语气：正式、清楚、自然\n我想表达：',
+  },
+  {
+    id: 'leader',
+    icon: '💬',
+    title: '与领导交流',
+    desc: '稳妥表达诉求',
+    draft: '帮我组织一段发给领导的话。\n背景：\n我的诉求：\n需要注意的分寸：\n语气：稳妥、清楚、不卑不亢',
+  },
+  {
+    id: 'social',
+    icon: '📮',
+    title: '朋友圈/小红书',
+    desc: '日常分享文案',
+    draft: '帮我写一段朋友圈/小红书文案。\n主题：\n想表达的感受：\n希望风格：轻松、真诚、不夸张\n素材：',
+  },
+  {
+    id: 'mentor',
+    icon: '🎓',
+    title: '给导师汇报',
+    desc: '进展问题计划',
+    draft: '帮我写一段给导师的汇报。\n最近进展：\n遇到的问题：\n下一步计划：\n希望语气：简洁、尊重、有条理',
+  },
+  {
+    id: 'summary',
+    icon: '🧾',
+    title: '工作总结',
+    desc: '提炼成果',
+    draft: '帮我写一份工作总结。\n时间范围：\n主要工作：\n成果数据：\n遇到的问题：\n下一步计划：',
+  },
+  {
+    id: 'reply',
+    icon: '↩️',
+    title: '消息回复',
+    desc: '得体回应',
+    draft: '帮我回复这条消息。\n对方原话：\n我的态度：\n希望语气：自然、得体、不过度热情\n需要表达：',
+  },
+]
+const reminderShortcuts = [
+  { id: 'half-hour', label: '30 分钟后', offsetMinutes: 30 },
+  { id: 'tonight', label: '今晚 8 点', hour: 20, minute: 0, dayOffset: 0 },
+  { id: 'tomorrow', label: '明早 9 点', hour: 9, minute: 0, dayOffset: 1 },
 ]
 
-const emit = defineEmits(['tab-change'])
+const emit = defineEmits(['tab-change', 'reminder-created', 'open-workbench-tool'])
 
 function squishHero() {
   heroSquished.value = true
@@ -288,6 +430,43 @@ function formatTimeSep(ts) {
   return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
 }
 
+function formatReminderTime(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  const now = new Date()
+  const tomorrow = new Date(now)
+  tomorrow.setDate(now.getDate() + 1)
+  const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+  const time = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
+  if (sameDay(d, now)) return `今天 ${time}`
+  if (sameDay(d, tomorrow)) return `明天 ${time}`
+  return `${d.getMonth() + 1}月${d.getDate()}日 ${time}`
+}
+
+function toDatetimeLocal(date) {
+  const d = new Date(date)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function nextReminderDefault() {
+  const date = new Date(Date.now() + 60 * 60 * 1000)
+  date.setMinutes(Math.ceil(date.getMinutes() / 5) * 5, 0, 0)
+  return toDatetimeLocal(date)
+}
+
+function reminderTimeFromShortcut(item) {
+  const date = new Date()
+  if (item.offsetMinutes) {
+    date.setMinutes(date.getMinutes() + item.offsetMinutes, 0, 0)
+    return toDatetimeLocal(date)
+  }
+  date.setDate(date.getDate() + (item.dayOffset || 0))
+  date.setHours(item.hour, item.minute || 0, 0, 0)
+  if (date <= new Date()) date.setDate(date.getDate() + 1)
+  return toDatetimeLocal(date)
+}
+
 function shouldShowTimeSep(i) {
   if (i === 0) return false
   const prev = chatStore.messages[i - 1]
@@ -298,14 +477,130 @@ function shouldShowTimeSep(i) {
 
 // ── 对话 ──
 
+function toggleWritingPanel() {
+  showWritingPanel.value = !showWritingPanel.value
+  if (showWritingPanel.value) {
+    showReminderPanel.value = false
+    nextTick(() => inputBarRef.value?.focus())
+  }
+}
+
+function applyWritingScenario(item) {
+  if (!item?.draft) return
+  activeWritingScenario.value = item.id
+  nextTick(() => {
+    inputBarRef.value?.applyDraft(item.draft, { mode: 'replace' })
+  })
+}
+
+function applyReminderDraft(draft) {
+  if (!draft) return
+  if (draft.content) reminderDraft.value.content = draft.content
+  if (draft.remind_at) reminderDraft.value.time = toDatetimeLocal(new Date(draft.remind_at))
+  if (draft.estimated_time) {
+    reminderMsg.value = '时间已预填，可以按需要修改'
+    reminderMsgType.value = ''
+  }
+}
+
+function openReminderPanel(draft = null) {
+  showReminderPanel.value = true
+  showWritingPanel.value = false
+  reminderMsg.value = ''
+  reminderMsgType.value = ''
+  applyReminderDraft(draft)
+  if (!reminderDraft.value.time) reminderDraft.value.time = nextReminderDefault()
+}
+
+function toggleReminderPanel() {
+  if (showReminderPanel.value) {
+    showReminderPanel.value = false
+  } else {
+    openReminderPanel()
+  }
+}
+
+function applyReminderShortcut(item) {
+  reminderDraft.value.time = reminderTimeFromShortcut(item)
+}
+
+async function createReminderFromCard() {
+  const content = reminderDraft.value.content.trim()
+  const timeValue = reminderDraft.value.time
+  reminderMsg.value = ''
+  reminderMsgType.value = ''
+  if (!content) {
+    reminderMsg.value = '先写提醒内容'
+    reminderMsgType.value = 'error'
+    return
+  }
+  if (!timeValue) {
+    reminderMsg.value = '先选提醒时间'
+    reminderMsgType.value = 'error'
+    return
+  }
+  const remindAt = new Date(timeValue)
+  if (Number.isNaN(remindAt.getTime()) || remindAt <= new Date()) {
+    reminderMsg.value = '时间需要晚于现在'
+    reminderMsgType.value = 'error'
+    return
+  }
+  reminderSaving.value = true
+  try {
+    const res = await apiCreateReminder(content, remindAt.toISOString())
+    const failed = res?.success === false
+    if (failed) {
+      reminderMsg.value = res.message || '提醒创建失败'
+      reminderMsgType.value = 'error'
+      return
+    }
+    reminderMsg.value = res?.already_exists
+      ? `已经有这个提醒了，${formatReminderTime(res?.remind_at || remindAt.toISOString())}`
+      : `已保存，${formatReminderTime(res?.remind_at || remindAt.toISOString())}提醒你`
+    reminderMsgType.value = 'success'
+    reminderDraft.value.content = ''
+    reminderDraft.value.time = nextReminderDefault()
+    emit('reminder-created')
+    setTimeout(() => {
+      if (reminderMsgType.value === 'success') showReminderPanel.value = false
+    }, 900)
+  } catch {
+    reminderMsg.value = '提醒创建失败，请稍后再试'
+    reminderMsgType.value = 'error'
+  } finally {
+    reminderSaving.value = false
+  }
+}
+
 function handleQuickAction(action) {
-  if (action === 'analyze') handleSend('帮我分析一下')
-  else if (action === 'remind') emit('tab-change', 'settings')
-  else if (action === 'interview') emit('tab-change', 'interview')
+  const toolId = getWorkbenchToolId(action)
+  if (toolId) {
+    openWorkbenchTool(toolId)
+    return
+  }
+  if (action === 'writing') toggleWritingPanel()
+  else if (action === 'remind') toggleReminderPanel()
+  else if (action === 'interview') openWorkbenchTool('interview')
+}
+
+function getWorkbenchToolId(action) {
+  return typeof action === 'string' && action.startsWith('workbench:') ? action.slice('workbench:'.length) : ''
+}
+
+function openWorkbenchTool(toolId) {
+  if (!toolId) return
+  emit('open-workbench-tool', toolId)
 }
 
 async function handleAction(payload, actionMessage = null) {
   const action = typeof payload === 'string' ? payload : payload?.action
+  if (action === 'remind' || action === 'set_reminder') {
+    if (actionMessage?.processing || actionMessage?.handled) return
+    if (actionMessage) actionMessage.handled = true
+    openReminderPanel(payload?.reminder)
+    nextTick(() => scrollToBottom())
+    return
+  }
   if (action === 'confirm_memory_candidate') {
     if (actionMessage?.processing || actionMessage?.handled) return
     if (actionMessage) {
@@ -418,13 +713,18 @@ async function handleAction(payload, actionMessage = null) {
     nextTick(() => scrollToBottom())
     return
   }
-  if (action === 'interview' || action === 'start_interview') emit('tab-change', 'interview')
-  else if (action === 'remind' || action === 'set_reminder') emit('tab-change', 'settings')
+  if (action === 'interview' || action === 'start_interview') {
+    openWorkbenchTool('interview')
+    return
+  }
+  if (action === 'writing') toggleWritingPanel()
   else if (action === 'view_memory') emit('tab-change', 'memory')
-  else handleSend('帮我分析一下')
+  else handleSend('给我一些建议')
 }
 
 async function handleSend(text, options = {}) {
+  showWritingPanel.value = false
+  showReminderPanel.value = false
   // 确保有会话
   let sessionId = chatStore.currentSessionId
   if (!sessionId) {
@@ -691,6 +991,216 @@ async function confirmRename(session) {
 .edit-bar {
   padding: 6px 12px; border-top: 1px solid var(--line);
   background: var(--honey-soft); flex-shrink: 0;
+}
+.writing-panel {
+  flex-shrink: 0;
+  margin: 4px 12px 6px;
+  padding: 10px;
+  border: 1px solid rgba(226, 214, 195, .86);
+  border-radius: 14px;
+  background: rgba(255, 252, 247, .94);
+  box-shadow: 0 8px 24px rgba(104, 84, 55, .08);
+}
+.writing-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.writing-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink);
+  font-size: 14px;
+}
+.writing-panel-title strong {
+  font-weight: 700;
+}
+.writing-close-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: var(--sub);
+  font-size: 22px;
+  line-height: 1;
+}
+.writing-close-btn:active {
+  background: var(--cream-2);
+  color: var(--ink);
+}
+.writing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  max-height: 252px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.writing-card {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .86);
+  text-align: left;
+  box-shadow: var(--shadow-sm);
+}
+.writing-card.active {
+  border-color: #FF9F7A;
+  background: #FFF3EB;
+}
+.writing-icon {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--honey-soft);
+  font-size: 15px;
+}
+.writing-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.writing-card-title {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 17px;
+  overflow-wrap: anywhere;
+}
+.writing-card-desc {
+  color: var(--sub);
+  font-size: 11px;
+  line-height: 15px;
+  overflow-wrap: anywhere;
+}
+.writing-panel-enter-active,
+.writing-panel-leave-active {
+  transition: opacity .18s ease, transform .18s ease;
+}
+.writing-panel-enter-from,
+.writing-panel-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.reminder-panel {
+  flex-shrink: 0;
+  margin: 4px 12px 6px;
+  padding: 10px;
+  border: 1px solid rgba(226, 214, 195, .86);
+  border-radius: 14px;
+  background: rgba(255, 252, 247, .96);
+  box-shadow: 0 8px 24px rgba(104, 84, 55, .08);
+}
+.reminder-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.reminder-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink);
+  font-size: 14px;
+}
+.reminder-panel-title strong {
+  font-weight: 700;
+}
+.reminder-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+.reminder-input {
+  min-width: 0;
+  height: 36px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,.88);
+  color: var(--ink);
+  font-size: 13px;
+  outline: none;
+}
+.reminder-input.time {
+  width: 168px;
+}
+.reminder-shortcuts {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 8px 0 2px;
+}
+.reminder-shortcuts button {
+  flex-shrink: 0;
+  padding: 5px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,.82);
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+.reminder-shortcuts button:active {
+  background: var(--honey-soft);
+  border-color: var(--honey);
+}
+.reminder-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 32px;
+  margin-top: 6px;
+}
+.reminder-msg {
+  min-width: 0;
+  flex: 1;
+  color: var(--sub);
+  font-size: 12px;
+  line-height: 16px;
+}
+.reminder-msg.error {
+  color: var(--berry);
+}
+.reminder-msg.success {
+  color: var(--sprout);
+}
+.reminder-save-btn {
+  flex-shrink: 0;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #FFB78A, #FF8F6E);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 4px 10px rgba(255,130,80,.2);
+}
+.reminder-save-btn:disabled {
+  opacity: .62;
+}
+@media (max-width: 520px) {
+  .reminder-form {
+    grid-template-columns: 1fr;
+  }
+  .reminder-input.time {
+    width: 100%;
+  }
 }
 .session-rename-input {
   width: 100%; padding: 2px 6px; font-size: 14px; font-weight: 500;

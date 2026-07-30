@@ -24,6 +24,8 @@
           :class="['page', activeTab === 'chat' ? 'active' : '']"
           :current-soul="currentSoul"
           @tab-change="handleTabChange"
+          @reminder-created="handleReminderCreated"
+          @open-workbench-tool="handleOpenWorkbenchTool"
         />
         
         <MemoryPage
@@ -32,11 +34,15 @@
           :current-soul="currentSoul"
         />
         <InterviewPage :class="['page', activeTab === 'interview' ? 'active' : '']" />
-        <WorkbenchPage :class="['page', activeTab === 'workbench' ? 'active' : '']" />
+        <WorkbenchPage
+          :class="['page', activeTab === 'workbench' ? 'active' : '']"
+          :open-tool-request="workbenchToolRequest"
+        />
 
         <SettingsPage
           :class="['page', activeTab === 'settings' ? 'active' : '']"
           :refresh-key="personaRefreshKey"
+          :reminder-refresh-key="reminderRefreshKey"
           @open-persona="openPersona"
           @soul-changed="handleSoulChanged"
         />
@@ -71,6 +77,8 @@ const userStore = useUserStore()
 const activeTab = ref('chat')
 const lastMainTab = ref('chat')
 const personaRefreshKey = ref(0)
+const reminderRefreshKey = ref(0)
+const workbenchToolRequest = ref(null)
 const currentSoul = ref(null)
 const userEmail = computed(() => userStore.email || 'U')
 
@@ -115,6 +123,15 @@ async function loadSoulInventory() {
 async function handleSoulChanged() {
   personaRefreshKey.value++
   await loadSoulInventory()
+}
+
+function handleReminderCreated() {
+  reminderRefreshKey.value++
+}
+
+function handleOpenWorkbenchTool(toolId) {
+  workbenchToolRequest.value = { toolId, nonce: Date.now() }
+  handleTabChange('workbench')
 }
 
 function onOnboarded() {

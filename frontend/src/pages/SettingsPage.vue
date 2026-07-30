@@ -104,6 +104,7 @@ import {
 
 const props = defineProps({
   refreshKey: { type: Number, default: 0 },
+  reminderRefreshKey: { type: Number, default: 0 },
 })
 const emit = defineEmits(['open-persona', 'soul-changed'])
 
@@ -139,7 +140,7 @@ const ownedSouls = computed(() => (soulInventory.value.templates || []).filter((
 const currentSoul = computed(() => soulInventory.value.current || ownedSouls.value.find((item) => item.active) || null)
 
 onMounted(async () => {
-  reminders.value = (await apiGetReminders()).reminders || []
+  await loadReminders()
   // 加载用户信息
   try {
     const res = await apiGetProfile()
@@ -153,6 +154,11 @@ onMounted(async () => {
   await loadSoulInventory()
 })
 watch(() => props.refreshKey, loadSoulInventory)
+watch(() => props.reminderRefreshKey, loadReminders)
+
+async function loadReminders() {
+  reminders.value = (await apiGetReminders()).reminders || []
+}
 
 async function loadSoulInventory() {
   try {
@@ -207,12 +213,17 @@ async function saveProfile() {
 
 async function createReminder() {
   if (!reminderContent.value || !reminderTime.value) return
-  await apiCreateReminder(reminderContent.value, new Date(reminderTime.value).toISOString())
+  const res = await apiCreateReminder(reminderContent.value, new Date(reminderTime.value).toISOString())
+  if (res?.success === false) return
+  if (res?.already_exists) {
+    await loadReminders()
+    return
+  }
   reminderContent.value = ''; reminderTime.value = ''
-  reminders.value = (await apiGetReminders()).reminders || []
+  await loadReminders()
 }
 
-async function deleteReminder(id) { await apiDeleteReminder(id); reminders.value = (await apiGetReminders()).reminders || [] }
+async function deleteReminder(id) { await apiDeleteReminder(id); await loadReminders() }
 
 function triggerUpload() {
   if (!uploading.value) fileInput.value?.click()
