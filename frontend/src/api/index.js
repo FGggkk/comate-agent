@@ -97,10 +97,12 @@ export const apiDrawSoul = () => post('/souls/me/draw', {})
 export const apiInjectSoul = (template_id) => post('/souls/me/inject', { template_id })
 
 // Chat
-export function apiSendMessage(message, sessionId) {
+export function apiSendMessage(message, sessionId, options = {}) {
   const token = localStorage.getItem('comate_token')
   const body = { message }
   if (sessionId) body.session_id = sessionId
+  if (options.persistUserMessage === false) body.persist_user_message = false
+  if (options.sourceMessageId) body.source_message_id = options.sourceMessageId
   return fetch(`${BASE}/chat/send`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },

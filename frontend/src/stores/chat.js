@@ -17,6 +17,17 @@ export const useChatStore = defineStore('chat', () => {
     messages.value.push({ ...msg, timestamp: msg.timestamp || Date.now() })
   }
 
+  function attachMessageId(payload) {
+    if (!payload?.role || !payload?.id) return
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      const m = messages.value[i]
+      if (m.type === 'text' && m.role === payload.role && !m.id) {
+        m.id = payload.id
+        return
+      }
+    }
+  }
+
   function addThinkingMemory(memory) {
     const trace = [...messages.value].reverse().find(m => m.type === 'thinking_trace' && m.active)
     const item = {
@@ -110,7 +121,7 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     messages, isStreaming, streamBuffer, sessions, currentSessionId, showSessionList, currentSession,
-    addMessage, addThinkingMemory, setStreaming, appendToStream, setLastAgentSoul, finishStream, clearHistory,
+    addMessage, attachMessageId, addThinkingMemory, setStreaming, appendToStream, setLastAgentSoul, finishStream, clearHistory,
     setSessions, setCurrentSession, toggleSessionList, closeSessionList,
     replaceSessions, removeSession,
   }

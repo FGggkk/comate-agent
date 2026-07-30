@@ -424,7 +424,7 @@ async function handleAction(payload, actionMessage = null) {
   else handleSend('帮我分析一下')
 }
 
-async function handleSend(text) {
+async function handleSend(text, options = {}) {
   // 确保有会话
   let sessionId = chatStore.currentSessionId
   if (!sessionId) {
@@ -437,11 +437,16 @@ async function handleSend(text) {
   }
 
   const replySoul = await getReplySoulSnapshot()
-  chatStore.addMessage({ type: 'text', role: 'user', content: text })
+  if (options.addUserMessage !== false) {
+    chatStore.addMessage({ type: 'text', role: 'user', content: text })
+  }
   chatStore.setStreaming(true)
   chatStore.addMessage({ type: 'text', role: 'agent', content: '', soul: replySoul })
   try {
-    const response = await apiSendMessage(text, sessionId)
+    const response = await apiSendMessage(text, sessionId, {
+      persistUserMessage: options.persistUserMessage !== false,
+      sourceMessageId: options.sourceMessageId,
+    })
     if (!response.ok) {
       const err = await response.json().catch(() => ({}))
       chatStore.addMessage({ type: 'text', role: 'agent', content: err.detail || '请求失败，请重新登录', soul: replySoul })
@@ -462,6 +467,9 @@ async function handleSend(text) {
         try {
           const event = JSON.parse(line.slice(6))
           switch (event.type) {
+            case 'message_saved':
+              chatStore.attachMessageId(event.data)
+              break
             case 'soul_snapshot':
               chatStore.setLastAgentSoul(snapshotSoul(event.data))
               break
@@ -560,26 +568,50 @@ function cancelEdit() {
 
 async function confirmEdit() {
   const msg = chatStore.messages[editingMsgIndex.value]
-  if (!msg || !editingText.value.trim()) return
-  const idx = editingMsgIndex.value
+  const newText = editingText.value.trim()
+  if (!msg || !newText) return
+  if (!msg.id) {
+    alert('这条消息还在保存中，稍后再试。')
+    return
+  }
   cancelEdit()
   // 从 API 编辑（删除后续消息）
   try {
-    await apiEditMessage(msg.id, editingText.value.trim())
-  } catch {}
+    const res = await apiEditMessage(msg.id, newText)
+    if (res?.success === false) {
+      alert(res.message || '编辑失败，请稍后再试。')
+      return
+    }
+  } catch {
+    alert('编辑失败，请稍后再试。')
+    return
+  }
   // 重新加载会话
   await loadMessages(chatStore.currentSessionId)
   // 自动发送编辑后的消息
-  handleSend(editingText.value.trim())
+  await handleSend(newText, {
+    addUserMessage: false,
+    persistUserMessage: false,
+    sourceMessageId: msg.id,
+  })
 }
 
 async function confirmDelete(msg, index) {
-  if (!msg.id) return // 尚未保存的消息不能删除
+  if (!msg.id) {
+    alert('这条消息还在保存中，稍后再试。')
+    return
+  }
   if (!confirm('确定删除这条消息及其后的所有回复？')) return
   try {
-    await apiDeleteMessage(msg.id)
+    const res = await apiDeleteMessage(msg.id)
+    if (res?.success === false) {
+      alert(res.message || '删除失败，请稍后再试。')
+      return
+    }
   } catch (e) {
     console.error('delete error:', e)
+    alert('删除失败，请稍后再试。')
+    return
   }
   await loadMessages(chatStore.currentSessionId)
 }
