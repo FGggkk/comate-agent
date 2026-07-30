@@ -1,6 +1,7 @@
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
@@ -42,6 +43,7 @@ DEFAULT_ITEM_LIMITS = {
     DOC_DELTA: 40,
 }
 
+DEFAULT_DOCUMENT_ROOT = Path(__file__).resolve().parents[2] / "memory_docs"
 DOC_HEADER_NOTE = "<!-- This file is managed by Comate. You can edit it; the app will detect changes and sync. -->"
 
 MEMORY_SECTION_LABELS = {
@@ -94,6 +96,19 @@ def build_source_hash(payload: Any) -> str:
 
 def build_file_hash(content: str) -> str:
     return hashlib.sha256((content or "").encode("utf-8")).hexdigest()
+
+
+def resolve_document_root(root: str | Path | None = None) -> Path:
+    return Path(root or DEFAULT_DOCUMENT_ROOT).expanduser().resolve()
+
+
+def document_user_dir(user_id: str, root: str | Path | None = None) -> Path:
+    safe_user_id = str(user_id).replace("/", "_").replace("\\", "_").strip() or "unknown"
+    return resolve_document_root(root) / safe_user_id
+
+
+def document_file_path(user_id: str, doc_type: str, root: str | Path | None = None) -> Path:
+    return document_user_dir(user_id, root) / default_file_name(doc_type)
 
 
 def enforce_char_limit(content: str, char_limit: int | None) -> tuple[str, dict]:
@@ -150,6 +165,29 @@ async def list_active_documents(user_id: str, db: AsyncSession) -> list[dict]:
         .order_by(MemoryDocument.doc_type.asc())
     )
     return [document_to_dict(item) for item in result.scalars().all()]
+
+
+async def list_document_workspace(
+    user_id: str,
+    db: AsyncSession,
+    *,
+    root: str | Path | None = None,
+) -> dict:
+    documents = []
+    active_by_type = {item["doc_type"]: item for item in await list_active_documents(user_id, db)}
+    for doc_type in sorted(MEMORY_DOCUMENT_TYPES):
+        document = active_by_type.get(doc_type) or {}
+        documents.append({
+            **document,
+            "doc_type": doc_type,
+            "file_name": default_file_name(doc_type),
+            "file_path": document.get("file_path") or str(document_file_path(user_id, doc_type, root)),
+            "file_status": await get_document_file_status(user_id, doc_type, db, root=root),
+        })
+    return {
+        "root": str(resolve_document_root(root)),
+        "documents": documents,
+    }
 
 
 async def mark_document_stale(
@@ -417,6 +455,17 @@ async def rebuild_delta_doc(
     )
 
 
+async def rebuild_document_by_type(user_id: str, doc_type: str, db: AsyncSession) -> dict:
+    normalized_type = normalize_doc_type(doc_type)
+    rebuilders = {
+        DOC_USER: rebuild_user_doc,
+        DOC_MEMORY: rebuild_memory_doc,
+        DOC_BOUNDARY: rebuild_boundary_doc,
+        DOC_DELTA: rebuild_delta_doc,
+    }
+    return await rebuilders[normalized_type](user_id, db)
+
+
 async def rebuild_all_memory_documents(user_id: str, db: AsyncSession) -> dict:
     results = {}
     for doc_type, rebuild in (
@@ -430,6 +479,200 @@ async def rebuild_all_memory_documents(user_id: str, db: AsyncSession) -> dict:
         except Exception as e:
             results[doc_type] = {"success": False, "message": str(e)}
     return {"success": True, "documents": results}
+
+
+async def ensure_document(
+    user_id: str,
+    doc_type: str,
+    db: AsyncSession,
+) -> dict:
+    normalized_type = normalize_doc_type(doc_type)
+    document = await get_active_document(user_id, normalized_type, db)
+    if document:
+        return {"success": True, "document": document_to_dict(document), "created": False}
+    result = await rebuild_document_by_type(user_id, normalized_type, db)
+    return {**result, "created": True}
+
+
+async def get_document_file_status(
+    user_id: str,
+    doc_type: str,
+    db: AsyncSession,
+    *,
+    root: str | Path | None = None,
+) -> dict:
+    normalized_type = normalize_doc_type(doc_type)
+    path = document_file_path(user_id, normalized_type, root)
+    document = await get_active_document(user_id, normalized_type, db)
+    if not document:
+        file_hash = ""
+        if path.exists():
+            try:
+                file_hash = build_file_hash(path.read_text(encoding="utf-8"))
+            except UnicodeDecodeError:
+                return {
+                    "state": "unreadable_file",
+                    "path": str(path),
+                    "exists": True,
+                    "file_hash": "",
+                }
+        return {
+            "state": "missing_document",
+            "path": str(path),
+            "exists": path.exists(),
+            "file_hash": file_hash,
+        }
+    if not path.exists():
+        return {
+            "state": "missing_file",
+            "path": str(path),
+            "exists": False,
+            "document_hash": document.file_hash or build_file_hash(document.content or ""),
+        }
+
+    try:
+        content = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return {
+            "state": "unreadable_file",
+            "path": str(path),
+            "exists": True,
+            "document_hash": document.file_hash or build_file_hash(document.content or ""),
+        }
+    file_hash = build_file_hash(content)
+    document_hash = document.file_hash or build_file_hash(document.content or "")
+    state = "synced" if file_hash == document_hash else "file_changed"
+    return {
+        "state": state,
+        "path": str(path),
+        "exists": True,
+        "file_hash": file_hash,
+        "document_hash": document_hash,
+        "size": len(content),
+    }
+
+
+async def export_document_to_file(
+    user_id: str,
+    doc_type: str,
+    db: AsyncSession,
+    *,
+    root: str | Path | None = None,
+) -> dict:
+    normalized_type = normalize_doc_type(doc_type)
+    ensured = await ensure_document(user_id, normalized_type, db)
+    document = await get_active_document(user_id, normalized_type, db)
+    if not document:
+        return {"success": False, "message": "文档不存在，无法导出"}
+
+    path = document_file_path(user_id, normalized_type, root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = document.content or ""
+    path.write_text(content, encoding="utf-8", newline="\n")
+    file_hash = build_file_hash(content)
+    result = await mark_document_sync_status(
+        user_id,
+        normalized_type,
+        db,
+        "synced",
+        reason="exported_to_file",
+        edited_by="app",
+        file_path=str(path),
+        file_hash=file_hash,
+        metadata={"export_path": str(path), "created_before_export": ensured.get("created", False)},
+    )
+    result["file_path"] = str(path)
+    return result
+
+
+async def export_all_documents_to_files(
+    user_id: str,
+    db: AsyncSession,
+    *,
+    root: str | Path | None = None,
+) -> dict:
+    results = {}
+    for doc_type in sorted(MEMORY_DOCUMENT_TYPES):
+        try:
+            results[doc_type] = await export_document_to_file(user_id, doc_type, db, root=root)
+        except Exception as e:
+            results[doc_type] = {"success": False, "message": str(e)}
+    return {
+        "success": all(item.get("success") for item in results.values()),
+        "root": str(resolve_document_root(root)),
+        "documents": results,
+    }
+
+
+async def import_document_from_file(
+    user_id: str,
+    doc_type: str,
+    db: AsyncSession,
+    *,
+    root: str | Path | None = None,
+) -> dict:
+    normalized_type = normalize_doc_type(doc_type)
+    path = document_file_path(user_id, normalized_type, root)
+    if not path.exists():
+        return {"success": False, "message": "文档文件不存在", "file_path": str(path)}
+
+    try:
+        content = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return {"success": False, "message": "文档文件不是 UTF-8 编码", "file_path": str(path)}
+    file_hash = build_file_hash(content)
+    stored_content, _ = enforce_char_limit(content, DEFAULT_CHAR_LIMITS[normalized_type])
+    stored_hash = build_file_hash(stored_content)
+    result = await save_document_version(
+        user_id,
+        normalized_type,
+        content,
+        db,
+        source_hash=build_source_hash({"imported_file_hash": file_hash}),
+        char_limit=DEFAULT_CHAR_LIMITS[normalized_type],
+        item_limit=DEFAULT_ITEM_LIMITS[normalized_type],
+        sync_status="synced",
+        edited_by="user",
+        file_path=str(path),
+        file_hash=stored_hash,
+        metadata={"source": "markdown_file", "import_path": str(path), "imported_file_hash": file_hash},
+        last_imported_at=datetime.now(timezone.utc),
+    )
+    result["file_path"] = str(path)
+    return result
+
+
+async def save_document_content(
+    user_id: str,
+    doc_type: str,
+    content: str,
+    db: AsyncSession,
+    *,
+    export_to_file: bool = False,
+    root: str | Path | None = None,
+) -> dict:
+    normalized_type = normalize_doc_type(doc_type)
+    stored_content, _ = enforce_char_limit(content or "", DEFAULT_CHAR_LIMITS[normalized_type])
+    file_hash = build_file_hash(stored_content)
+    path = document_file_path(user_id, normalized_type, root)
+    result = await save_document_version(
+        user_id,
+        normalized_type,
+        content or "",
+        db,
+        source_hash=build_source_hash({"manual_content_hash": file_hash}),
+        char_limit=DEFAULT_CHAR_LIMITS[normalized_type],
+        item_limit=DEFAULT_ITEM_LIMITS[normalized_type],
+        sync_status="export_pending",
+        edited_by="user",
+        file_path=str(path),
+        file_hash=file_hash,
+        metadata={"source": "manual_markdown_edit"},
+        last_imported_at=datetime.now(timezone.utc),
+    )
+    if export_to_file:
+        return await export_document_to_file(user_id, normalized_type, db, root=root)
+    return result
 
 
 def render_user_doc(profile: TacitProfile | None) -> tuple[str, dict]:

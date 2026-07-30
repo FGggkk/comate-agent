@@ -1,13 +1,13 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.api.response import ok
 from app.db.session import get_db
-from app.services import memory_service
+from app.services import memory_document_service, memory_service
 
 router = APIRouter(prefix="/api/memories", tags=["memories"])
 
@@ -46,9 +46,102 @@ class AddForbiddenRequest(BaseModel):
     original_phrase: str = ""
 
 
+class MemoryDocumentUpdateRequest(BaseModel):
+    content: str
+    export_to_file: bool = False
+
+
+class MemoryDocumentRebuildRequest(BaseModel):
+    doc_type: str | None = None
+    export_to_file: bool = False
+
+
 @router.get("")
 async def api_get_memories(db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
     return ok(await memory_service.get_all(user_id, db))
+
+
+@router.get("/documents")
+async def api_get_memory_documents(db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
+    return ok(await memory_document_service.list_document_workspace(user_id, db))
+
+
+@router.get("/documents/{doc_type}")
+async def api_get_memory_document(
+    doc_type: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+):
+    try:
+        result = await memory_document_service.ensure_document(user_id, doc_type, db)
+        document = result.get("document") or {}
+        document["file_status"] = await memory_document_service.get_document_file_status(user_id, doc_type, db)
+        return ok(document)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/documents/rebuild")
+async def api_rebuild_memory_documents(
+    req: MemoryDocumentRebuildRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+):
+    try:
+        if req.doc_type:
+            result = await memory_document_service.rebuild_document_by_type(user_id, req.doc_type, db)
+            if req.export_to_file:
+                result = await memory_document_service.export_document_to_file(user_id, req.doc_type, db)
+            return result
+        result = await memory_document_service.rebuild_all_memory_documents(user_id, db)
+        if req.export_to_file:
+            result["export"] = await memory_document_service.export_all_documents_to_files(user_id, db)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.put("/documents/{doc_type}")
+async def api_update_memory_document(
+    doc_type: str,
+    req: MemoryDocumentUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+):
+    try:
+        return await memory_document_service.save_document_content(
+            user_id,
+            doc_type,
+            req.content,
+            db,
+            export_to_file=req.export_to_file,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/documents/{doc_type}/export")
+async def api_export_memory_document(
+    doc_type: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+):
+    try:
+        return await memory_document_service.export_document_to_file(user_id, doc_type, db)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/documents/{doc_type}/import")
+async def api_import_memory_document(
+    doc_type: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+):
+    try:
+        return await memory_document_service.import_document_from_file(user_id, doc_type, db)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("")

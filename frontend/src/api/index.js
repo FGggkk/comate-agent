@@ -118,6 +118,12 @@ export const apiUpdateMemory = (id, data) => put(`/memories/${id}`, data)
 export const apiDeleteMemory = (id) => del(`/memories/${id}`)
 export const apiAddForbidden = (topic, phrase) => post('/memories/forbidden', { topic_summary: topic, original_phrase: phrase })
 export const apiRemoveForbidden = (id) => del(`/memories/forbidden/${id}`)
+export const apiGetMemoryDocuments = () => get('/memories/documents')
+export const apiGetMemoryDocument = (type) => get(`/memories/documents/${type}`)
+export const apiRebuildMemoryDocuments = (docType = null, exportToFile = false) => post('/memories/documents/rebuild', { doc_type: docType, export_to_file: exportToFile })
+export const apiUpdateMemoryDocument = (type, content, exportToFile = false) => put(`/memories/documents/${type}`, { content, export_to_file: exportToFile })
+export const apiExportMemoryDocument = (type) => post(`/memories/documents/${type}/export`, {})
+export const apiImportMemoryDocument = (type) => post(`/memories/documents/${type}/import`, {})
 
 // Interview
 export const apiStartInterview = (data) => post('/interview/start', data)

@@ -5,6 +5,8 @@ export const useMemoryStore = defineStore('memory', () => {
   const layers = ref({ priors: [], co_created: [], tacit: [] })
   const tacitProfile = ref({})
   const forbiddenTopics = ref([])
+  const documents = ref([])
+  const documentRoot = ref('')
 
   function load(data) {
     layers.value = data.layers || { priors: [], co_created: [], tacit: [] }
@@ -12,5 +14,10 @@ export const useMemoryStore = defineStore('memory', () => {
     forbiddenTopics.value = data.forbidden_topics || []
   }
 
-  return { layers, tacitProfile, forbiddenTopics, load }
+  function loadDocuments(data) {
+    documents.value = data?.documents || []
+    documentRoot.value = data?.root || ''
+  }
+
+  return { layers, tacitProfile, forbiddenTopics, documents, documentRoot, load, loadDocuments }
 })
