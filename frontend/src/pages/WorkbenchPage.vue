@@ -20,7 +20,7 @@
       </div>
 
       <div class="tool-grid">
-        <div v-for="t in tools" :key="t.id" class="tool-card" :class="'card-' + t.id" @click="activeTool = t.id">
+        <div v-for="t in tools" :key="t.id" class="tool-card" :class="'card-' + t.id" @click="openTool(t.id)">
           <div class="card-icon" v-html="t.icon"></div>
           <div class="card-info">
             <div class="card-title">{{ t.label }}</div>
@@ -75,10 +75,14 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import InterviewPage from './InterviewPage.vue'
 import FinancePage from './FinancePage.vue'
 import TravelPage from './TravelPage.vue'
+
+const props = defineProps({
+  openToolRequest: { type: Object, default: null },
+})
 
 const activeTool = ref('')
 
@@ -153,9 +157,19 @@ async function loadRecent() {
 }
 
 function openRecent(item) {
-  if (item.toolId === 'interview') activeTool.value = 'interview'
-  if (item.toolId === 'finance') activeTool.value = 'finance'
+  openTool(item.toolId)
 }
+
+function openTool(toolId) {
+  if (!tools.some(t => t.id === toolId)) return
+  activeTool.value = toolId
+}
+
+watch(
+  () => props.openToolRequest,
+  (request) => openTool(request?.toolId),
+  { immediate: true }
+)
 </script>
 
 <style scoped>

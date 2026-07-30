@@ -257,7 +257,9 @@ const activeSoul = computed(() => props.currentSoul || null)
 const quickItems = [
   { label: '✍️ 帮我写作', action: 'writing' },
   { label: '📌 设定提醒', action: 'remind' },
-  { label: '🎯 模拟面试', action: 'interview' },
+  { label: '🎯 模拟面试', action: 'workbench:interview' },
+  { label: '🧳 旅游规划', action: 'workbench:travel' },
+  { label: '💰 记账', action: 'workbench:finance' },
 ]
 const writingScenarios = [
   {
@@ -323,7 +325,7 @@ const reminderShortcuts = [
   { id: 'tomorrow', label: '明早 9 点', hour: 9, minute: 0, dayOffset: 1 },
 ]
 
-const emit = defineEmits(['tab-change', 'reminder-created'])
+const emit = defineEmits(['tab-change', 'reminder-created', 'open-workbench-tool'])
 
 function squishHero() {
   heroSquished.value = true
@@ -571,9 +573,23 @@ async function createReminderFromCard() {
 }
 
 function handleQuickAction(action) {
+  const toolId = getWorkbenchToolId(action)
+  if (toolId) {
+    openWorkbenchTool(toolId)
+    return
+  }
   if (action === 'writing') toggleWritingPanel()
   else if (action === 'remind') toggleReminderPanel()
-  else if (action === 'interview') emit('tab-change', 'interview')
+  else if (action === 'interview') openWorkbenchTool('interview')
+}
+
+function getWorkbenchToolId(action) {
+  return typeof action === 'string' && action.startsWith('workbench:') ? action.slice('workbench:'.length) : ''
+}
+
+function openWorkbenchTool(toolId) {
+  if (!toolId) return
+  emit('open-workbench-tool', toolId)
 }
 
 async function handleAction(payload, actionMessage = null) {
@@ -697,8 +713,11 @@ async function handleAction(payload, actionMessage = null) {
     nextTick(() => scrollToBottom())
     return
   }
-  if (action === 'interview' || action === 'start_interview') emit('tab-change', 'interview')
-  else if (action === 'writing') toggleWritingPanel()
+  if (action === 'interview' || action === 'start_interview') {
+    openWorkbenchTool('interview')
+    return
+  }
+  if (action === 'writing') toggleWritingPanel()
   else if (action === 'view_memory') emit('tab-change', 'memory')
   else handleSend('给我一些建议')
 }
