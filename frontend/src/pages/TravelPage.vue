@@ -3,7 +3,7 @@
     <div class="back-bar">
       <button @click="$emit('back')" class="back-btn">
         <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="13,4 7,10 13,16"/></svg>
-        返回工作台
+        {{ props.origin === 'chat' ? '返回聊天' : '返回工作台' }}
       </button>
     </div>
 
@@ -201,10 +201,13 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, nextTick } from 'vue'
+import { ref, reactive, computed, onActivated, nextTick } from 'vue'
 import { apiGenerateTravelPlan, apiGetTravelPlans, apiGetTravelPlan, apiUpdateTravelPlan, apiDeleteTravelPlan, apiRegenerateTravelDay } from '../api/index'
 
 const emit = defineEmits(['back'])
+const props = defineProps({
+  origin: { type: String, default: 'home' },
+})
 const activeTab = ref('plan')
 const currentPlan = ref(null)
 const generating = ref(false)
@@ -302,7 +305,7 @@ function planDays(p) {
   return p.days || 0
 }
 
-onMounted(loadHistory)
+onActivated(loadHistory)
 
 async function loadHistory() {
   try {

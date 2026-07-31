@@ -3,7 +3,7 @@
     <div class="back-bar">
       <button @click="$emit('back')" class="back-btn">
         <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="13,4 7,10 13,16"/></svg>
-        返回工作台
+        {{ props.origin === 'chat' ? '返回聊天' : '返回工作台' }}
       </button>
     </div>
 
@@ -136,11 +136,14 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, nextTick } from 'vue'
+import { ref, watch, onActivated, nextTick } from 'vue'
 import { useShoppingStore } from '../stores/shopping'
 import { apiGenerateShoppingPlan, apiGetShoppingHistory, apiGetShoppingPlan, apiDeleteShoppingPlan, apiFavoriteShoppingPlan } from '../api/index'
 
 const emit = defineEmits(['back'])
+const props = defineProps({
+  origin: { type: String, default: 'home' },
+})
 const store = useShoppingStore()
 
 const chatInput = ref('')
@@ -157,7 +160,7 @@ const quickItems = [
   { label: '🧹 家电', demand: '2000元左右洗衣机' },
 ]
 
-onMounted(() => { loadHistory() })
+onActivated(() => { loadHistory() })
 
 function switchTab(tab) {
   activeTab.value = tab

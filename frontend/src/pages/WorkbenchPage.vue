@@ -53,25 +53,28 @@
       </div>
     </div>
 
-    <InterviewPage v-else-if="activeTool === 'interview'" :embedded="true" @back="activeTool = ''" />
-    <FinancePage v-else-if="activeTool === 'finance'" @back="activeTool = ''" />
-    <TravelPage v-else-if="activeTool === 'travel'" @back="activeTool = ''" />
-    <ShoppingPage v-else-if="activeTool === 'shopping'" @back="activeTool = ''" />
-    <div v-else class="placeholder-page">
-      <div class="back-bar">
-        <button @click="activeTool = ''" class="back-btn">
-          <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5">
-            <polyline points="13,4 7,10 13,16"/>
-          </svg>
-          返回工作台
-        </button>
+    <!-- 工具页（KeepAlive 保持各工具状态） -->
+    <KeepAlive v-else>
+      <InterviewPage v-if="activeTool === 'interview'" :embedded="true" :origin="toolOrigin" @back="handleToolBack" />
+      <FinancePage v-else-if="activeTool === 'finance'" :origin="toolOrigin" @back="handleToolBack" />
+      <TravelPage v-else-if="activeTool === 'travel'" :origin="toolOrigin" @back="handleToolBack" />
+      <ShoppingPage v-else-if="activeTool === 'shopping'" :origin="toolOrigin" @back="handleToolBack" />
+      <div v-else class="placeholder-page">
+        <div class="back-bar">
+          <button @click="handleToolBack" class="back-btn">
+            <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5">
+              <polyline points="13,4 7,10 13,16"/>
+            </svg>
+            返回工作台
+          </button>
+        </div>
+        <div class="placeholder-body">
+          <div class="placeholder-icon" v-html="currentTool?.icon || ''"></div>
+          <div class="placeholder-title">{{ currentTool?.label || '工具' }}</div>
+          <div class="placeholder-desc">正在开发中，敬请期待</div>
+        </div>
       </div>
-      <div class="placeholder-body">
-        <div class="placeholder-icon" v-html="currentTool?.icon || ''"></div>
-        <div class="placeholder-title">{{ currentTool?.label || '工具' }}</div>
-        <div class="placeholder-desc">正在开发中，敬请期待</div>
-      </div>
-    </div>
+    </KeepAlive>
   </div>
 </template>
 
@@ -85,8 +88,11 @@ import ShoppingPage from './ShoppingPage.vue'
 const props = defineProps({
   openToolRequest: { type: Object, default: null },
 })
+const emit = defineEmits(['back-to-chat'])
 
 const activeTool = ref('')
+/** 工具打开来源：'home' 工作台首页 | 'chat' 从聊天跳转 */
+const toolOrigin = ref('home')
 
 const tools = [
   {
@@ -125,9 +131,22 @@ async function loadRecent() {
     const headers = { 'Authorization': `Bearer ${token}` }
     const now = new Date()
 
+    // 带重试的 fetch（本地开发代理偶发连接中断时兜底）
+    const fetchJson = async (url) => {
+      for (let i = 0; i < 2; i++) {
+        try {
+          const res = await fetch(url, { headers })
+          if (res.ok) return await res.json()
+        } catch (e) {
+          if (i === 0) console.warn('[recent] 请求失败，重试:', url, e.message)
+          await new Promise(r => setTimeout(r, 300))
+        }
+      }
+      return null
+    }
+
     // 面试记录
-    const interviewRes = await fetch('/api/interview', { headers })
-    const interviewData = await interviewRes.json()
+    const interviewData = await fetchJson('/api/interview') || {}
     const sessions = (interviewData.data?.sessions || interviewData.sessions || []).map(s => ({
       id: s.id, toolId: 'interview', toolLabel: '面试训练', color: '#FF9F45',
       title: s.title || s.target_role || '未命名',
@@ -136,40 +155,62 @@ async function loadRecent() {
     }))
 
     // 记账记录（最近 2 条）
-    let financeItems = []
-    try {
-      const finRes = await fetch(`/api/finance/records?year=${now.getFullYear()}&month=${now.getMonth() + 1}`, { headers })
-      if (finRes.ok) {
-        const finData = await finRes.json()
-        const records = finData.data || finData || []
-        financeItems = records.slice(0, 2).map(r => ({
-          id: r.id, toolId: 'finance', toolLabel: '记账', color: '#9B6FD8',
-          title: `${r.type === 'income' ? '+' : '-'}¥${(r.amount / 100).toFixed(2)} ${r.category}`,
-          sortTime: r.created_at || r.record_date || '',
-          time: r.created_at ? new Date(r.created_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : (r.record_date || ''),
-        }))
-      }
-    } catch {}
+    const finData = await fetchJson(`/api/finance/records?year=${now.getFullYear()}&month=${now.getMonth() + 1}`)
+    const records = finData?.data || finData || []
+    const financeItems = records.slice(0, 2).map(r => ({
+      id: r.id, toolId: 'finance', toolLabel: '记账', color: '#9B6FD8',
+      title: `${r.type === 'income' ? '+' : '-'}¥${(r.amount / 100).toFixed(2)} ${r.category}`,
+      sortTime: r.created_at || r.record_date || '',
+      time: r.created_at ? new Date(r.created_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : (r.record_date || ''),
+    }))
 
-    // 合并、排序、截取 4 条
-    const all = [...sessions, ...financeItems].sort((a, b) => (b.sortTime || '').localeCompare(a.sortTime || ''))
+    // 购物方案（最近 2 条）
+    const shopData = await fetchJson('/api/shopping/history')
+    const shopPlans = shopData?.data || shopData || []
+    const shoppingItems = shopPlans.slice(0, 2).map(p => ({
+      id: p.id, toolId: 'shopping', toolLabel: '购物计划', color: '#E88D8D',
+      title: `🛒 ${p.demand}`,
+      sortTime: p.created_at || '',
+      time: p.created_at ? new Date(p.created_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '',
+    }))
+
+    // 旅游规划（最近 2 条）
+    const travelData = await fetchJson('/api/travel/plans')
+    const travelPlans = travelData?.data || travelData || []
+    const travelItems = travelPlans.slice(0, 2).map(p => ({
+      id: p.id, toolId: 'travel', toolLabel: '旅游规划', color: '#5FBE63',
+      title: `✈️ ${p.destination}${p.title ? ' · ' + p.title : ''}`,
+      sortTime: p.updated_at || p.created_at || '',
+      time: (p.updated_at || p.created_at) ? new Date(p.updated_at || p.created_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '',
+    }))
+
+    // 合并、排序、截取 6 条
+    const all = [...sessions, ...financeItems, ...shoppingItems, ...travelItems].sort((a, b) => (b.sortTime || '').localeCompare(a.sortTime || ''))
     recentItems.value = all
     hasMoreRecent.value = all.length > 3
   } catch {}
 }
 
 function openRecent(item) {
-  openTool(item.toolId)
+  openTool(item.toolId, 'home')
 }
 
-function openTool(toolId) {
+function openTool(toolId, origin = 'home') {
   if (!tools.some(t => t.id === toolId)) return
+  toolOrigin.value = origin
   activeTool.value = toolId
+}
+
+/** 工具页返回：从聊天跳转的回到聊天，其余回工作台首页 */
+function handleToolBack() {
+  const fromChat = toolOrigin.value === 'chat'
+  activeTool.value = ''
+  if (fromChat) emit('back-to-chat')
 }
 
 watch(
   () => props.openToolRequest,
-  (request) => openTool(request?.toolId),
+  (request) => openTool(request?.toolId, 'chat'),
   { immediate: true }
 )
 </script>

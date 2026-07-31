@@ -33,10 +33,10 @@
           :active="activeTab === 'memory'"
           :current-soul="currentSoul"
         />
-        <InterviewPage :class="['page', activeTab === 'interview' ? 'active' : '']" />
         <WorkbenchPage
           :class="['page', activeTab === 'workbench' ? 'active' : '']"
           :open-tool-request="workbenchToolRequest"
+          @back-to-chat="handleTabChange('chat')"
         />
 
         <SettingsPage
