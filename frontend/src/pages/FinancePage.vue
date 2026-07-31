@@ -3,7 +3,7 @@
     <div class="back-bar">
       <button @click="$emit('back')" class="back-btn">
         <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="13,4 7,10 13,16"/></svg>
-        返回工作台
+        {{ props.origin === 'chat' ? '返回聊天' : '返回工作台' }}
       </button>
     </div>
 
@@ -149,10 +149,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onActivated } from 'vue'
 import { apiCreateRecord, apiGetRecords, apiUpdateRecord, apiDeleteRecord, apiGetSummary, apiAiParse, apiGetFinanceMessages, apiSaveFinanceMessage } from '../api/index'
 
 const emit = defineEmits(['back'])
+const props = defineProps({
+  origin: { type: String, default: 'home' },
+})
 const activeTab = ref('chat')
 const messages = ref([])
 const chatInput = ref('')
@@ -204,10 +207,10 @@ const categoryStats = computed(() => {
   }))
 })
 
-onMounted(async () => {
+onActivated(async () => {
   await loadData()
   await loadMessages()
-})
+});
 
 async function loadData() {
   const now = new Date()
@@ -363,6 +366,9 @@ async function saveRecord() {
 </script>
 
 <style scoped>
+.back-bar { display: flex; align-items: center; padding: 4px 4px; }
+.back-btn { display: flex; align-items: center; gap: 4px; font-size: 14px; color: var(--ink-soft); padding: 6px 8px; background: none; border: none; cursor: pointer; }
+.back-btn:hover { color: var(--ink); }
 .tabs { display: flex; position: relative; margin: 8px 0 12px; background: var(--line); border-radius: var(--r-md); padding: 3px; }
 .tabs .tab { flex: 1; padding: 8px; font-size: 14px; font-weight: 600; border: none; background: none; cursor: pointer; border-radius: var(--r-sm); color: var(--sub); transition: all .25s ease; z-index: 1; }
 .tabs .tab.active { color: var(--ink); background: var(--card); box-shadow: 0 1px 4px rgba(0,0,0,.08); }

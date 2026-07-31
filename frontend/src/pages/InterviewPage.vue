@@ -4,7 +4,7 @@
     <div v-if="embedded" class="back-bar" style="margin-left:-16px;padding-left:4px;padding-right:16px;">
       <button @click="embeddedBack" class="back-btn">
         <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="13,4 7,10 13,16"/></svg>
-        {{ sessionId ? '返回' : '返回工作台' }}
+        {{ sessionId ? '返回' : (props.origin === 'chat' ? '返回聊天' : '返回工作台') }}
       </button>
     </div>
     <div class="page-title">面试训练</div>
@@ -305,12 +305,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onActivated } from 'vue'
 import { marked } from 'marked'
 import { apiStartInterview, apiAnswerQuestionStream, apiGetReport, apiListInterviews, apiNextQuestion, apiEndInterview, apiEditInterviewAnswer, apiDeleteInterview, apiRenameInterview, apiRerollQuestion } from '../api/index'
 
 const props = defineProps({
   embedded: { type: Boolean, default: false },
+  origin: { type: String, default: 'home' },
 })
 const emit = defineEmits(['back'])
 
@@ -467,7 +468,7 @@ async function viewHistory(id) {
   } catch {}
 }
 
-onMounted(loadHistory)
+onActivated(loadHistory)
 
 async function showEval(session) {
   try {

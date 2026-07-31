@@ -94,6 +94,22 @@ MIGRATION_SQL = [
     "CREATE TABLE IF NOT EXISTS shopping_plans (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id), demand TEXT NOT NULL, plans JSONB NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW())",
     "CREATE INDEX IF NOT EXISTS idx_shopping_plans_user ON shopping_plans(user_id)",
     "ALTER TABLE shopping_plans ADD COLUMN IF NOT EXISTS favorited VARCHAR(16) DEFAULT 'false'",
+
+    # ===== 管理端 & 计费体系 =====
+    "CREATE TABLE IF NOT EXISTS admins (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email VARCHAR(255) UNIQUE NOT NULL, password_hash VARCHAR(255) NOT NULL, nickname VARCHAR(64), role VARCHAR(16) DEFAULT 'admin', status VARCHAR(16) DEFAULT 'active', created_at TIMESTAMPTZ DEFAULT NOW(), last_login TIMESTAMPTZ)",
+    "CREATE INDEX IF NOT EXISTS idx_admins_email ON admins(email)",
+    "CREATE TABLE IF NOT EXISTS redemption_codes (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), code VARCHAR(32) UNIQUE NOT NULL, amount INTEGER NOT NULL, batch_no VARCHAR(64), max_uses INTEGER DEFAULT 1, used_count INTEGER DEFAULT 0, expires_at TIMESTAMPTZ, status VARCHAR(16) DEFAULT 'active', note TEXT, created_by UUID REFERENCES admins(id), created_at TIMESTAMPTZ DEFAULT NOW())",
+    "CREATE INDEX IF NOT EXISTS idx_redemption_codes_code ON redemption_codes(code)",
+    "CREATE INDEX IF NOT EXISTS idx_redemption_codes_status ON redemption_codes(status)",
+    "CREATE TABLE IF NOT EXISTS redemption_usage (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), code_id UUID NOT NULL REFERENCES redemption_codes(id), user_id UUID NOT NULL REFERENCES users(id), amount INTEGER NOT NULL, redeemed_at TIMESTAMPTZ DEFAULT NOW())",
+    "CREATE INDEX IF NOT EXISTS idx_redemption_usage_user ON redemption_usage(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_redemption_usage_code ON redemption_usage(code_id)",
+    "CREATE TABLE IF NOT EXISTS balance_accounts (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id) UNIQUE, balance INTEGER DEFAULT 0, total_recharged INTEGER DEFAULT 0, total_consumed INTEGER DEFAULT 0, updated_at TIMESTAMPTZ DEFAULT NOW())",
+    "CREATE INDEX IF NOT EXISTS idx_balance_accounts_user ON balance_accounts(user_id)",
+    "CREATE TABLE IF NOT EXISTS balance_transactions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id), change INTEGER NOT NULL, balance_after INTEGER NOT NULL, type VARCHAR(16) NOT NULL, ref_type VARCHAR(32), ref_id VARCHAR(64), note TEXT, created_at TIMESTAMPTZ DEFAULT NOW())",
+    "CREATE INDEX IF NOT EXISTS idx_balance_transactions_user ON balance_transactions(user_id, created_at DESC)",
+    "CREATE TABLE IF NOT EXISTS billing_rules (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), item_key VARCHAR(64) UNIQUE NOT NULL, item_name VARCHAR(64) NOT NULL, price INTEGER DEFAULT 0, enabled BOOLEAN DEFAULT TRUE, updated_at TIMESTAMPTZ DEFAULT NOW())",
+    "INSERT INTO billing_rules (item_key, item_name, price, enabled) VALUES ('chat_round', '日常对话', 1, TRUE), ('interview_question', '面试提问', 2, TRUE), ('interview_report', '面试报告', 5, TRUE), ('shopping_plan', '购物计划', 10, TRUE), ('travel_plan', '旅游规划', 8, TRUE), ('finance_parse', '记账AI解析', 1, TRUE), ('reroll_hint', '重出题/思路提示', 2, TRUE) ON CONFLICT (item_key) DO NOTHING",
 ]
 
 LOCK_ID = 20240724  # 迁移锁 ID（唯一整数）
