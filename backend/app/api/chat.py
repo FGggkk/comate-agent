@@ -8,6 +8,7 @@ from sqlalchemy import select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.services import billing_service
 from app.db.session import get_db
 from app.graph.engine import run_engine
 from app.models.conversation import Message, Session
@@ -34,6 +35,9 @@ async def api_send(
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # 计费：日常对话（宽松模式余额不足不阻断）
+    await billing_service.consume(db, user_id, "chat_round", ref_type="chat", ref_id=req.session_id, note="日常对话")
+
     soul_snapshot = None
     try:
         soul_snapshot = (await get_inventory(user_id, db)).get("current")
