@@ -211,8 +211,10 @@
         ref="inputBarRef"
         :disabled="chatStore.isStreaming || voiceState !== 'idle'"
         :voice-state="voiceState"
+        :voice-reply-enabled="voiceReplyEnabled"
         @send="handleSend"
         @voice="toggleVoice"
+        @voice-reply-toggle="toggleVoiceReply"
       />
     </div>
   </div>
@@ -257,6 +259,7 @@ const reminderDraft = ref({
 })
 const activeSoul = computed(() => props.currentSoul || null)
 const voiceState = ref('idle')
+const voiceReplyEnabled = ref(false)
 
 let voiceSocket = null
 let voiceSessionId = ''
@@ -272,6 +275,7 @@ let voiceAgentMessage = null
 let voiceUserTranscript = ''
 let voiceAgentTranscript = ''
 let voiceReplySoul = null
+let voiceReplyMode = 'text'
 let voiceHasAudio = false
 let voiceErrorReported = false
 const voicePlaybackSources = new Set()
@@ -859,12 +863,12 @@ function updateVoiceAgentMessage(content) {
     chatStore.addMessage({
       type: 'text',
       role: 'agent',
-      content: content || '正在语音回复…',
+      content: content || '正在生成回复…',
       soul: voiceReplySoul,
     })
     voiceAgentMessage = chatStore.messages[chatStore.messages.length - 1]
   } else {
-    voiceAgentMessage.content = content || '正在语音回复…'
+    voiceAgentMessage.content = content || '正在生成回复…'
   }
 }
 
@@ -1009,6 +1013,8 @@ function cleanupVoiceResources() {
   closeVoiceSocket()
   if (voiceState.value !== 'idle') chatStore.finishStream()
   voiceState.value = 'idle'
+  voiceReplyEnabled.value = false
+  voiceReplyMode = 'text'
 }
 
 function reportVoiceError(message) {
@@ -1019,6 +1025,8 @@ function reportVoiceError(message) {
   closeVoiceSocket()
   chatStore.finishStream()
   voiceState.value = 'idle'
+  voiceReplyEnabled.value = false
+  voiceReplyMode = 'text'
   chatStore.addMessage({ type: 'error', role: 'system', content: message || '语音服务暂时不可用。' })
   nextTick(() => scrollToBottom())
 }
@@ -1057,10 +1065,12 @@ function handleVoiceEvent(event) {
     updateVoiceAgentMessage(voiceAgentTranscript)
   } else if (eventType === 'response.audio.delta') {
     updateVoiceAgentMessage(voiceAgentTranscript)
-    enqueueVoiceAudio(event.delta)
+    if (voiceReplyMode === 'audio') enqueueVoiceAudio(event.delta)
   } else if (eventType === 'response.done') {
     stopVoiceCapture()
     voiceState.value = 'idle'
+    voiceReplyEnabled.value = false
+    voiceReplyMode = 'text'
     chatStore.finishStream()
   }
   nextTick(() => scrollToBottom())
@@ -1120,6 +1130,7 @@ async function startVoice() {
   voiceUserTranscript = ''
   voiceAgentTranscript = ''
   voiceHasAudio = false
+  voiceReplyMode = voiceReplyEnabled.value ? 'audio' : 'text'
   voiceReplySoul = await getReplySoulSnapshot()
   try {
     const sessionId = await ensureSession()
@@ -1136,6 +1147,8 @@ function finishVoiceRecording() {
   stopVoiceCapture()
   if (!voiceHasAudio) {
     voiceState.value = 'idle'
+    voiceReplyEnabled.value = false
+    voiceReplyMode = 'text'
     chatStore.addMessage({ type: 'error', role: 'system', content: '没有采集到声音，请检查麦克风后重试。' })
     return
   }
@@ -1146,7 +1159,7 @@ function finishVoiceRecording() {
   voiceState.value = 'responding'
   updateVoiceUserMessage('正在识别…')
   chatStore.setStreaming(true)
-  voiceSocket.send(JSON.stringify({ type: 'audio.commit' }))
+  voiceSocket.send(JSON.stringify({ type: 'audio.commit', reply_mode: voiceReplyMode }))
 }
 
 function cancelVoiceResponse() {
@@ -1155,7 +1168,14 @@ function cancelVoiceResponse() {
   }
   stopVoicePlayback()
   voiceState.value = 'idle'
+  voiceReplyEnabled.value = false
+  voiceReplyMode = 'text'
   chatStore.finishStream()
+}
+
+function toggleVoiceReply() {
+  if (voiceState.value !== 'idle' || chatStore.isStreaming) return
+  voiceReplyEnabled.value = !voiceReplyEnabled.value
 }
 
 function toggleVoice() {

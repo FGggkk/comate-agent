@@ -91,7 +91,7 @@ async def _send_context(upstream, soul: dict | None, messages: list[Message]) ->
     await upstream.send(json.dumps({
         "type": "session.update",
         "session": {
-            "modalities": ["text", "audio"],
+            "modalities": ["text"],
             "voice": settings.qwen_audio_realtime_voice,
             "input_audio_format": "pcm",
             "output_audio_format": "pcm",
@@ -125,9 +125,20 @@ async def _proxy_browser_events(websocket: WebSocket, upstream, turn: dict) -> N
                 continue
             await upstream.send(json.dumps({"type": "input_audio_buffer.append", "audio": audio}))
         elif event_type == "audio.commit":
-            turn.update(user_transcript="", agent_transcript="", saved=False)
+            reply_mode = "audio" if payload.get("reply_mode") == "audio" else "text"
+            turn.update(
+                user_transcript="",
+                agent_transcript="",
+                reply_mode=reply_mode,
+                saved=False,
+            )
             await upstream.send(json.dumps({"type": "input_audio_buffer.commit"}))
-            await upstream.send(json.dumps({"type": "response.create"}))
+            await upstream.send(json.dumps({
+                "type": "response.create",
+                "response": {
+                    "modalities": ["audio", "text"] if reply_mode == "audio" else ["text"],
+                },
+            }))
         elif event_type == "response.cancel":
             await upstream.send(json.dumps({"type": "response.cancel"}))
         elif event_type == "close":
@@ -142,6 +153,7 @@ async def _persist_voice_turn(
     user_transcript: str,
     agent_transcript: str,
     soul: dict | None,
+    reply_mode: str,
 ) -> dict | None:
     """只在一轮语音的最终文本齐全时，复用现有会话消息表保存。"""
     user_content = user_transcript.strip()
@@ -161,9 +173,9 @@ async def _persist_voice_turn(
             session_id=session.id,
             role="user",
             content=user_content,
-            metadata_=json.dumps({"source": "voice"}, ensure_ascii=False),
+            metadata_=json.dumps({"source": "voice", "input": "audio"}, ensure_ascii=False),
         )
-        agent_metadata = {"source": "voice"}
+        agent_metadata = {"source": "voice", "output": reply_mode}
         if soul:
             agent_metadata["soul"] = soul
         agent_message = Message(
@@ -238,6 +250,7 @@ async def _proxy_model_events(
                 turn["user_transcript"],
                 turn["agent_transcript"],
                 soul,
+                turn["reply_mode"],
             )
             if saved:
                 turn["saved"] = True
@@ -291,7 +304,12 @@ async def voice_realtime(websocket: WebSocket, session_id: str):
             await _send_context(upstream, soul, messages)
             await websocket.send_json({"type": "voice.ready"})
 
-            turn = {"user_transcript": "", "agent_transcript": "", "saved": False}
+            turn = {
+                "user_transcript": "",
+                "agent_transcript": "",
+                "reply_mode": "text",
+                "saved": False,
+            }
             browser_task = asyncio.create_task(_proxy_browser_events(websocket, upstream, turn))
             model_task = asyncio.create_task(
                 _proxy_model_events(websocket, upstream, user_id, session_id, soul, turn)

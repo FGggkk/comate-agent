@@ -10,6 +10,18 @@
       :disabled="disabled || voiceState !== 'idle'"
     />
     <button
+      :class="['voice-reply-btn', { 'is-active': voiceReplyEnabled }]"
+      :disabled="disabled || voiceState !== 'idle'"
+      :title="voiceReplyEnabled ? '本轮将语音回复' : '切换语音回复'"
+      :aria-label="voiceReplyEnabled ? '关闭语音回复' : '开启语音回复'"
+      @click="toggleVoiceReply"
+    >
+      <svg viewBox="0 0 24 24">
+        <path d="M4 10v4h4l5 4V6L8 10H4z" />
+        <path d="M16 9.5a4 4 0 0 1 0 5M18.5 7a7.5 7.5 0 0 1 0 10" />
+      </svg>
+    </button>
+    <button
       :class="['voice-btn', `is-${voiceState}`]"
       :disabled="disabled && voiceState === 'idle'"
       :title="voiceButtonLabel"
@@ -36,8 +48,9 @@ import { computed, nextTick, ref } from 'vue'
 const props = defineProps({
   disabled: Boolean,
   voiceState: { type: String, default: 'idle' },
+  voiceReplyEnabled: Boolean,
 })
-const emit = defineEmits(['send', 'voice'])
+const emit = defineEmits(['send', 'voice', 'voice-reply-toggle'])
 const text = ref('')
 const inputRef = ref(null)
 
@@ -58,6 +71,11 @@ function send() {
 function toggleVoice() {
   if (props.disabled && props.voiceState === 'idle') return
   emit('voice')
+}
+
+function toggleVoiceReply() {
+  if (props.disabled || props.voiceState !== 'idle') return
+  emit('voice-reply-toggle')
 }
 
 function focus() {
