@@ -1029,6 +1029,20 @@ function handleVoiceEvent(event) {
     reportVoiceError(event.message)
     return
   }
+  if (eventType === 'voice.messages_saved') {
+    const saved = event.data || {}
+    if (voiceUserMessage && saved.user?.id) voiceUserMessage.id = saved.user.id
+    if (voiceAgentMessage && saved.agent?.id) voiceAgentMessage.id = saved.agent.id
+    if (saved.session?.id) {
+      chatStore.replaceSessions({
+        id: saved.session.id,
+        title: saved.session.title || '新对话',
+        updated_at: saved.session.updated_at || new Date().toISOString(),
+      })
+      loadSessions()
+    }
+    return
+  }
   if (eventType === 'conversation.item.input_audio_transcription.delta') {
     voiceUserTranscript += event.delta || event.text || ''
     updateVoiceUserMessage(voiceUserTranscript)

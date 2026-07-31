@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from datetime import datetime, timezone
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import websockets
@@ -13,6 +14,7 @@ from app.config.settings import get_settings
 from app.db.session import async_session_factory
 from app.models.conversation import Message, Session
 from app.services.soul_service import get_inventory
+from app.services.tacit_profile_service import schedule_tacit_refresh
 
 router = APIRouter(prefix="/api/voice", tags=["voice"])
 settings = get_settings()
@@ -111,7 +113,7 @@ async def _send_context(upstream, soul: dict | None, messages: list[Message]) ->
         }, ensure_ascii=False))
 
 
-async def _proxy_browser_events(websocket: WebSocket, upstream) -> None:
+async def _proxy_browser_events(websocket: WebSocket, upstream, turn: dict) -> None:
     """仅转换客户端需要的三类事件，防止前端任意修改模型会话配置。"""
     while True:
         payload = await websocket.receive_json()
@@ -123,6 +125,7 @@ async def _proxy_browser_events(websocket: WebSocket, upstream) -> None:
                 continue
             await upstream.send(json.dumps({"type": "input_audio_buffer.append", "audio": audio}))
         elif event_type == "audio.commit":
+            turn.update(user_transcript="", agent_transcript="", saved=False)
             await upstream.send(json.dumps({"type": "input_audio_buffer.commit"}))
             await upstream.send(json.dumps({"type": "response.create"}))
         elif event_type == "response.cancel":
@@ -133,9 +136,115 @@ async def _proxy_browser_events(websocket: WebSocket, upstream) -> None:
             await websocket.send_json({"type": "voice.error", "message": "不支持的语音事件"})
 
 
-async def _proxy_model_events(websocket: WebSocket, upstream) -> None:
+async def _persist_voice_turn(
+    user_id: str,
+    session_id: str,
+    user_transcript: str,
+    agent_transcript: str,
+    soul: dict | None,
+) -> dict | None:
+    """只在一轮语音的最终文本齐全时，复用现有会话消息表保存。"""
+    user_content = user_transcript.strip()
+    agent_content = agent_transcript.strip()
+    if not user_content or not agent_content:
+        return None
+
+    async with async_session_factory() as db:
+        session_result = await db.execute(
+            select(Session).where(Session.id == session_id, Session.user_id == user_id)
+        )
+        session = session_result.scalar_one_or_none()
+        if not session:
+            return None
+
+        user_message = Message(
+            session_id=session.id,
+            role="user",
+            content=user_content,
+            metadata_=json.dumps({"source": "voice"}, ensure_ascii=False),
+        )
+        agent_metadata = {"source": "voice"}
+        if soul:
+            agent_metadata["soul"] = soul
+        agent_message = Message(
+            session_id=session.id,
+            role="agent",
+            content=agent_content,
+            metadata_=json.dumps(agent_metadata, ensure_ascii=False),
+        )
+        db.add_all([user_message, agent_message])
+
+        if not session.title_auto_set and session.title == "新对话":
+            session.title = user_content[:30] + ("..." if len(user_content) > 30 else "")
+            session.title_auto_set = True
+        session.updated_at = datetime.now(timezone.utc)
+
+        await db.commit()
+        await db.refresh(user_message)
+        await db.refresh(agent_message)
+        saved = {
+            "session": {
+                "id": str(session.id),
+                "title": session.title,
+                "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+            },
+            "user": {"id": str(user_message.id)},
+            "agent": {"id": str(agent_message.id)},
+        }
+
+    try:
+        schedule_tacit_refresh(user_id, session_id)
+    except Exception as exc:
+        print(f"[voice] schedule tacit refresh failed: {exc}")
+    return saved
+
+
+async def _proxy_model_events(
+    websocket: WebSocket,
+    upstream,
+    user_id: str,
+    session_id: str,
+    soul: dict | None,
+    turn: dict,
+) -> None:
     async for raw_event in upstream:
+        try:
+            event = json.loads(raw_event)
+        except json.JSONDecodeError:
+            await websocket.send_text(raw_event)
+            continue
+
+        event_type = event.get("type")
+        if event_type == "conversation.item.input_audio_transcription.delta":
+            turn["user_transcript"] += event.get("delta") or event.get("text", "")
+        elif event_type == "conversation.item.input_audio_transcription.completed":
+            turn["user_transcript"] = event.get("transcript") or turn["user_transcript"]
+        elif event_type in {"response.audio_transcript.delta", "response.text.delta"}:
+            turn["agent_transcript"] += event.get("delta") or event.get("text", "")
+        elif event_type in {"response.audio_transcript.done", "response.text.done"}:
+            turn["agent_transcript"] = (
+                event.get("transcript") or event.get("text") or turn["agent_transcript"]
+            )
+
         await websocket.send_text(raw_event)
+
+        response_status = event.get("response", {}).get("status") or event.get("status")
+        if event_type != "response.done" or turn["saved"] or response_status not in {None, "completed"}:
+            continue
+        try:
+            saved = await _persist_voice_turn(
+                user_id,
+                session_id,
+                turn["user_transcript"],
+                turn["agent_transcript"],
+                soul,
+            )
+            if saved:
+                turn["saved"] = True
+                await websocket.send_json({"type": "voice.messages_saved", "data": saved})
+        except Exception as exc:
+            print(f"[voice] save voice turn failed: {exc}")
+            await websocket.send_json({"type": "voice.error", "message": "语音消息保存失败"})
 
 
 @router.get("/status")
@@ -182,8 +291,11 @@ async def voice_realtime(websocket: WebSocket, session_id: str):
             await _send_context(upstream, soul, messages)
             await websocket.send_json({"type": "voice.ready"})
 
-            browser_task = asyncio.create_task(_proxy_browser_events(websocket, upstream))
-            model_task = asyncio.create_task(_proxy_model_events(websocket, upstream))
+            turn = {"user_transcript": "", "agent_transcript": "", "saved": False}
+            browser_task = asyncio.create_task(_proxy_browser_events(websocket, upstream, turn))
+            model_task = asyncio.create_task(
+                _proxy_model_events(websocket, upstream, user_id, session_id, soul, turn)
+            )
             done, pending = await asyncio.wait(
                 {browser_task, model_task}, return_when=asyncio.FIRST_COMPLETED
             )
