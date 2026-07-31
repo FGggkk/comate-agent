@@ -209,18 +209,20 @@
       <InputBar
         v-if="editingMsgIndex < 0"
         ref="inputBarRef"
-        :disabled="chatStore.isStreaming"
+        :disabled="chatStore.isStreaming || voiceState !== 'idle'"
+        :voice-state="voiceState"
         @send="handleSend"
+        @voice="toggleVoice"
       />
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onBeforeUnmount, onMounted, nextTick } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useUserStore } from '../stores/user'
-import { apiGetTemplates, apiPreview, apiConfirmSoul, apiSendMessage, apiListSessions, apiCreateSession, apiDeleteSession, apiGetMessages, apiEditMessage, apiDeleteMessage, apiUpdateSession, apiGetSoulInventory, apiCreateMemory, apiCreateMemoryReminder, apiCreateReminder } from '../api/index'
+import { apiGetTemplates, apiPreview, apiConfirmSoul, apiSendMessage, apiListSessions, apiCreateSession, apiDeleteSession, apiGetMessages, apiEditMessage, apiDeleteMessage, apiUpdateSession, apiGetSoulInventory, apiCreateMemory, apiCreateMemoryReminder, apiCreateReminder, apiVoiceRealtimeUrl } from '../api/index'
 import MessageBubble from '../components/MessageBubble.vue'
 import MemoryCard from '../components/MemoryCard.vue'
 import ActionButtons from '../components/ActionButtons.vue'
@@ -254,6 +256,25 @@ const reminderDraft = ref({
   time: '',
 })
 const activeSoul = computed(() => props.currentSoul || null)
+const voiceState = ref('idle')
+
+let voiceSocket = null
+let voiceSessionId = ''
+let voiceInputContext = null
+let voicePlaybackContext = null
+let voiceMediaStream = null
+let voiceSource = null
+let voiceProcessor = null
+let voiceSilentGain = null
+let voicePlaybackAt = 0
+let voiceUserMessage = null
+let voiceAgentMessage = null
+let voiceUserTranscript = ''
+let voiceAgentTranscript = ''
+let voiceReplySoul = null
+let voiceHasAudio = false
+let voiceErrorReported = false
+const voicePlaybackSources = new Set()
 const quickItems = [
   { label: '✍️ 帮我写作', action: 'writing' },
   { label: '📌 设定提醒', action: 'remind' },
@@ -383,6 +404,7 @@ async function loadMessages(sessionId) {
 }
 
 async function newSession() {
+  cleanupVoiceResources()
   try {
     const res = await apiCreateSession('新对话')
     if (res.id) {
@@ -395,6 +417,7 @@ async function newSession() {
 }
 
 async function switchSession(id) {
+  if (id !== chatStore.currentSessionId) cleanupVoiceResources()
   chatStore.setCurrentSession(id)
   await loadMessages(id)
   chatStore.closeSessionList()
@@ -406,6 +429,7 @@ async function deleteSession(id) {
     await apiDeleteSession(id)
     chatStore.removeSession(id)
     if (chatStore.currentSessionId === id) {
+      cleanupVoiceResources()
       chatStore.setCurrentSession('')
       chatStore.clearHistory()
       // 切到第一个会话
@@ -722,10 +746,7 @@ async function handleAction(payload, actionMessage = null) {
   else handleSend('给我一些建议')
 }
 
-async function handleSend(text, options = {}) {
-  showWritingPanel.value = false
-  showReminderPanel.value = false
-  // 确保有会话
+async function ensureSession() {
   let sessionId = chatStore.currentSessionId
   if (!sessionId) {
     const res = await apiCreateSession('新对话')
@@ -734,6 +755,17 @@ async function handleSend(text, options = {}) {
       chatStore.setCurrentSession(sessionId)
       chatStore.replaceSessions({ id: sessionId, title: '新对话', updated_at: new Date().toISOString() })
     }
+  }
+  return sessionId
+}
+
+async function handleSend(text, options = {}) {
+  showWritingPanel.value = false
+  showReminderPanel.value = false
+  const sessionId = await ensureSession()
+  if (!sessionId) {
+    chatStore.addMessage({ type: 'error', role: 'system', content: '创建会话失败，请稍后再试。' })
+    return
   }
 
   const replySoul = await getReplySoulSnapshot()
@@ -811,6 +843,318 @@ async function handleSend(text, options = {}) {
   }
 }
 
+// ── 实时语音 ──
+
+function updateVoiceUserMessage(content) {
+  if (!voiceUserMessage) {
+    chatStore.addMessage({ type: 'text', role: 'user', content: content || '正在识别…' })
+    voiceUserMessage = chatStore.messages[chatStore.messages.length - 1]
+  } else {
+    voiceUserMessage.content = content || '正在识别…'
+  }
+}
+
+function updateVoiceAgentMessage(content) {
+  if (!voiceAgentMessage) {
+    chatStore.addMessage({
+      type: 'text',
+      role: 'agent',
+      content: content || '正在语音回复…',
+      soul: voiceReplySoul,
+    })
+    voiceAgentMessage = chatStore.messages[chatStore.messages.length - 1]
+  } else {
+    voiceAgentMessage.content = content || '正在语音回复…'
+  }
+}
+
+function float32ToPcm16(input, inputSampleRate) {
+  const targetSampleRate = 16000
+  const ratio = inputSampleRate / targetSampleRate
+  const outputLength = Math.max(1, Math.floor(input.length / ratio))
+  const output = new ArrayBuffer(outputLength * 2)
+  const view = new DataView(output)
+
+  for (let index = 0; index < outputLength; index += 1) {
+    const start = Math.floor(index * ratio)
+    const end = Math.min(input.length, Math.floor((index + 1) * ratio))
+    let sum = 0
+    for (let sampleIndex = start; sampleIndex < Math.max(start + 1, end); sampleIndex += 1) {
+      sum += input[sampleIndex] || 0
+    }
+    const sample = Math.max(-1, Math.min(1, sum / Math.max(1, end - start)))
+    view.setInt16(index * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true)
+  }
+  return output
+}
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let index = 0; index < bytes.length; index += 1) {
+    binary += String.fromCharCode(bytes[index])
+  }
+  return window.btoa(binary)
+}
+
+function base64ToUint8Array(value) {
+  const binary = window.atob(value)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+  return bytes
+}
+
+async function startVoiceCapture() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error('当前浏览器不支持麦克风录音')
+  }
+  const AudioContextConstructor = window.AudioContext || window.webkitAudioContext
+  if (!AudioContextConstructor) {
+    throw new Error('当前浏览器不支持语音处理')
+  }
+
+  voiceMediaStream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      channelCount: 1,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+  })
+  voiceInputContext = new AudioContextConstructor()
+  await voiceInputContext.resume()
+  voiceSource = voiceInputContext.createMediaStreamSource(voiceMediaStream)
+  voiceProcessor = voiceInputContext.createScriptProcessor(4096, 1, 1)
+  voiceSilentGain = voiceInputContext.createGain()
+  voiceSilentGain.gain.value = 0
+
+  voiceProcessor.onaudioprocess = (event) => {
+    if (voiceState.value !== 'recording' || voiceSocket?.readyState !== WebSocket.OPEN) return
+    const sourceSamples = event.inputBuffer.getChannelData(0)
+    const pcm = float32ToPcm16(sourceSamples, voiceInputContext.sampleRate)
+    voiceHasAudio = true
+    voiceSocket.send(JSON.stringify({ type: 'audio.append', audio: arrayBufferToBase64(pcm) }))
+  }
+
+  voiceSource.connect(voiceProcessor)
+  voiceProcessor.connect(voiceSilentGain)
+  voiceSilentGain.connect(voiceInputContext.destination)
+}
+
+function stopVoiceCapture() {
+  if (voiceProcessor) {
+    voiceProcessor.onaudioprocess = null
+    voiceProcessor.disconnect()
+  }
+  voiceSource?.disconnect()
+  voiceSilentGain?.disconnect()
+  voiceMediaStream?.getTracks().forEach((track) => track.stop())
+  if (voiceInputContext && voiceInputContext.state !== 'closed') voiceInputContext.close()
+  voiceProcessor = null
+  voiceSource = null
+  voiceSilentGain = null
+  voiceMediaStream = null
+  voiceInputContext = null
+}
+
+async function enqueueVoiceAudio(encodedAudio) {
+  try {
+    const AudioContextConstructor = window.AudioContext || window.webkitAudioContext
+    if (!AudioContextConstructor) return
+    if (!voicePlaybackContext || voicePlaybackContext.state === 'closed') {
+      voicePlaybackContext = new AudioContextConstructor()
+    }
+    await voicePlaybackContext.resume()
+    const bytes = base64ToUint8Array(encodedAudio)
+    const pcm = new Int16Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength))
+    const buffer = voicePlaybackContext.createBuffer(1, pcm.length, 24000)
+    const channel = buffer.getChannelData(0)
+    for (let index = 0; index < pcm.length; index += 1) channel[index] = pcm[index] / 0x8000
+
+    const source = voicePlaybackContext.createBufferSource()
+    source.buffer = buffer
+    source.connect(voicePlaybackContext.destination)
+    voicePlaybackSources.add(source)
+    source.onended = () => voicePlaybackSources.delete(source)
+    const startAt = Math.max(voicePlaybackContext.currentTime, voicePlaybackAt)
+    source.start(startAt)
+    voicePlaybackAt = startAt + buffer.duration
+  } catch (error) {
+    console.warn('voice playback failed:', error)
+  }
+}
+
+function stopVoicePlayback() {
+  voicePlaybackSources.forEach((source) => {
+    try { source.stop() } catch {}
+  })
+  voicePlaybackSources.clear()
+  voicePlaybackAt = 0
+}
+
+function closeVoiceSocket() {
+  if (!voiceSocket) return
+  voiceSocket.onclose = null
+  voiceSocket.onerror = null
+  try { voiceSocket.close() } catch {}
+  voiceSocket = null
+  voiceSessionId = ''
+}
+
+function cleanupVoiceResources() {
+  stopVoiceCapture()
+  stopVoicePlayback()
+  closeVoiceSocket()
+  if (voiceState.value !== 'idle') chatStore.finishStream()
+  voiceState.value = 'idle'
+}
+
+function reportVoiceError(message) {
+  if (voiceErrorReported) return
+  voiceErrorReported = true
+  stopVoiceCapture()
+  stopVoicePlayback()
+  closeVoiceSocket()
+  chatStore.finishStream()
+  voiceState.value = 'idle'
+  chatStore.addMessage({ type: 'error', role: 'system', content: message || '语音服务暂时不可用。' })
+  nextTick(() => scrollToBottom())
+}
+
+function handleVoiceEvent(event) {
+  const eventType = event?.type
+  if (eventType === 'voice.error') {
+    reportVoiceError(event.message)
+    return
+  }
+  if (eventType === 'conversation.item.input_audio_transcription.delta') {
+    voiceUserTranscript += event.delta || event.text || ''
+    updateVoiceUserMessage(voiceUserTranscript)
+  } else if (eventType === 'conversation.item.input_audio_transcription.completed') {
+    voiceUserTranscript = event.transcript || voiceUserTranscript
+    updateVoiceUserMessage(voiceUserTranscript)
+  } else if (eventType === 'response.audio_transcript.delta' || eventType === 'response.text.delta') {
+    voiceAgentTranscript += event.delta || event.text || ''
+    updateVoiceAgentMessage(voiceAgentTranscript)
+  } else if (eventType === 'response.audio_transcript.done' || eventType === 'response.text.done') {
+    voiceAgentTranscript = event.transcript || event.text || voiceAgentTranscript
+    updateVoiceAgentMessage(voiceAgentTranscript)
+  } else if (eventType === 'response.audio.delta') {
+    updateVoiceAgentMessage(voiceAgentTranscript)
+    enqueueVoiceAudio(event.delta)
+  } else if (eventType === 'response.done') {
+    stopVoiceCapture()
+    voiceState.value = 'idle'
+    chatStore.finishStream()
+  }
+  nextTick(() => scrollToBottom())
+}
+
+function openVoiceSocket(sessionId) {
+  if (voiceSocket?.readyState === WebSocket.OPEN && voiceSessionId === sessionId) {
+    return Promise.resolve()
+  }
+  closeVoiceSocket()
+  const token = localStorage.getItem('comate_token')
+  if (!token) return Promise.reject(new Error('登录已失效，请重新登录'))
+
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const failConnection = (message) => {
+      if (settled) return
+      settled = true
+      reject(new Error(message))
+    }
+    const timeout = window.setTimeout(() => failConnection('连接语音服务超时'), 15000)
+    voiceSocket = new WebSocket(apiVoiceRealtimeUrl(sessionId), ['comate-auth', token])
+    voiceSessionId = sessionId
+    voiceSocket.onmessage = (message) => {
+      let event
+      try { event = JSON.parse(message.data) } catch { return }
+      if (event.type === 'voice.ready' && !settled) {
+        settled = true
+        window.clearTimeout(timeout)
+        resolve()
+      }
+      if (event.type === 'voice.error' && !settled) {
+        window.clearTimeout(timeout)
+        failConnection(event.message || '语音服务连接失败')
+      }
+      handleVoiceEvent(event)
+    }
+    voiceSocket.onerror = () => {
+      window.clearTimeout(timeout)
+      if (!settled) failConnection('语音服务连接失败')
+      else if (voiceState.value !== 'idle') reportVoiceError('语音服务连接中断')
+    }
+    voiceSocket.onclose = () => {
+      window.clearTimeout(timeout)
+      if (!settled) failConnection('语音服务已关闭')
+      else if (voiceState.value !== 'idle') reportVoiceError('语音服务已断开')
+    }
+  })
+}
+
+async function startVoice() {
+  if (chatStore.isStreaming) return
+  voiceErrorReported = false
+  voiceState.value = 'connecting'
+  voiceUserMessage = null
+  voiceAgentMessage = null
+  voiceUserTranscript = ''
+  voiceAgentTranscript = ''
+  voiceHasAudio = false
+  voiceReplySoul = await getReplySoulSnapshot()
+  try {
+    const sessionId = await ensureSession()
+    if (!sessionId) throw new Error('创建会话失败，请稍后再试')
+    await openVoiceSocket(sessionId)
+    await startVoiceCapture()
+    voiceState.value = 'recording'
+  } catch (error) {
+    reportVoiceError(error.message)
+  }
+}
+
+function finishVoiceRecording() {
+  stopVoiceCapture()
+  if (!voiceHasAudio) {
+    voiceState.value = 'idle'
+    chatStore.addMessage({ type: 'error', role: 'system', content: '没有采集到声音，请检查麦克风后重试。' })
+    return
+  }
+  if (voiceSocket?.readyState !== WebSocket.OPEN) {
+    reportVoiceError('语音服务连接已断开')
+    return
+  }
+  voiceState.value = 'responding'
+  updateVoiceUserMessage('正在识别…')
+  chatStore.setStreaming(true)
+  voiceSocket.send(JSON.stringify({ type: 'audio.commit' }))
+}
+
+function cancelVoiceResponse() {
+  if (voiceSocket?.readyState === WebSocket.OPEN) {
+    voiceSocket.send(JSON.stringify({ type: 'response.cancel' }))
+  }
+  stopVoicePlayback()
+  voiceState.value = 'idle'
+  chatStore.finishStream()
+}
+
+function toggleVoice() {
+  if (voiceState.value === 'connecting') return
+  if (voiceState.value === 'recording') {
+    finishVoiceRecording()
+  } else if (voiceState.value === 'responding') {
+    cancelVoiceResponse()
+  } else {
+    startVoice()
+  }
+}
+
 // ── 页面初始化 ──
 
 onMounted(async () => {
@@ -825,6 +1169,8 @@ onMounted(async () => {
     await switchSession(chatStore.sessions[0].id)
   }
 })
+
+onBeforeUnmount(() => cleanupVoiceResources())
 
 function startOnboarding() { onboardingStep.value = 'select' }
 
