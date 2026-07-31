@@ -211,3 +211,8 @@ export const apiDeleteMessage = (id) => del(`/messages/${id}`)
 export const apiCreateReminder = (content, remind_at) => post('/reminders', { content, remind_at })
 export const apiGetReminders = () => get('/reminders')
 export const apiDeleteReminder = (id) => del(`/reminders/${id}`)
+
+// Billing（积分）
+export const apiRedeemCode = (code) => post('/billing/redeem', { code })
+export const apiGetBalance = () => get('/billing/balance')
+export const apiGetTransactions = (page = 1) => get(`/billing/transactions?page=${page}&size=20`)
