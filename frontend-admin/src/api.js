@@ -60,3 +60,12 @@ export const apiAdminSaveRules = (rules) =>
   request('/billing-rules', { method: 'PUT', body: JSON.stringify({ rules }) })
 export const apiAdminSaveSetting = (key, value) =>
   request('/settings', { method: 'PUT', body: JSON.stringify({ key, value }) })
+
+// 数据统计
+export const apiAdminStats = (days = 30) => request(`/stats?days=${days}`)
+
+// 系统设置
+export const apiAdminListAdmins = () => request('/admins')
+export const apiAdminCreateAdmin = (data) => request('/admins', { method: 'POST', body: JSON.stringify(data) })
+export const apiAdminAdminStatus = (id, status) => request(`/admins/${id}/status`, { method: 'POST', body: JSON.stringify({ status }) })
+export const apiAdminAdminPassword = (id, password) => request(`/admins/${id}/password`, { method: 'POST', body: JSON.stringify({ password }) })

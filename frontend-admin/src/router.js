@@ -14,6 +14,8 @@ export const router = createRouter({
         { path: 'users', component: () => import('./pages/Users.vue'), meta: { title: '用户' } },
         { path: 'codes', component: () => import('./pages/Codes.vue'), meta: { title: '兑换码' } },
         { path: 'billing', component: () => import('./pages/Billing.vue'), meta: { title: '计费规则' } },
+        { path: 'stats', component: () => import('./pages/Stats.vue'), meta: { title: '数据统计' } },
+        { path: 'settings', component: () => import('./pages/Settings.vue'), meta: { title: '系统设置' } },
       ],
     },
   ],
