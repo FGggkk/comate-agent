@@ -46,7 +46,9 @@ def create_app() -> FastAPI:
     )
 
     # 注册路由
-    from app.api import auth, chat, souls, memories, interview, reminders, user, sessions, messages, finance, travel, shopping, admin_auth, admin_dashboard, admin_codes, admin_users, admin_settings, admin_stats, admin_admins, admin_souls, billing
+
+    from app.api import auth, chat, souls, memories, interview, reminders, user, sessions, messages, finance, travel, shopping, voice, admin_auth, admin_dashboard, admin_codes, admin_users, admin_settings, admin_stats, admin_admins, admin_souls, billing
+
     app.include_router(auth.router)
     app.include_router(chat.router)
     app.include_router(souls.router)
@@ -59,6 +61,7 @@ def create_app() -> FastAPI:
     app.include_router(finance.router)
     app.include_router(travel.router)
     app.include_router(shopping.router)
+    app.include_router(voice.router)
     app.include_router(admin_auth.router)
     app.include_router(admin_dashboard.router)
     app.include_router(admin_codes.router)

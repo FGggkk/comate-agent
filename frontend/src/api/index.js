@@ -1,5 +1,10 @@
 const BASE = 'http://localhost:8000/api'
 
+export function apiVoiceRealtimeUrl(sessionId) {
+  const wsBase = BASE.replace(/^http/, 'ws')
+  return `${wsBase}/voice/realtime?session_id=${encodeURIComponent(sessionId)}`
+}
+
 let _refreshing = null
 
 function authHeaders() {
