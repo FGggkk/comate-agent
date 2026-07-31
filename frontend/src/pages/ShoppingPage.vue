@@ -90,7 +90,7 @@
                 <div class="confirm-field"><span>预算：</span>{{ m.detail.budget || '未指定' }}</div>
                 <div class="confirm-field"><span>用途：</span>{{ m.detail.use || '未指定' }}</div>
                 <div class="confirm-actions" style="margin-top:8px;">
-                  <button v-if="!store.currentPlans" @click="startSearch(m)" :disabled="searching" class="btn-go" style="font-size:14px;padding:10px;">
+                  <button v-if="!m.searched" @click="startSearch(m)" :disabled="searching" class="btn-go" style="font-size:14px;padding:10px;">
                     {{ searching ? '⏳ 搜索中...' : '🔍 开始搜索' }}
                   </button>
                   <button v-else class="btn-go" style="font-size:14px;padding:10px;background:var(--sprout);opacity:0.7;" disabled>✅ 已生成方案</button>
@@ -104,7 +104,7 @@
         </div>
       </div>
       <!-- 搜索进度 -->
-      <div class="chat-bottom" v-if="!store.currentPlans && !store.currentTaskId">
+      <div class="chat-bottom" v-if="(!store.currentPlans && !store.currentTaskId) || showChat">
         <div class="quickbar">
           <button v-for="q in quickItems" :key="q.label" class="qa" @click="sendQuick(q)">{{ q.label }}</button>
         </div>
@@ -175,6 +175,14 @@ function sendChat() {
   const text = chatInput.value.trim()
   if (!text) return
   chatInput.value = ''
+
+  // 如果最后一条是未搜索的确认卡片，覆盖它（连同用户消息）而不是新增
+  const msgs = store.messages
+  const lastMsg = msgs[msgs.length - 1]
+  if (lastMsg?.confirmCard && !lastMsg.searched) {
+    store.messages = msgs.slice(0, msgs.length - 2)
+  }
+
   store.demand = text
   store.addMessage('user', text)
   let budget = '', use = ''
@@ -208,6 +216,7 @@ function deleteMsg(i) {
 async function startSearch(m) {
   if (searching.value) return
   searching.value = true
+  m.searched = true
   store.disconnectSSE()
   store.currentPlans = null
   store.currentTaskId = ''
