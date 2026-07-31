@@ -73,9 +73,19 @@
         <input v-model="reminderTime" type="datetime-local" class="form-input" style="flex:0 0 auto;width:auto;" />
         <button @click="createReminder" class="btn-primary" style="width:auto;padding:10px 16px;font-size:13px;">添加</button>
       </div>
-      <div v-for="r in reminders" :key="r.id" style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);">
-        <div><div style="font-size:14px;">{{ r.content }}</div><div style="font-size:11px;color:var(--sub);">{{ formatTime(r.remind_at) }}</div></div>
-        <button @click="deleteReminder(r.id)" style="font-size:12px;color:var(--berry);padding:4px 8px;">取消</button>
+      <div
+        v-for="r in reminders"
+        :key="r.id"
+        :class="['reminder-row', { expired: isReminderExpired(r) }]"
+      >
+        <div class="reminder-main">
+          <div class="reminder-title-line">
+            <span class="reminder-content">{{ r.content }}</span>
+            <span v-if="isReminderExpired(r)" class="reminder-expired-badge">已过期</span>
+          </div>
+          <div class="reminder-time">{{ formatTime(r.remind_at) }}</div>
+        </div>
+        <button @click="deleteReminder(r.id)" class="reminder-cancel">取消</button>
       </div>
       <div v-if="reminders.length === 0" style="font-size:13px;color:var(--sub);padding:6px 0;">暂无提醒</div>
     </div>
@@ -88,7 +98,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useUserStore } from '../stores/user'
 import SoulOrb from '../components/SoulOrb.vue'
 import {
@@ -112,6 +122,7 @@ const userStore = useUserStore()
 const reminders = ref([])
 const reminderContent = ref('')
 const reminderTime = ref('')
+const nowMs = ref(Date.now())
 const nicknameInput = ref(userStore.nickname || '')
 const saving = ref(false)
 const uploading = ref(false)
@@ -138,8 +149,10 @@ const avatarLetter = computed(() => {
 })
 const ownedSouls = computed(() => (soulInventory.value.templates || []).filter((item) => item.owned))
 const currentSoul = computed(() => soulInventory.value.current || ownedSouls.value.find((item) => item.active) || null)
+let reminderClock = null
 
 onMounted(async () => {
+  reminderClock = window.setInterval(() => { nowMs.value = Date.now() }, 60000)
   await loadReminders()
   // 加载用户信息
   try {
@@ -152,6 +165,9 @@ onMounted(async () => {
     console.error('loadProfile error:', e)
   }
   await loadSoulInventory()
+})
+onBeforeUnmount(() => {
+  if (reminderClock) window.clearInterval(reminderClock)
 })
 watch(() => props.refreshKey, loadSoulInventory)
 watch(() => props.reminderRefreshKey, loadReminders)
@@ -249,6 +265,12 @@ async function onFileSelect(e) {
     e.target.value = ''
     setTimeout(() => { profileMsg.value = '' }, 3000)
   }
+}
+
+function isReminderExpired(reminder) {
+  if (reminder?.triggered) return true
+  const remindAt = new Date(reminder?.remind_at).getTime()
+  return Number.isFinite(remindAt) && remindAt <= nowMs.value
 }
 
 function formatTime(iso) { return iso ? new Date(iso).toLocaleString('zh-CN') : '' }
@@ -372,5 +394,57 @@ function logout() { userStore.logout(); window.location.reload() }
   color: var(--honey-deep);
   font-size: 12px;
   margin-top: 8px;
+}
+.reminder-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+.reminder-row.expired {
+  opacity: .64;
+}
+.reminder-main {
+  min-width: 0;
+  flex: 1;
+}
+.reminder-title-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.reminder-content {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reminder-row.expired .reminder-content {
+  color: var(--sub);
+}
+.reminder-time {
+  color: var(--sub);
+  font-size: 11px;
+  margin-top: 3px;
+}
+.reminder-expired-badge {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(166, 145, 120, .12);
+  color: var(--sub);
+  font-size: 11px;
+  font-weight: 700;
+}
+.reminder-cancel {
+  flex-shrink: 0;
+  padding: 4px 8px;
+  color: var(--berry);
+  font-size: 12px;
 }
 </style>
