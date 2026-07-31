@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.api.response import ok, fail
 from app.db.session import get_db
+from app.services import billing_service
 from app.services import shopping_service
 
 router = APIRouter(prefix="/api/shopping", tags=["shopping"])
@@ -28,8 +29,13 @@ class GenerateRequest(BaseModel):
 async def api_generate(
     req: GenerateRequest,
     user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """开始生成购物方案（后台异步执行，不依赖 SSE 连接）"""
+    # 计费：购物计划
+    bill = await billing_service.consume(db, user_id, "shopping_plan", ref_type="shopping", note="购物计划")
+    if bill.get("insufficient"):
+        return fail(bill["message"])
     task_id = f"shopping_{_uuid.uuid4().hex[:12]}"
 
     # 初始化进度

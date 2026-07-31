@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.api.response import ok, fail
 from app.db.session import get_db
+from app.services import billing_service
 from app.services.interview_engine import (
     answer_question,
     edit_answer,
@@ -65,12 +66,20 @@ async def api_start(req: StartRequest, db: AsyncSession = Depends(get_db), user_
 
 @router.post("/{session_id}/answer")
 async def api_answer(session_id: str, req: AnswerRequest, db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
+    # 计费：面试提问
+    bill = await billing_service.consume(db, user_id, "interview_question", ref_type="interview", ref_id=session_id, note="面试提问")
+    if bill.get("insufficient"):
+        return fail(bill["message"])
     result = await answer_question(session_id, req.answer, user_id, db)
     return ok(result) if "success" not in result else result
 
 
 @router.post("/{session_id}/answer/stream")
 async def api_answer_stream(session_id: str, req: AnswerRequest, db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
+    # 计费：面试提问（流式，先扣费再开流）
+    bill = await billing_service.consume(db, user_id, "interview_question", ref_type="interview", ref_id=session_id, note="面试提问")
+    if bill.get("insufficient"):
+        return fail(bill["message"])
     async def event_stream():
         yield _sse("init", {"session_id": session_id})
         async for event in stream_answer(session_id, req.answer, db):
@@ -91,6 +100,8 @@ async def api_next(session_id: str, db: AsyncSession = Depends(get_db), user_id:
 @router.post("/{session_id}/end")
 async def api_end(session_id: str, db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
     """主动结束面试"""
+    # 计费：面试报告
+    await billing_service.consume(db, user_id, "interview_report", ref_type="interview", ref_id=session_id, note="面试报告")
     return await end_interview(session_id, user_id, db)
 
 
@@ -197,7 +208,11 @@ async def api_report(session_id: str, db: AsyncSession = Depends(get_db), user_i
 
 
 @router.post("/{session_id}/hint")
-async def api_hint(session_id: str, req: HintRequest, db: AsyncSession = Depends(get_db)):
+async def api_hint(session_id: str, req: HintRequest, db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
+    # 计费：思路提示
+    bill = await billing_service.consume(db, user_id, "reroll_hint", ref_type="interview", ref_id=session_id, note="思路提示")
+    if bill.get("insufficient"):
+        return fail(bill["message"])
     from app.services.model_gateway import gateway
     prompt = f"""你是面试辅导教练。用户正在面试，遇到了这个问题：
 
@@ -218,6 +233,10 @@ async def api_hint(session_id: str, req: HintRequest, db: AsyncSession = Depends
 @router.post("/{session_id}/reroll")
 async def api_reroll(session_id: str, db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
     """重新生成当前轮的最新一道 pending 题"""
+    # 计费：重出题
+    bill = await billing_service.consume(db, user_id, "reroll_hint", ref_type="interview", ref_id=session_id, note="重出题")
+    if bill.get("insufficient"):
+        return fail(bill["message"])
     from sqlalchemy import select, delete
     from app.models.interview import InterviewSession, InterviewQuestion
     sess = await db.execute(select(InterviewSession).where(InterviewSession.id == session_id, InterviewSession.user_id == user_id))

@@ -9,7 +9,7 @@ from .conversation import Session, Message
 from .tacit import SessionSummary, TacitProfile, TacitProfileVersion
 from .finance import FinanceRecord, FinanceMessage
 from .travel import TravelPlan, TravelDay
-from .billing import Admin, RedemptionCode, RedemptionUsage, BalanceAccount, BalanceTransaction, BillingRule
+from .billing import Admin, RedemptionCode, RedemptionUsage, BalanceAccount, BalanceTransaction, BillingRule, AppSetting
 
 __all__ = [
     "User",
@@ -39,4 +39,5 @@ __all__ = [
     "BalanceAccount",
     "BalanceTransaction",
     "BillingRule",
+    "AppSetting",
 ]

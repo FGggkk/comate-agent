@@ -161,7 +161,49 @@
         </div>
         <div v-if="reminders.length === 0" class="reminder-empty">暂无提醒</div>
       </div>
+
+      <div v-if="reminders.length === 0" style="font-size:13px;color:var(--sub);padding:6px 0;">暂无提醒</div>
+    </div>
+
+    <!-- 积分与兑换 -->
+    <div class="page-card">
+      <div class="page-label">积分与兑换</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0 12px;">
+        <div>
+          <div style="font-size:12px;color:var(--sub);">当前积分</div>
+          <div style="font-size:26px;font-weight:700;color:var(--honey-deep);">{{ balance }}</div>
+        </div>
+        <div style="font-size:11px;color:var(--sub);">对话/工具消耗积分，兑换码充值</div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <input v-model="codeInput" placeholder="输入兑换码，如 BANX-XXXX-XXXX-XXXX" class="form-input" style="flex:1;letter-spacing:.03em;" @keydown.enter="redeemCode" />
+        <button @click="redeemCode" :disabled="redeeming || !codeInput.trim()" class="btn-primary" style="width:auto;padding:10px 18px;font-size:13px;">
+          {{ redeeming ? '兑换中...' : '兑换' }}
+        </button>
+      </div>
+      <p v-if="redeemMsg" :style="{ fontSize: '12px', marginTop: '6px', color: redeemOk ? 'var(--sprout)' : 'var(--berry)' }">{{ redeemMsg }}</p>
+
+      <div style="margin-top:14px;">
+        <div style="font-size:12px;color:var(--sub);margin-bottom:6px;">收支明细</div>
+        <div v-if="transactions.length === 0" style="font-size:13px;color:var(--sub);padding:6px 0;">暂无记录</div>
+        <div v-for="t in transactions" :key="t.id" style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line);">
+          <div>
+            <div style="font-size:13px;">{{ t.note || t.ref_type || t.type }}</div>
+            <div style="font-size:11px;color:var(--sub);">{{ formatTime(t.created_at) }}</div>
+          </div>
+          <span :style="{ fontSize: '14px', fontWeight: 600, color: t.change >= 0 ? 'var(--sprout)' : 'var(--berry)' }">
+            {{ t.change >= 0 ? '+' : '' }}{{ t.change }}
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 退出 -->
+    <button @click="logout" style="width:100%;margin-top:20px;padding:10px;border-radius:var(--r-sm);border:1.5px solid var(--line);font-size:14px;color:var(--berry);text-align:center;">
+      退出登录
+    </button>
     </section>
+
   </div>
 </template>
 
@@ -178,6 +220,9 @@ import {
   apiUploadAvatar,
   apiGetSoulInventory,
   apiInjectSoul,
+  apiGetBalance,
+  apiRedeemCode,
+  apiGetTransactions,
 } from '../api/index'
 
 const props = defineProps({
@@ -200,6 +245,14 @@ const fileInput = ref(null)
 const soulInventory = ref({ templates: [], current: null, owned_count: 0, total_count: 5 })
 const soulMsg = ref('')
 const switchingSoulId = ref('')
+
+// 积分与兑换
+const balance = ref(0)
+const codeInput = ref('')
+const redeeming = ref(false)
+const redeemMsg = ref('')
+const redeemOk = ref(false)
+const transactions = ref([])
 
 const avatarColors = [
   'linear-gradient(135deg, #FFD0A8, #FF9F7A)',
@@ -239,12 +292,47 @@ onMounted(async () => {
     console.error('loadProfile error:', e)
   }
   await loadSoulInventory()
+  loadBilling()
 })
 onBeforeUnmount(() => {
   if (reminderClock) window.clearInterval(reminderClock)
 })
 watch(() => props.refreshKey, loadSoulInventory)
 watch(() => props.reminderRefreshKey, loadReminders)
+
+async function loadBilling() {
+  try {
+    const bal = await apiGetBalance()
+    if (typeof bal.balance === 'number') balance.value = bal.balance
+    const tx = await apiGetTransactions()
+    transactions.value = (tx.items || []).slice(0, 20)
+  } catch {}
+}
+
+async function redeemCode() {
+  const code = codeInput.value.trim()
+  if (!code || redeeming.value) return
+  redeeming.value = true
+  redeemMsg.value = ''
+  try {
+    const res = await apiRedeemCode(code)
+    if (res.success) {
+      redeemOk.value = true
+      redeemMsg.value = res.message || '兑换成功'
+      balance.value = res.balance ?? balance.value
+      codeInput.value = ''
+      loadBilling()
+    } else {
+      redeemOk.value = false
+      redeemMsg.value = res.message || '兑换失败'
+    }
+  } catch {
+    redeemOk.value = false
+    redeemMsg.value = '网络错误，请重试'
+  } finally {
+    redeeming.value = false
+  }
+}
 
 async function loadReminders() {
   reminders.value = (await apiGetReminders()).reminders || []
