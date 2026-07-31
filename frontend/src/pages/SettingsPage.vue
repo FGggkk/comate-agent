@@ -65,6 +65,23 @@
           <polyline points="7,4 13,10 7,16"/>
         </svg>
       </button>
+
+      <button class="settings-entry entry-billing" @click="activeSection = 'billing'">
+        <span class="settings-entry-icon">
+          <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.6">
+            <circle cx="16" cy="16" r="11"/>
+            <path d="M16 11v10M13 14h6a2.5 2.5 0 0 1 0 5h-6"/>
+          </svg>
+        </span>
+        <span class="settings-entry-body">
+          <span class="settings-entry-title">积分</span>
+          <span class="settings-entry-desc">查看余额、兑换码充值</span>
+        </span>
+        <span class="settings-entry-count num">{{ balance }}</span>
+        <svg class="settings-entry-arrow" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8">
+          <polyline points="7,4 13,10 7,16"/>
+        </svg>
+      </button>
     </div>
 
     <button @click="logout" class="logout-btn">退出登录</button>
@@ -163,46 +180,48 @@
       </div>
 
       <div v-if="reminders.length === 0" style="font-size:13px;color:var(--sub);padding:6px 0;">暂无提醒</div>
-    </div>
+    </section>
 
-    <!-- 积分与兑换 -->
-    <div class="page-card">
-      <div class="page-label">积分与兑换</div>
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0 12px;">
-        <div>
-          <div style="font-size:12px;color:var(--sub);">当前积分</div>
-          <div style="font-size:26px;font-weight:700;color:var(--honey-deep);">{{ balance }}</div>
+    <section v-else-if="activeSection === 'billing'" class="settings-detail-card">
+      <!-- 积分余额（折叠） -->
+      <div class="page-label" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" @click="billingOpen = !billingOpen">
+        <span>积分余额</span>
+        <span style="display:flex;align-items:center;gap:8px;">
+          <b style="font-size:20px;color:var(--honey-deep);">{{ balance }}</b>
+          <span style="font-size:12px;color:var(--sub);font-weight:400;">{{ billingOpen ? '收起 ▲' : '兑换/明细 ▼' }}</span>
+        </span>
+      </div>
+
+      <template v-if="billingOpen">
+        <div style="font-size:11px;color:var(--sub);margin-bottom:10px;">对话/工具消耗积分，兑换码充值</div>
+        <div style="display:flex;gap:8px;">
+          <input v-model="codeInput" placeholder="输入兑换码，如 BANX-XXXX-XXXX-XXXX" class="form-input" style="flex:1;letter-spacing:.03em;" @keydown.enter="redeemCode" />
+          <button @click="redeemCode" :disabled="redeeming || !codeInput.trim()" class="btn-primary" style="width:auto;padding:10px 18px;font-size:13px;">
+            {{ redeeming ? '兑换中...' : '兑换' }}
+          </button>
         </div>
-        <div style="font-size:11px;color:var(--sub);">对话/工具消耗积分，兑换码充值</div>
-      </div>
-      <div style="display:flex;gap:8px;">
-        <input v-model="codeInput" placeholder="输入兑换码，如 BANX-XXXX-XXXX-XXXX" class="form-input" style="flex:1;letter-spacing:.03em;" @keydown.enter="redeemCode" />
-        <button @click="redeemCode" :disabled="redeeming || !codeInput.trim()" class="btn-primary" style="width:auto;padding:10px 18px;font-size:13px;">
-          {{ redeeming ? '兑换中...' : '兑换' }}
-        </button>
-      </div>
-      <p v-if="redeemMsg" :style="{ fontSize: '12px', marginTop: '6px', color: redeemOk ? 'var(--sprout)' : 'var(--berry)' }">{{ redeemMsg }}</p>
+        <p v-if="redeemMsg" :style="{ fontSize: '12px', marginTop: '6px', color: redeemOk ? 'var(--sprout)' : 'var(--berry)' }">{{ redeemMsg }}</p>
 
-      <div style="margin-top:14px;">
-        <div style="font-size:12px;color:var(--sub);margin-bottom:6px;">收支明细</div>
-        <div v-if="transactions.length === 0" style="font-size:13px;color:var(--sub);padding:6px 0;">暂无记录</div>
-        <div v-for="t in transactions" :key="t.id" style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line);">
-          <div>
-            <div style="font-size:13px;">{{ t.note || t.ref_type || t.type }}</div>
-            <div style="font-size:11px;color:var(--sub);">{{ formatTime(t.created_at) }}</div>
+        <div style="margin-top:14px;">
+          <div style="font-size:12px;color:var(--sub);margin-bottom:6px;">收支明细</div>
+          <div v-if="transactions.length === 0" style="font-size:13px;color:var(--sub);padding:6px 0;">暂无记录</div>
+          <div v-for="t in transactions" :key="t.id" style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line);">
+            <div>
+              <div style="font-size:13px;">{{ t.note || t.ref_type || t.type }}</div>
+              <div style="font-size:11px;color:var(--sub);">{{ formatTime(t.created_at) }}</div>
+            </div>
+            <span :style="{ fontSize: '14px', fontWeight: 600, color: t.change >= 0 ? 'var(--sprout)' : 'var(--berry)' }">
+              {{ t.change >= 0 ? '+' : '' }}{{ t.change }}
+            </span>
           </div>
-          <span :style="{ fontSize: '14px', fontWeight: 600, color: t.change >= 0 ? 'var(--sprout)' : 'var(--berry)' }">
-            {{ t.change >= 0 ? '+' : '' }}{{ t.change }}
-          </span>
         </div>
-      </div>
-    </div>
+      </template>
+    </section>
 
     <!-- 退出 -->
     <button @click="logout" style="width:100%;margin-top:20px;padding:10px;border-radius:var(--r-sm);border:1.5px solid var(--line);font-size:14px;color:var(--berry);text-align:center;">
       退出登录
     </button>
-    </section>
 
   </div>
 </template>
@@ -253,6 +272,7 @@ const redeeming = ref(false)
 const redeemMsg = ref('')
 const redeemOk = ref(false)
 const transactions = ref([])
+const billingOpen = ref(false)
 
 const avatarColors = [
   'linear-gradient(135deg, #FFD0A8, #FF9F7A)',
@@ -275,6 +295,7 @@ const activeSectionInfo = computed(() => ({
   profile: { title: '个人信息', desc: '头像、昵称和账号信息' },
   style: { title: '当前风格', desc: '切换你的伴行小球' },
   reminders: { title: '提醒', desc: '查看、添加和管理提醒' },
+  billing: { title: '积分', desc: '查看余额、兑换码充值' },
 }[activeSection.value] || { title: '设置', desc: '' }))
 let reminderClock = null
 
