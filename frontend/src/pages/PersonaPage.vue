@@ -42,6 +42,25 @@
         </button>
       </section>
 
+      <!-- 翻卡抽卡动画 -->
+      <section v-if="drawing || drawResult" class="draw-reveal">
+        <div :class="['flip-card', drawResult ? 'flipped' : '']">
+          <div class="flip-inner">
+            <div class="flip-face card-front">
+              <span>?</span>
+              <small>抽取中</small>
+            </div>
+            <div v-if="drawResult?.avatar_image" class="flip-face card-back" :style="{ backgroundImage: `url(${drawResult.avatar_image})`, backgroundSize: 'cover', backgroundPosition: 'center' }">
+              <small style="background:rgba(0,0,0,.55);padding:3px 12px;border-radius:100px;margin-top:auto;margin-bottom:12px;">{{ drawResult?.name }}</small>
+            </div>
+            <div v-else class="flip-face card-back" :style="{ background: drawGrad }">
+              <span>{{ drawResult?.name?.[0] || '✦' }}</span>
+              <small>{{ drawResult?.name || '…' }}</small>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <p v-if="message" :class="['persona-msg', messageTone]">{{ message }}</p>
 
       <section class="orb-section">
@@ -98,6 +117,7 @@ const emit = defineEmits(['back', 'changed'])
 
 const loading = ref(true)
 const drawing = ref(false)
+const drawResult = ref(null)
 const injectingId = ref('')
 const inventory = ref({ templates: [], current: null, owned_count: 0, total_count: 5 })
 const message = ref('')
@@ -129,21 +149,40 @@ async function loadInventory() {
 async function draw() {
   if (drawing.value || ownedCount.value >= totalCount.value) return
   drawing.value = true
+  drawResult.value = null
   message.value = ''
   try {
     const res = await apiDrawSoul()
     if (res.inventory) inventory.value = res.inventory
-    messageTone.value = res.success ? 'ok' : 'hint'
-    message.value = res.success ? `抽到了「${res.template?.name || '新人设'}」` : (res.message || '已经全部获得')
-    if (res.success) emit('changed')
+    if (res.success) {
+      drawResult.value = res.template
+      messageTone.value = 'ok'
+      message.value = `抽到了「${res.template?.name || '新人设'}」`
+      emit('changed')
+    } else {
+      messageTone.value = 'hint'
+      message.value = res.message || '已经全部获得'
+    }
   } catch (e) {
     console.error('draw soul error:', e)
     messageTone.value = 'error'
     message.value = '抽取失败，请稍后再试。'
   } finally {
     drawing.value = false
+    // 翻卡展示后自动收起
+    if (drawResult.value) {
+      setTimeout(() => { if (!drawing.value) drawResult.value = null }, 3000)
+    }
   }
 }
+
+const orbPalette = ['#FF9F7A', '#5FBE63', '#5FB0E8', '#FF6F91', '#FF9F45', '#9B6FD8', '#5B7FA6']
+const drawGrad = computed(() => {
+  const t = drawResult.value
+  if (!t) return 'radial-gradient(circle at 30% 30%, #C99A2E, #8A6A1C)'
+  const c = t.color || orbPalette[(t.name ? t.name.length : 0) % orbPalette.length]
+  return `radial-gradient(circle at 30% 30%, ${c}, ${c}99)`
+})
 
 async function inject(item) {
   if (!item?.owned || item.active || injectingId.value) return
@@ -241,6 +280,52 @@ async function inject(item) {
   gap: 10px;
   margin: 14px 0 10px;
 }
+.draw-reveal {
+  display: flex;
+  justify-content: center;
+  padding: 18px 0 6px;
+  perspective: 900px;
+}
+.flip-card {
+  width: 150px;
+  height: 190px;
+  perspective: 900px;
+}
+.flip-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transition: transform .6s cubic-bezier(.4,.2,.2,1);
+}
+.flip-card.flipped .flip-inner { transform: rotateY(180deg); }
+.flip-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.card-front {
+  background: linear-gradient(145deg, var(--honey), var(--honey-deep));
+  color: #fff;
+  box-shadow: 0 8px 24px rgba(201, 154, 46, .35);
+}
+.card-front span { font-size: 44px; font-weight: 800; }
+.card-front small { font-size: 12px; opacity: .85; }
+.card-back {
+  transform: rotateY(180deg);
+  color: #fff;
+  box-shadow: 0 8px 24px rgba(0,0,0,.15);
+}
+.card-back span { font-size: 52px; font-weight: 800; text-shadow: 0 2px 8px rgba(0,0,0,.2); }
+.card-back small { font-size: 13px; font-weight: 600; max-width: 90%; text-align: center; }
+
 .draw-btn {
   flex: 1;
   height: 46px;

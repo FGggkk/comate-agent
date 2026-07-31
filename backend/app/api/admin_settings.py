@@ -38,12 +38,19 @@ async def get_rules(
     rules = (await db.execute(select(BillingRule).order_by(BillingRule.price.desc()))).scalars().all()
     enforce = await billing_service.get_setting(db, "billing_enforce", "false")
     bonus = await billing_service.get_setting(db, "register_bonus", "20")
+    # 系统设置
+    settings_keys = [
+        "model_key", "model_name", "model_temperature",
+        "tool_search", "tool_weather", "tool_shopping",
+    ]
+    settings = {k: await billing_service.get_setting(db, k, "") for k in settings_keys}
     return {
         "success": True,
         "data": {
             "rules": [_rule_dict(r) for r in rules],
             "billing_enforce": enforce,
             "register_bonus": bonus,
+            "settings": settings,
         },
     }
 
@@ -72,12 +79,17 @@ async def save_setting(
     admin: Admin = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    if req.key not in ("billing_enforce", "register_bonus"):
+    allowed = {
+        "billing_enforce", "register_bonus",
+        "model_key", "model_name", "model_temperature",
+        "tool_search", "tool_weather", "tool_shopping",
+    }
+    if req.key not in allowed:
         return {"success": False, "message": "不支持的设置项"}
-    if req.key == "register_bonus":
+    if req.key == "register_bonus" or req.key == "model_temperature":
         try:
-            int(req.value)
+            float(req.value)
         except ValueError:
-            return {"success": False, "message": "赠送积分必须是数字"}
+            return {"success": False, "message": "数值格式不正确"}
     await billing_service.set_setting(db, req.key, req.value)
     return {"success": True, "message": "已保存"}

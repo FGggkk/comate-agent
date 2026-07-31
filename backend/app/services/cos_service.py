@@ -55,3 +55,37 @@ def upload_avatar(file_bytes: bytes, filename: str, user_id: str) -> str | None:
     except Exception as e:
         print(f"[COS upload error] {e}")
         return None
+
+
+def upload_image(file_bytes: bytes, filename: str, folder: str = "souls") -> str | None:
+    """
+    通用图片上传（角色卡面图/头像图等）
+    路径规则: {folder}/{timestamp}_{uuid}.{ext}
+    """
+    client = _get_client()
+    if not client:
+        return None
+
+    ext = "png"
+    if "." in filename:
+        ext = filename.rsplit(".", 1)[-1].lower()
+        if ext not in ("jpg", "jpeg", "png", "gif", "webp"):
+            ext = "png"
+
+    ts = datetime.now().strftime("%Y%m%d%H%M%S")
+    uid = uuid.uuid4().hex[:8]
+    key = f"{folder}/comate/{ts}_{uid}.{ext}"
+
+    try:
+        resp = client.put_object(
+            Bucket=settings.cos_bucket,
+            Body=file_bytes,
+            Key=key,
+            ContentType=f"image/{ext}",
+        )
+        if resp.get("ETag"):
+            return f"https://{settings.cos_bucket}.cos.{settings.cos_region}.myqcloud.com/{key}"
+        return None
+    except Exception as e:
+        print(f"[COS upload error] {e}")
+        return None

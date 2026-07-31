@@ -1,4 +1,14 @@
+import sys
 from contextlib import asynccontextmanager
+
+# Windows 下 stdout/stderr 默认 GBK，遇到 emoji 等字符会抛 UnicodeEncodeError，
+# 全局改为 UTF-8 + errors=replace 兜底
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,7 +46,7 @@ def create_app() -> FastAPI:
     )
 
     # 注册路由
-    from app.api import auth, chat, souls, memories, interview, reminders, user, sessions, messages, finance, travel, shopping, admin_auth, admin_dashboard, admin_codes, admin_users, admin_settings, billing
+    from app.api import auth, chat, souls, memories, interview, reminders, user, sessions, messages, finance, travel, shopping, admin_auth, admin_dashboard, admin_codes, admin_users, admin_settings, admin_stats, admin_admins, admin_souls, billing
     app.include_router(auth.router)
     app.include_router(chat.router)
     app.include_router(souls.router)
@@ -54,6 +64,9 @@ def create_app() -> FastAPI:
     app.include_router(admin_codes.router)
     app.include_router(admin_users.router)
     app.include_router(admin_settings.router)
+    app.include_router(admin_stats.router)
+    app.include_router(admin_admins.router)
+    app.include_router(admin_souls.router)
     app.include_router(billing.router)
 
     @app.get("/api/health")
