@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config.settings import get_settings
-from app.db.session import run_migrations
+from app.db.session import async_session_factory, run_migrations
 
 settings = get_settings()
 
@@ -13,6 +13,10 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await run_migrations()
+    # 骨架期兜底：确保存在一个默认管理员账号
+    from app.services import admin_service
+    async with async_session_factory() as db:
+        await admin_service.ensure_default_admin(db)
     yield
 
 
@@ -32,7 +36,7 @@ def create_app() -> FastAPI:
     )
 
     # 注册路由
-    from app.api import auth, chat, souls, memories, interview, reminders, user, sessions, messages, finance, travel, shopping
+    from app.api import auth, chat, souls, memories, interview, reminders, user, sessions, messages, finance, travel, shopping, admin_auth, admin_dashboard
     app.include_router(auth.router)
     app.include_router(chat.router)
     app.include_router(souls.router)
@@ -45,6 +49,8 @@ def create_app() -> FastAPI:
     app.include_router(finance.router)
     app.include_router(travel.router)
     app.include_router(shopping.router)
+    app.include_router(admin_auth.router)
+    app.include_router(admin_dashboard.router)
 
     @app.get("/api/health")
     async def health():

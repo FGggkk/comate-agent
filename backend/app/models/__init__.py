@@ -9,6 +9,7 @@ from .conversation import Session, Message
 from .tacit import SessionSummary, TacitProfile, TacitProfileVersion
 from .finance import FinanceRecord, FinanceMessage
 from .travel import TravelPlan, TravelDay
+from .billing import Admin, RedemptionCode, RedemptionUsage, BalanceAccount, BalanceTransaction, BillingRule
 
 __all__ = [
     "User",
@@ -32,4 +33,10 @@ __all__ = [
     "FinanceMessage",
     "TravelPlan",
     "TravelDay",
+    "Admin",
+    "RedemptionCode",
+    "RedemptionUsage",
+    "BalanceAccount",
+    "BalanceTransaction",
+    "BillingRule",
 ]
