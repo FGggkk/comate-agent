@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-v4"
     embedding_dimensions: int = 1536
 
+    # Voice - Qwen Audio Realtime
+    voice_enabled: bool = False
+    qwen_audio_realtime_model: str = "qwen-audio-3.0-realtime-flash"
+    qwen_audio_realtime_url: str = "wss://{workspace_id}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime"
+    qwen_audio_realtime_voice: str = "longanqian"
+    qwen_audio_realtime_max_history_turns: int = 12
+
     # Model - DeepSeek
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"

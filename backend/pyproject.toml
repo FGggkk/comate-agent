@@ -20,6 +20,7 @@ dependencies = [
     "cos-python-sdk-v5>=1.9",
     "structlog>=25.1",
     "pgvector>=0.5.0",
+    "websockets>=14,<17",
 ]
 
 [tool.uv]
