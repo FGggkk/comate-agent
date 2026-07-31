@@ -116,6 +116,14 @@ MIGRATION_SQL = [
     "CREATE TABLE IF NOT EXISTS app_settings (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), key VARCHAR(64) UNIQUE NOT NULL, value TEXT DEFAULT '', updated_at TIMESTAMPTZ DEFAULT NOW())",
     "INSERT INTO app_settings (key, value) VALUES ('register_bonus', '20'), ('billing_enforce', 'false') ON CONFLICT (key) DO NOTHING",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(16) DEFAULT 'active'",
+    "ALTER TABLE soul_templates ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]'",
+    "ALTER TABLE soul_templates ADD COLUMN IF NOT EXISTS color VARCHAR(16)",
+    "ALTER TABLE soul_templates ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0",
+    "ALTER TABLE soul_templates ADD COLUMN IF NOT EXISTS source VARCHAR(32) DEFAULT 'builtin'",
+    "ALTER TABLE soul_templates ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES admins(id)",
+    "ALTER TABLE soul_templates ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()",
+    "ALTER TABLE soul_templates ADD COLUMN IF NOT EXISTS card_image VARCHAR(512)",
+    "ALTER TABLE soul_templates ADD COLUMN IF NOT EXISTS avatar_image VARCHAR(512)",
 ]
 
 LOCK_ID = 20240724  # 迁移锁 ID（唯一整数）
