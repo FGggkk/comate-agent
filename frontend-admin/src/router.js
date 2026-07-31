@@ -11,6 +11,9 @@ export const router = createRouter({
       redirect: '/dashboard',
       children: [
         { path: 'dashboard', component: () => import('./pages/Dashboard.vue'), meta: { title: '仪表盘' } },
+        { path: 'users', component: () => import('./pages/Users.vue'), meta: { title: '用户' } },
+        { path: 'codes', component: () => import('./pages/Codes.vue'), meta: { title: '兑换码' } },
+        { path: 'billing', component: () => import('./pages/Billing.vue'), meta: { title: '计费规则' } },
       ],
     },
   ],
