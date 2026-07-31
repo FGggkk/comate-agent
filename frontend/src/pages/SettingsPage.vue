@@ -65,6 +65,23 @@
           <polyline points="7,4 13,10 7,16"/>
         </svg>
       </button>
+
+      <button class="settings-entry entry-billing" @click="activeSection = 'billing'">
+        <span class="settings-entry-icon">
+          <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.6">
+            <circle cx="16" cy="16" r="11"/>
+            <path d="M16 11v10M13 14h6a2.5 2.5 0 0 1 0 5h-6"/>
+          </svg>
+        </span>
+        <span class="settings-entry-body">
+          <span class="settings-entry-title">积分</span>
+          <span class="settings-entry-desc">查看余额、兑换码充值</span>
+        </span>
+        <span class="settings-entry-count num">{{ balance }}</span>
+        <svg class="settings-entry-arrow" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8">
+          <polyline points="7,4 13,10 7,16"/>
+        </svg>
+      </button>
     </div>
 
     <button @click="logout" class="logout-btn">退出登录</button>
@@ -161,7 +178,51 @@
         </div>
         <div v-if="reminders.length === 0" class="reminder-empty">暂无提醒</div>
       </div>
+
+      <div v-if="reminders.length === 0" style="font-size:13px;color:var(--sub);padding:6px 0;">暂无提醒</div>
     </section>
+
+    <section v-else-if="activeSection === 'billing'" class="settings-detail-card">
+      <!-- 积分余额（折叠） -->
+      <div class="page-label" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" @click="billingOpen = !billingOpen">
+        <span>积分余额</span>
+        <span style="display:flex;align-items:center;gap:8px;">
+          <b style="font-size:20px;color:var(--honey-deep);">{{ balance }}</b>
+          <span style="font-size:12px;color:var(--sub);font-weight:400;">{{ billingOpen ? '收起 ▲' : '兑换/明细 ▼' }}</span>
+        </span>
+      </div>
+
+      <template v-if="billingOpen">
+        <div style="font-size:11px;color:var(--sub);margin-bottom:10px;">对话/工具消耗积分，兑换码充值</div>
+        <div style="display:flex;gap:8px;">
+          <input v-model="codeInput" placeholder="输入兑换码，如 BANX-XXXX-XXXX-XXXX" class="form-input" style="flex:1;letter-spacing:.03em;" @keydown.enter="redeemCode" />
+          <button @click="redeemCode" :disabled="redeeming || !codeInput.trim()" class="btn-primary" style="width:auto;padding:10px 18px;font-size:13px;">
+            {{ redeeming ? '兑换中...' : '兑换' }}
+          </button>
+        </div>
+        <p v-if="redeemMsg" :style="{ fontSize: '12px', marginTop: '6px', color: redeemOk ? 'var(--sprout)' : 'var(--berry)' }">{{ redeemMsg }}</p>
+
+        <div style="margin-top:14px;">
+          <div style="font-size:12px;color:var(--sub);margin-bottom:6px;">收支明细</div>
+          <div v-if="transactions.length === 0" style="font-size:13px;color:var(--sub);padding:6px 0;">暂无记录</div>
+          <div v-for="t in transactions" :key="t.id" style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line);">
+            <div>
+              <div style="font-size:13px;">{{ t.note || t.ref_type || t.type }}</div>
+              <div style="font-size:11px;color:var(--sub);">{{ formatTime(t.created_at) }}</div>
+            </div>
+            <span :style="{ fontSize: '14px', fontWeight: 600, color: t.change >= 0 ? 'var(--sprout)' : 'var(--berry)' }">
+              {{ t.change >= 0 ? '+' : '' }}{{ t.change }}
+            </span>
+          </div>
+        </div>
+      </template>
+    </section>
+
+    <!-- 退出 -->
+    <button @click="logout" style="width:100%;margin-top:20px;padding:10px;border-radius:var(--r-sm);border:1.5px solid var(--line);font-size:14px;color:var(--berry);text-align:center;">
+      退出登录
+    </button>
+
   </div>
 </template>
 
@@ -178,6 +239,9 @@ import {
   apiUploadAvatar,
   apiGetSoulInventory,
   apiInjectSoul,
+  apiGetBalance,
+  apiRedeemCode,
+  apiGetTransactions,
 } from '../api/index'
 
 const props = defineProps({
@@ -201,6 +265,15 @@ const soulInventory = ref({ templates: [], current: null, owned_count: 0, total_
 const soulMsg = ref('')
 const switchingSoulId = ref('')
 
+// 积分与兑换
+const balance = ref(0)
+const codeInput = ref('')
+const redeeming = ref(false)
+const redeemMsg = ref('')
+const redeemOk = ref(false)
+const transactions = ref([])
+const billingOpen = ref(false)
+
 const avatarColors = [
   'linear-gradient(135deg, #FFD0A8, #FF9F7A)',
   'linear-gradient(135deg, #A8E6CF, #5FBE63)',
@@ -222,6 +295,7 @@ const activeSectionInfo = computed(() => ({
   profile: { title: '个人信息', desc: '头像、昵称和账号信息' },
   style: { title: '当前风格', desc: '切换你的伴行小球' },
   reminders: { title: '提醒', desc: '查看、添加和管理提醒' },
+  billing: { title: '积分', desc: '查看余额、兑换码充值' },
 }[activeSection.value] || { title: '设置', desc: '' }))
 let reminderClock = null
 
@@ -239,12 +313,47 @@ onMounted(async () => {
     console.error('loadProfile error:', e)
   }
   await loadSoulInventory()
+  loadBilling()
 })
 onBeforeUnmount(() => {
   if (reminderClock) window.clearInterval(reminderClock)
 })
 watch(() => props.refreshKey, loadSoulInventory)
 watch(() => props.reminderRefreshKey, loadReminders)
+
+async function loadBilling() {
+  try {
+    const bal = await apiGetBalance()
+    if (typeof bal.balance === 'number') balance.value = bal.balance
+    const tx = await apiGetTransactions()
+    transactions.value = (tx.items || []).slice(0, 20)
+  } catch {}
+}
+
+async function redeemCode() {
+  const code = codeInput.value.trim()
+  if (!code || redeeming.value) return
+  redeeming.value = true
+  redeemMsg.value = ''
+  try {
+    const res = await apiRedeemCode(code)
+    if (res.success) {
+      redeemOk.value = true
+      redeemMsg.value = res.message || '兑换成功'
+      balance.value = res.balance ?? balance.value
+      codeInput.value = ''
+      loadBilling()
+    } else {
+      redeemOk.value = false
+      redeemMsg.value = res.message || '兑换失败'
+    }
+  } catch {
+    redeemOk.value = false
+    redeemMsg.value = '网络错误，请重试'
+  } finally {
+    redeeming.value = false
+  }
+}
 
 async function loadReminders() {
   reminders.value = (await apiGetReminders()).reminders || []

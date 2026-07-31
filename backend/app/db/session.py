@@ -110,6 +110,20 @@ MIGRATION_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_balance_transactions_user ON balance_transactions(user_id, created_at DESC)",
     "CREATE TABLE IF NOT EXISTS billing_rules (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), item_key VARCHAR(64) UNIQUE NOT NULL, item_name VARCHAR(64) NOT NULL, price INTEGER DEFAULT 0, enabled BOOLEAN DEFAULT TRUE, updated_at TIMESTAMPTZ DEFAULT NOW())",
     "INSERT INTO billing_rules (item_key, item_name, price, enabled) VALUES ('chat_round', '日常对话', 1, TRUE), ('interview_question', '面试提问', 2, TRUE), ('interview_report', '面试报告', 5, TRUE), ('shopping_plan', '购物计划', 10, TRUE), ('travel_plan', '旅游规划', 8, TRUE), ('finance_parse', '记账AI解析', 1, TRUE), ('reroll_hint', '重出题/思路提示', 2, TRUE) ON CONFLICT (item_key) DO NOTHING",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_redemption_usage_code_user ON redemption_usage(code_id, user_id)",
+    "UPDATE redemption_codes SET status = 'used' WHERE status = 'active' AND used_count >= max_uses",
+    "UPDATE redemption_codes SET status = 'expired' WHERE status IN ('active', 'used') AND expires_at IS NOT NULL AND expires_at < NOW()",
+    "CREATE TABLE IF NOT EXISTS app_settings (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), key VARCHAR(64) UNIQUE NOT NULL, value TEXT DEFAULT '', updated_at TIMESTAMPTZ DEFAULT NOW())",
+    "INSERT INTO app_settings (key, value) VALUES ('register_bonus', '20'), ('billing_enforce', 'false') ON CONFLICT (key) DO NOTHING",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(16) DEFAULT 'active'",
+    "ALTER TABLE soul_templates ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]'",
+    "ALTER TABLE soul_templates ADD COLUMN IF NOT EXISTS color VARCHAR(16)",
+    "ALTER TABLE soul_templates ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0",
+    "ALTER TABLE soul_templates ADD COLUMN IF NOT EXISTS source VARCHAR(32) DEFAULT 'builtin'",
+    "ALTER TABLE soul_templates ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES admins(id)",
+    "ALTER TABLE soul_templates ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()",
+    "ALTER TABLE soul_templates ADD COLUMN IF NOT EXISTS card_image VARCHAR(512)",
+    "ALTER TABLE soul_templates ADD COLUMN IF NOT EXISTS avatar_image VARCHAR(512)",
 ]
 
 LOCK_ID = 20240724  # 迁移锁 ID（唯一整数）

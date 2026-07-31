@@ -87,6 +87,15 @@ async def register(email: str, code: str, password: str, db: AsyncSession) -> di
     await db.commit()
     await db.refresh(user)
 
+    # 新用户注册赠送积分
+    bonus = 0
+    if is_new:
+        try:
+            from app.services import billing_service
+            bonus = await billing_service.grant_register_bonus(db, str(user.id))
+        except Exception as e:
+            print(f"[billing] register bonus failed: {e}")
+
     token = _create_token(str(user.id), email)
     refresh_token = _create_refresh_token(str(user.id), email)
     return {

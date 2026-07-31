@@ -28,3 +28,58 @@ export const apiAdminLogin = (email, password) =>
 
 export const apiAdminMe = () => request('/auth/me')
 export const apiDashboard = (days = 7) => request(`/dashboard?days=${days}`)
+
+// 兑换码管理
+export const apiAdminCodes = (status = 'all', page = 1, q = '', size = 20) =>
+  request(`/codes?status=${status}&page=${page}&size=${size}${q ? `&q=${q}` : ''}`)
+export const apiAdminCodesGenerate = (data) =>
+  request('/codes/generate', { method: 'POST', body: JSON.stringify(data) })
+export const apiAdminCodesDisable = (id) =>
+  request(`/codes/${id}/disable`, { method: 'POST', body: '{}' })
+export const apiAdminCodesExport = async () => {
+  const token = localStorage.getItem('admin_token')
+  const res = await fetch(`${BASE}/codes/export`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!res.ok) return null
+  return res.blob()
+}
+
+// 用户管理
+export const apiAdminUsers = (q = '', status = 'all', page = 1, size = 20) =>
+  request(`/users?q=${q}&status=${status}&page=${page}&size=${size}`)
+export const apiAdminUserDetail = (id) => request(`/users/${id}`)
+export const apiAdminUserStatus = (id, status) =>
+  request(`/users/${id}/status`, { method: 'POST', body: JSON.stringify({ status }) })
+export const apiAdminUserBalance = (id, change, note) =>
+  request(`/users/${id}/balance`, { method: 'POST', body: JSON.stringify({ change, note }) })
+
+// 计费规则
+export const apiAdminBillingRules = () => request('/billing-rules')
+export const apiAdminSaveRules = (rules) =>
+  request('/billing-rules', { method: 'PUT', body: JSON.stringify({ rules }) })
+export const apiAdminSaveSetting = (key, value) =>
+  request('/settings', { method: 'PUT', body: JSON.stringify({ key, value }) })
+
+// 数据统计
+export const apiAdminStats = (days = 30) => request(`/stats?days=${days}`)
+
+// 系统设置
+export const apiAdminListAdmins = () => request('/admins')
+export const apiAdminCreateAdmin = (data) => request('/admins', { method: 'POST', body: JSON.stringify(data) })
+export const apiAdminAdminStatus = (id, status) => request(`/admins/${id}/status`, { method: 'POST', body: JSON.stringify({ status }) })
+export const apiAdminAdminPassword = (id, password) => request(`/admins/${id}/password`, { method: 'POST', body: JSON.stringify({ password }) })
+
+// 角色管理
+export const apiAdminSouls = (status = 'all', page = 1) => request(`/souls?status=${status}&page=${page}&size=20`)
+export const apiAdminCreateSoul = (data) => request('/souls', { method: 'POST', body: JSON.stringify(data) })
+export const apiAdminUpdateSoul = (id, data) => request(`/souls/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+export const apiAdminSoulStatus = (id, status) => request(`/souls/${id}/status`, { method: 'POST', body: JSON.stringify({ status }) })
+export const apiAdminImportSoul = (text) => request('/souls/import', { method: 'POST', body: JSON.stringify({ text }) })
+export const apiAdminSoulsUpload = async (file) => {
+  const token = localStorage.getItem('admin_token')
+  const fd = new FormData()
+  fd.append('file', file)
+  const res = await fetch(`${BASE}/souls/upload`, { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {}, body: fd })
+  return res.json()
+}

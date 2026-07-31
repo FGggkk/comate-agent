@@ -19,7 +19,16 @@ class SoulTemplate(Base):
     soul_markdown: Mapped[str] = mapped_column(Text, nullable=False)
     version: Mapped[str] = mapped_column(String(32), default="1.0.0")
     status: Mapped[str] = mapped_column(String(16), default="active")
+    # 角色管理扩展字段
+    tags: Mapped[list] = mapped_column(JSONB, default=list)  # 角色标签
+    color: Mapped[str | None] = mapped_column(String(16), nullable=True)  # 主题色
+    card_image: Mapped[str | None] = mapped_column(String(512), nullable=True)  # 卡面图
+    avatar_image: Mapped[str | None] = mapped_column(String(512), nullable=True)  # 角色头像图
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)  # 排序权重（小在前）
+    source: Mapped[str] = mapped_column(String(32), default="builtin")  # builtin / custom / imported
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("admins.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 class UserSoul(Base):

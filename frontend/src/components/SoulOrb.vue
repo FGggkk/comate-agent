@@ -1,21 +1,24 @@
 <template>
   <div
-    :class="['soul-orb', sizeClass, expression, locked ? 'locked' : '', active ? 'active' : '']"
+    :class="['soul-orb', sizeClass, expression, locked ? 'locked' : '', active ? 'active' : '', hasImage ? 'has-image' : '']"
     :style="orbStyle"
     :aria-label="label"
   >
-    <div class="soul-orb-body">
-      <span class="soul-eye left"></span>
-      <span class="soul-eye right"></span>
-      <span class="soul-cheek left"></span>
-      <span class="soul-cheek right"></span>
-      <span :class="['soul-mouth', expression]"></span>
-      <span v-if="expression === 'firm'" class="soul-brow left"></span>
-      <span v-if="expression === 'firm'" class="soul-brow right"></span>
-      <span v-if="expression === 'wink'" class="soul-wink right"></span>
-      <span v-if="expression === 'mentor'" class="soul-glasses"></span>
-    </div>
-    <div class="soul-sprout"><span></span></div>
+    <img v-if="hasImage" :src="props.template.avatar_image" class="soul-orb-img" alt="" />
+    <template v-else>
+      <div class="soul-orb-body">
+        <span class="soul-eye left"></span>
+        <span class="soul-eye right"></span>
+        <span class="soul-cheek left"></span>
+        <span class="soul-cheek right"></span>
+        <span :class="['soul-mouth', expression]"></span>
+        <span v-if="expression === 'firm'" class="soul-brow left"></span>
+        <span v-if="expression === 'firm'" class="soul-brow right"></span>
+        <span v-if="expression === 'wink'" class="soul-wink right"></span>
+        <span v-if="expression === 'mentor'" class="soul-glasses"></span>
+      </div>
+      <div class="soul-sprout"><span></span></div>
+    </template>
     <div v-if="locked" class="soul-lock">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
         <rect x="5" y="11" width="14" height="10" rx="2" />
@@ -38,8 +41,14 @@ const props = defineProps({
 const expression = computed(() => props.template?.orb?.expression || 'smile')
 const label = computed(() => props.template?.name || '人设小球')
 const sizeClass = computed(() => `soul-orb-${props.size}`)
+const hasImage = computed(() => !!props.template?.avatar_image)
 const orbStyle = computed(() => {
+  // 有头像图时无渐变兜底
+  if (hasImage.value) return {}
   const colors = props.template?.orb?.colors || ['#FFD8B8', '#FFB088']
+  // 自定义角色有 color 时用 color 渐变，保证每个角色样式不同
+  const base = props.template?.color
+  if (base) return { '--orb-a': base, '--orb-b': base + 'aa' }
   return {
     '--orb-a': colors[0],
     '--orb-b': colors[1],
@@ -61,6 +70,17 @@ const orbStyle = computed(() => {
 .soul-orb-sm { --orb-size: 42px; }
 .soul-orb-md { --orb-size: 58px; }
 .soul-orb-lg { --orb-size: 92px; }
+.soul-orb.has-image {
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0,0,0,.12);
+}
+.soul-orb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
 .soul-orb-body {
   position: absolute;
   inset: 5%;

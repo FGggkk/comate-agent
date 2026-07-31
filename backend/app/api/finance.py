@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.api.response import ok, fail
 from app.db.session import get_db
+from app.services import billing_service
 from app.services import finance_service
 
 router = APIRouter(prefix="/api/finance", tags=["finance"])
@@ -82,7 +83,11 @@ async def api_summary(year: int, month: int, db: AsyncSession = Depends(get_db),
 
 
 @router.post("/ai-parse")
-async def api_ai_parse(req: AiParseRequest):
+async def api_ai_parse(req: AiParseRequest, db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
+    # 计费：记账 AI 解析
+    bill = await billing_service.consume(db, user_id, "finance_parse", ref_type="finance", note="记账AI解析")
+    if bill.get("insufficient"):
+        return fail(bill["message"])
     try:
         result = await finance_service.ai_parse(req.text)
         return ok(result)

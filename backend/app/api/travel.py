@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.api.response import ok, fail
 from app.db.session import get_db
+from app.services import billing_service
 from app.services import travel_service
 
 router = APIRouter(prefix="/api/travel", tags=["travel"])
@@ -32,6 +33,10 @@ class RegenerateDayRequest(BaseModel):
 
 @router.post("/plan")
 async def api_generate(req: GenerateRequest, db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
+    # 计费：旅游规划
+    bill = await billing_service.consume(db, user_id, "travel_plan", ref_type="travel", note="旅游规划")
+    if bill.get("insufficient"):
+        return fail(bill["message"])
     data = req.model_dump()
     data["user_id"] = user_id
     result = await travel_service.ai_generate(data, db)
