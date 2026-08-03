@@ -29,6 +29,9 @@ export const apiAdminLogin = (email, password) =>
 export const apiAdminMe = () => request('/auth/me')
 export const apiDashboard = (days = 7) => request(`/dashboard?days=${days}`)
 
+// 公司知识库
+export const apiAdminCompanyKnowledgeTypes = () => request('/company-knowledge/types')
+
 // 兑换码管理
 export const apiAdminCodes = (status = 'all', page = 1, q = '', size = 20) =>
   request(`/codes?status=${status}&page=${page}&size=${size}${q ? `&q=${q}` : ''}`)

@@ -11,6 +11,7 @@ from app.db.session import async_session_factory
 from app.models.conversation import Message, Session
 from app.models.memory import MemoryItem
 from app.models.tacit import SessionSummary, TacitProfile, TacitProfileVersion
+from app.plugins.company_knowledge.memory_boundary import profile_safe_messages
 from app.services.memory_gate_service import append_gate_trace
 from app.services.memory_service import classify_query_topics, is_forbidden_text
 
@@ -89,7 +90,15 @@ async def summarize_session(user_id: str, session_id: str, db: AsyncSession) -> 
     if not any(m.role == "user" and (m.content or "").strip() for m in messages):
         return None
 
-    payload = await _summarize_messages(messages)
+    persona_messages = profile_safe_messages(messages)
+    if persona_messages:
+        payload = await _summarize_messages(persona_messages)
+    else:
+        payload = {
+            "summary": "本会话包含公司知识问答，未提取个人画像信息。",
+            "topics": ["company_knowledge"],
+            "signals": _empty_profile(),
+        }
     started_at = messages[0].created_at if messages else session.created_at
     ended_at = messages[-1].created_at if messages else session.updated_at
 

@@ -10,6 +10,7 @@ from .tacit import SessionSummary, TacitProfile, TacitProfileVersion
 from .finance import FinanceRecord, FinanceMessage
 from .travel import TravelPlan, TravelDay
 from .billing import Admin, RedemptionCode, RedemptionUsage, BalanceAccount, BalanceTransaction, BillingRule, AppSetting
+from .company_knowledge import CompanyKnowledgeChunk, CompanyKnowledgeJob, CompanyKnowledgeSource
 
 __all__ = [
     "User",
@@ -40,4 +41,7 @@ __all__ = [
     "BalanceTransaction",
     "BillingRule",
     "AppSetting",
+    "CompanyKnowledgeSource",
+    "CompanyKnowledgeChunk",
+    "CompanyKnowledgeJob",
 ]
