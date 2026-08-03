@@ -121,6 +121,7 @@ def _template_to_dict(t: SoulTemplate, owned: bool = False, active: bool = False
         "dimensions": t.dimensions,
         "soul_markdown": t.soul_markdown,
         "status": t.status,
+        "tags": t.tags or [],
         "orb": ORB_META.get(t.slug, {}),
         "color": t.color,
         "card_image": t.card_image,
