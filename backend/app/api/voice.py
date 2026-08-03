@@ -12,6 +12,7 @@ from sqlalchemy import select
 from app.api.deps import get_current_user, get_user_id_from_token
 from app.config.settings import get_settings
 from app.db.session import async_session_factory
+from app.graph.tools import TOOL_REGISTRY
 from app.models.conversation import Message, Session
 from app.services.soul_service import get_inventory
 from app.services.tacit_profile_service import schedule_tacit_refresh
@@ -57,8 +58,14 @@ def _voice_instructions(soul: dict | None) -> str:
         "你是伴行，一位中文 AI 情感陪伴助手。"
         f"当前陪伴风格是「{style}」。"
         "请自然、温和地用中文交流；回答简洁，适合语音播放。"
+        "涉及天气、当前时间或需要检索的事实性问题时，优先调用已提供的工具获取结果，"
+        "不要凭记忆猜测实时信息；缺少工具所需信息时先向用户追问。"
         "不要声称能够在现实世界中执行尚未完成的操作。"
     )
+
+
+def _response_modalities(reply_mode: str) -> list[str]:
+    return ["audio", "text"] if reply_mode == "audio" else ["text"]
 
 
 async def _load_context(user_id: str, session_id: str) -> tuple[dict | None, list[Message]]:
@@ -97,6 +104,7 @@ async def _send_context(upstream, soul: dict | None, messages: list[Message]) ->
             "output_audio_format": "pcm",
             "turn_detection": None,
             "instructions": _voice_instructions(soul),
+            "tools": TOOL_REGISTRY.to_openai_tools(),
             "max_history_turns": settings.qwen_audio_realtime_max_history_turns,
         },
     }, ensure_ascii=False))
@@ -131,12 +139,15 @@ async def _proxy_browser_events(websocket: WebSocket, upstream, turn: dict) -> N
                 agent_transcript="",
                 reply_mode=reply_mode,
                 saved=False,
+                response_transcripts={},
+                tool_response_ids=set(),
+                handled_tool_call_ids=set(),
             )
             await upstream.send(json.dumps({"type": "input_audio_buffer.commit"}))
             await upstream.send(json.dumps({
                 "type": "response.create",
                 "response": {
-                    "modalities": ["audio", "text"] if reply_mode == "audio" else ["text"],
+                    "modalities": _response_modalities(reply_mode),
                 },
             }))
         elif event_type == "response.cancel":
@@ -211,6 +222,67 @@ async def _persist_voice_turn(
     return saved
 
 
+async def _handle_tool_call(upstream, event: dict, turn: dict) -> None:
+    """执行语音模型请求的工具，并让模型基于工具结果继续回复。"""
+    call_id = event.get("call_id")
+    if not isinstance(call_id, str) or not call_id:
+        print("[voice] tool call ignored because call_id is missing")
+        return
+
+    handled_call_ids = turn.setdefault("handled_tool_call_ids", set())
+    if call_id in handled_call_ids:
+        return
+    handled_call_ids.add(call_id)
+
+    name = event.get("name")
+    raw_arguments = event.get("arguments") or "{}"
+    try:
+        arguments = json.loads(raw_arguments)
+        if not isinstance(arguments, dict):
+            raise ValueError("工具参数必须是 JSON 对象")
+    except (json.JSONDecodeError, ValueError) as exc:
+        output = {"error": f"工具参数无效：{exc}"}
+    else:
+        tool = TOOL_REGISTRY.get(name) if isinstance(name, str) else None
+        if not tool:
+            output = {"error": f"未注册的工具：{name or 'unknown'}"}
+        else:
+            try:
+                result = await tool.execute(**arguments)
+                output = {"result": result}
+            except Exception as exc:
+                print(f"[voice] tool {name} failed: {exc}")
+                output = {"error": f"工具执行失败：{exc}"}
+
+    response_id = event.get("response_id")
+    if isinstance(response_id, str) and response_id:
+        turn.setdefault("tool_response_ids", set()).add(response_id)
+
+    await upstream.send(json.dumps({
+        "type": "conversation.item.create",
+        "item": {
+            "type": "function_call_output",
+            "call_id": call_id,
+            "output": json.dumps(output, ensure_ascii=False),
+        },
+    }, ensure_ascii=False))
+    await upstream.send(json.dumps({
+        "type": "response.create",
+        "response": {"modalities": _response_modalities(turn["reply_mode"])},
+    }, ensure_ascii=False))
+
+
+def _record_agent_transcript(turn: dict, event: dict, transcript: str, *, replace: bool) -> None:
+    """按响应 ID 记录文本，工具调用前的中间响应不会污染最终持久化内容。"""
+    response_id = event.get("response_id")
+    if not isinstance(response_id, str) or not response_id:
+        turn["agent_transcript"] = transcript if replace else turn["agent_transcript"] + transcript
+        return
+
+    transcripts = turn.setdefault("response_transcripts", {})
+    transcripts[response_id] = transcript if replace else transcripts.get(response_id, "") + transcript
+
+
 async def _proxy_model_events(
     websocket: WebSocket,
     upstream,
@@ -232,23 +304,37 @@ async def _proxy_model_events(
         elif event_type == "conversation.item.input_audio_transcription.completed":
             turn["user_transcript"] = event.get("transcript") or turn["user_transcript"]
         elif event_type in {"response.audio_transcript.delta", "response.text.delta"}:
-            turn["agent_transcript"] += event.get("delta") or event.get("text", "")
+            _record_agent_transcript(turn, event, event.get("delta") or event.get("text", ""), replace=False)
         elif event_type in {"response.audio_transcript.done", "response.text.done"}:
-            turn["agent_transcript"] = (
-                event.get("transcript") or event.get("text") or turn["agent_transcript"]
+            _record_agent_transcript(
+                turn,
+                event,
+                event.get("transcript") or event.get("text") or "",
+                replace=bool(event.get("transcript") or event.get("text")),
             )
 
         await websocket.send_text(raw_event)
 
+        if event_type == "response.function_call_arguments.done":
+            await _handle_tool_call(upstream, event, turn)
+            continue
+
         response_status = event.get("response", {}).get("status") or event.get("status")
         if event_type != "response.done" or turn["saved"] or response_status not in {None, "completed"}:
             continue
+        response_id = event.get("response", {}).get("id") or event.get("response_id")
+        if response_id in turn.get("tool_response_ids", set()):
+            turn.get("response_transcripts", {}).pop(response_id, None)
+            continue
         try:
+            agent_transcript = turn.get("response_transcripts", {}).get(
+                response_id, turn["agent_transcript"]
+            )
             saved = await _persist_voice_turn(
                 user_id,
                 session_id,
                 turn["user_transcript"],
-                turn["agent_transcript"],
+                agent_transcript,
                 soul,
                 turn["reply_mode"],
             )
@@ -309,6 +395,9 @@ async def voice_realtime(websocket: WebSocket, session_id: str):
                 "agent_transcript": "",
                 "reply_mode": "text",
                 "saved": False,
+                "response_transcripts": {},
+                "tool_response_ids": set(),
+                "handled_tool_call_ids": set(),
             }
             browser_task = asyncio.create_task(_proxy_browser_events(websocket, upstream, turn))
             model_task = asyncio.create_task(
