@@ -12,6 +12,7 @@ from app.api.deps import get_current_user
 from app.db.session import MIGRATION_SQL
 from app.plugins.company_knowledge.memory_boundary import profile_safe_messages
 from app.plugins.company_knowledge.registry import list_knowledge_types
+from app.plugins.company_knowledge.schemas import CompanyKnowledgeQueryRequest
 
 
 class CompanyKnowledgeContractTests(unittest.TestCase):
@@ -55,16 +56,15 @@ class CompanyKnowledgeContractTests(unittest.TestCase):
         self.assertFalse(payload["success"])
         self.assertEqual(payload["data"]["code"], "knowledge_type_disabled")
 
-    def test_policy_query_contract_is_registered_before_retrieval_is_implemented(self):
-        response = self.client.post(
-            "/api/company-knowledge/query",
-            json={"message": "年假如何计算？", "knowledge_type": "policy", "input_mode": "voice"},
+    def test_policy_query_contract_accepts_voice_transcript(self):
+        request = CompanyKnowledgeQueryRequest(
+            message="年假如何计算？",
+            knowledge_type="policy",
+            input_mode="voice",
         )
 
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()
-        self.assertFalse(payload["success"])
-        self.assertEqual(payload["data"]["code"], "company_knowledge_not_ready")
+        self.assertEqual(request.knowledge_type, "policy")
+        self.assertEqual(request.input_mode, "voice")
 
     def test_company_knowledge_messages_do_not_enter_persona_signal_input(self):
         messages = [

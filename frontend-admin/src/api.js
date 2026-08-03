@@ -31,6 +31,36 @@ export const apiDashboard = (days = 7) => request(`/dashboard?days=${days}`)
 
 // 公司知识库
 export const apiAdminCompanyKnowledgeTypes = () => request('/company-knowledge/types')
+export const apiAdminCompanyKnowledgeSources = (knowledgeType = 'policy', status = 'all', page = 1, size = 20) =>
+  request(`/company-knowledge/sources?knowledge_type=${encodeURIComponent(knowledgeType)}&status=${status}&page=${page}&size=${size}`)
+export const apiAdminCompanyKnowledgeSource = (id) => request(`/company-knowledge/sources/${id}`)
+export const apiAdminCompanyKnowledgePublish = (id) => request(`/company-knowledge/sources/${id}/publish`, { method: 'POST', body: '{}' })
+export const apiAdminCompanyKnowledgeArchive = (id) => request(`/company-knowledge/sources/${id}/archive`, { method: 'POST', body: '{}' })
+export const apiAdminCompanyKnowledgeReindex = (id) => request(`/company-knowledge/sources/${id}/reindex`, { method: 'POST', body: '{}' })
+export const apiAdminCompanyKnowledgeJobs = (page = 1, size = 30) =>
+  request(`/company-knowledge/jobs?page=${page}&size=${size}`)
+export const apiAdminCompanyKnowledgeUpload = async (data) => {
+  const token = localStorage.getItem('admin_token')
+  const form = new FormData()
+  form.append('file', data.file)
+  form.append('title', data.title)
+  form.append('version', data.version)
+  form.append('effective_at', data.effective_at)
+  if (data.expires_at) form.append('expires_at', data.expires_at)
+  form.append('category', data.category || '')
+  form.append('knowledge_type', data.knowledge_type || 'policy')
+  const res = await fetch(`${BASE}/company-knowledge/sources`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  })
+  if (res.status === 401) {
+    localStorage.removeItem('admin_token')
+    window.location.href = '/login'
+    throw new Error('登录已过期')
+  }
+  return res.json()
+}
 
 // 兑换码管理
 export const apiAdminCodes = (status = 'all', page = 1, q = '', size = 20) =>
