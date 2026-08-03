@@ -100,6 +100,27 @@
           <p v-if="adjMsg" style="font-size:12px;color:var(--moss);margin-top:8px;">{{ adjMsg }}</p>
         </div>
 
+        <!-- 灵魂卡槽 -->
+        <div class="card" style="margin-bottom:14px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <div>
+              <div style="font-size:12px;color:var(--ink-soft);">灵魂卡槽上限</div>
+              <div class="num" style="font-size:20px;font-weight:700;color:var(--honey);">{{ detail.slot_capacity ?? 6 }} 格</div>
+            </div>
+            <div style="display:flex;gap:6px;">
+              <button
+                v-for="c in [6, 9, 12]"
+                :key="c"
+                class="btn-ghost"
+                :style="(detail.slot_capacity ?? 6) === c ? slotBtnActiveStyle : ''"
+                :disabled="slotSaving"
+                @click="setSlotCapacity(c)"
+              >{{ c }}</button>
+            </div>
+          </div>
+          <p v-if="slotMsg" style="font-size:12px;color:var(--moss);margin-top:4px;">{{ slotMsg }}</p>
+        </div>
+
         <!-- SOUL -->
         <div class="card" style="margin-bottom:14px;">
           <div style="font-size:12px;color:var(--ink-soft);margin-bottom:8px;">SOUL 库存（{{ detail.souls?.length || 0 }}）</div>
@@ -132,7 +153,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { apiAdminUsers, apiAdminUserDetail, apiAdminUserStatus, apiAdminUserBalance } from '../api'
+import { apiAdminUsers, apiAdminUserDetail, apiAdminUserStatus, apiAdminUserBalance, apiAdminUserSlotCapacity } from '../api'
 
 const tabs = [
   { key: 'all', label: '全部' },
@@ -153,6 +174,24 @@ const adjAmount = ref(0)
 const adjMsg = ref('')
 const adjDone = ref(false)
 
+const slotMsg = ref('')
+const slotSaving = ref(false)
+const slotBtnActiveStyle = { background: 'var(--honey)', color: '#fff', borderColor: 'var(--honey)' }
+
+async function setSlotCapacity(c) {
+  if (!detail.value || slotSaving.value) return
+  slotSaving.value = true
+  slotMsg.value = ''
+  const res = await apiAdminUserSlotCapacity(detail.value.id, c)
+  if (res.success) {
+    detail.value.slot_capacity = c
+    slotMsg.value = res.message
+  } else {
+    slotMsg.value = res.message || '设置失败'
+  }
+  slotSaving.value = false
+}
+
 const typeLabel = (t) => ({ recharge: '充值', consume: '消费', admin: '管理员' }[t] || t)
 
 async function load() {
@@ -169,7 +208,7 @@ function changeSize() { page.value = 1; load() }
 
 async function openDetail(id) {
   const res = await apiAdminUserDetail(id)
-  if (res.success) { detail.value = res.data; adjAmount.value = 0; adjMsg.value = ''; adjDone.value = false }
+  if (res.success) { detail.value = res.data; adjAmount.value = 0; adjMsg.value = ''; adjDone.value = false; slotMsg.value = ''; slotSaving.value = false }
 }
 
 function resetAdj() {
