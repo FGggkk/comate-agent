@@ -124,6 +124,10 @@
         </div>
 
         <StatusIndicator v-if="chatStore.isStreaming" />
+        <div v-if="voiceToolStatus" class="voice-tool-status" role="status">
+          <span class="voice-tool-status-icon">⌛</span>
+          <span>{{ voiceToolStatus }}</span>
+        </div>
 
         <!-- 空状态 -->
         <div v-if="chatStore.messages.length === 0 && !chatStore.isStreaming" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;">
@@ -279,6 +283,9 @@ let voiceReplyMode = 'text'
 let voiceHasAudio = false
 let voiceErrorReported = false
 const voicePlaybackSources = new Set()
+const voiceToolStatus = ref('')
+const voiceToolResponseIds = new Set()
+const voiceResponseTranscripts = new Map()
 const quickItems = [
   { label: '✍️ 帮我写作', action: 'writing' },
   { label: '📌 设定提醒', action: 'remind' },
@@ -872,6 +879,50 @@ function updateVoiceAgentMessage(content) {
   }
 }
 
+function resetVoiceToolState() {
+  voiceToolStatus.value = ''
+  voiceToolResponseIds.clear()
+  voiceResponseTranscripts.clear()
+}
+
+function getVoiceResponseId(event) {
+  const responseId = event?.response?.id || event?.response_id
+  return typeof responseId === 'string' && responseId ? responseId : ''
+}
+
+function getVoiceToolStatus(name) {
+  const labels = {
+    get_weather: '正在查询天气…',
+    get_current_time: '正在查询时间…',
+    search_web: '正在搜索资料…',
+  }
+  return labels[name] || '正在查询信息…'
+}
+
+function discardVoiceAgentMessage() {
+  if (!voiceAgentMessage) return
+  const index = chatStore.messages.indexOf(voiceAgentMessage)
+  if (index >= 0) chatStore.messages.splice(index, 1)
+  voiceAgentMessage = null
+  voiceAgentTranscript = ''
+}
+
+function updateVoiceAgentTranscript(event, content, replace = false) {
+  const responseId = getVoiceResponseId(event)
+  if (!responseId) {
+    voiceAgentTranscript = replace && content ? content : voiceAgentTranscript + content
+    updateVoiceAgentMessage(voiceAgentTranscript)
+    return
+  }
+  if (voiceToolResponseIds.has(responseId)) return
+
+  const previous = voiceResponseTranscripts.get(responseId) || ''
+  const transcript = replace && content ? content : previous + content
+  voiceResponseTranscripts.set(responseId, transcript)
+  voiceAgentTranscript = transcript
+  updateVoiceAgentMessage(transcript)
+}
+
 function float32ToPcm16(input, inputSampleRate) {
   const targetSampleRate = 16000
   const ratio = inputSampleRate / targetSampleRate
@@ -1015,6 +1066,7 @@ function cleanupVoiceResources() {
   voiceState.value = 'idle'
   voiceReplyEnabled.value = false
   voiceReplyMode = 'text'
+  resetVoiceToolState()
 }
 
 function reportVoiceError(message) {
@@ -1027,6 +1079,7 @@ function reportVoiceError(message) {
   voiceState.value = 'idle'
   voiceReplyEnabled.value = false
   voiceReplyMode = 'text'
+  resetVoiceToolState()
   chatStore.addMessage({ type: 'error', role: 'system', content: message || '语音服务暂时不可用。' })
   nextTick(() => scrollToBottom())
 }
@@ -1051,26 +1104,36 @@ function handleVoiceEvent(event) {
     }
     return
   }
-  if (eventType === 'conversation.item.input_audio_transcription.delta') {
+  if (eventType === 'response.function_call_arguments.done') {
+    const responseId = getVoiceResponseId(event)
+    if (responseId) voiceToolResponseIds.add(responseId)
+    voiceToolStatus.value = getVoiceToolStatus(event.name)
+    discardVoiceAgentMessage()
+  } else if (eventType === 'conversation.item.input_audio_transcription.delta') {
     voiceUserTranscript += event.delta || event.text || ''
     updateVoiceUserMessage(voiceUserTranscript)
   } else if (eventType === 'conversation.item.input_audio_transcription.completed') {
     voiceUserTranscript = event.transcript || voiceUserTranscript
     updateVoiceUserMessage(voiceUserTranscript)
   } else if (eventType === 'response.audio_transcript.delta' || eventType === 'response.text.delta') {
-    voiceAgentTranscript += event.delta || event.text || ''
-    updateVoiceAgentMessage(voiceAgentTranscript)
+    updateVoiceAgentTranscript(event, event.delta || event.text || '')
   } else if (eventType === 'response.audio_transcript.done' || eventType === 'response.text.done') {
-    voiceAgentTranscript = event.transcript || event.text || voiceAgentTranscript
-    updateVoiceAgentMessage(voiceAgentTranscript)
+    updateVoiceAgentTranscript(event, event.transcript || event.text || '', true)
   } else if (eventType === 'response.audio.delta') {
     updateVoiceAgentMessage(voiceAgentTranscript)
     if (voiceReplyMode === 'audio') enqueueVoiceAudio(event.delta)
   } else if (eventType === 'response.done') {
+    const responseId = getVoiceResponseId(event)
+    if (responseId && voiceToolResponseIds.has(responseId)) {
+      voiceResponseTranscripts.delete(responseId)
+      nextTick(() => scrollToBottom())
+      return
+    }
     stopVoiceCapture()
     voiceState.value = 'idle'
     voiceReplyEnabled.value = false
     voiceReplyMode = 'text'
+    resetVoiceToolState()
     chatStore.finishStream()
   }
   nextTick(() => scrollToBottom())
@@ -1130,6 +1193,7 @@ async function startVoice() {
   voiceUserTranscript = ''
   voiceAgentTranscript = ''
   voiceHasAudio = false
+  resetVoiceToolState()
   voiceReplyMode = voiceReplyEnabled.value ? 'audio' : 'text'
   voiceReplySoul = await getReplySoulSnapshot()
   try {
@@ -1149,6 +1213,7 @@ function finishVoiceRecording() {
     voiceState.value = 'idle'
     voiceReplyEnabled.value = false
     voiceReplyMode = 'text'
+    resetVoiceToolState()
     chatStore.addMessage({ type: 'error', role: 'system', content: '没有采集到声音，请检查麦克风后重试。' })
     return
   }
@@ -1170,6 +1235,7 @@ function cancelVoiceResponse() {
   voiceState.value = 'idle'
   voiceReplyEnabled.value = false
   voiceReplyMode = 'text'
+  resetVoiceToolState()
   chatStore.finishStream()
 }
 
@@ -1627,6 +1693,20 @@ async function confirmRename(session) {
   flex-direction: column;
   gap: 6px;
   margin-top: 6px;
+}
+.voice-tool-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 6px auto 10px;
+  color: var(--sub);
+  font-size: 12px;
+  line-height: 18px;
+}
+.voice-tool-status-icon {
+  color: var(--honey-deep);
+  font-size: 14px;
 }
 @keyframes chat-hero-bob {
   0%,100% { transform: translateY(0) rotate(-1.5deg); }
