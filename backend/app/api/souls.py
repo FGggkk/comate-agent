@@ -7,12 +7,14 @@ from app.api.response import ok
 from app.db.session import get_db
 from app.services.soul_service import (
     confirm_soul,
+    delete_soul_from_slot,
     draw_soul,
     get_inventory,
     get_templates,
     inject_soul,
     preview,
     recommend,
+    save_soul_to_slot,
     seed_templates,
 )
 
@@ -29,6 +31,11 @@ class PreviewRequest(BaseModel):
 
 class ConfirmRequest(BaseModel):
     template_id: str
+
+
+class SaveSlotRequest(BaseModel):
+    template_id: str
+    replace_slot_id: str | None = None
 
 
 @router.get("/templates")
@@ -60,6 +67,16 @@ async def api_get_inventory(db: AsyncSession = Depends(get_db), user_id: str = D
 @router.post("/me/draw")
 async def api_draw_soul(db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
     return await draw_soul(user_id, db)
+
+
+@router.post("/me/slots/save")
+async def api_save_slot(req: SaveSlotRequest, db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
+    return await save_soul_to_slot(user_id, req.template_id, req.replace_slot_id, db)
+
+
+@router.delete("/me/slots/{slot_id}")
+async def api_delete_slot(slot_id: str, db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
+    return await delete_soul_from_slot(user_id, slot_id, db)
 
 
 @router.post("/me/inject")

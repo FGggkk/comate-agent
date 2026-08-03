@@ -53,6 +53,8 @@ export const apiAdminUserStatus = (id, status) =>
   request(`/users/${id}/status`, { method: 'POST', body: JSON.stringify({ status }) })
 export const apiAdminUserBalance = (id, change, note) =>
   request(`/users/${id}/balance`, { method: 'POST', body: JSON.stringify({ change, note }) })
+export const apiAdminUserSlotCapacity = (id, capacity) =>
+  request(`/users/${id}/slot_capacity`, { method: 'POST', body: JSON.stringify({ capacity }) })
 
 // 计费规则
 export const apiAdminBillingRules = () => request('/billing-rules')

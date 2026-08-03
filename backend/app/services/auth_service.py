@@ -87,7 +87,7 @@ async def register(email: str, code: str, password: str, db: AsyncSession) -> di
     await db.commit()
     await db.refresh(user)
 
-    # 新用户注册赠送积分
+    # 新用户注册赠送积分 + 默认拥有经典灵魂（温柔陪伴型）
     bonus = 0
     if is_new:
         try:
@@ -95,6 +95,11 @@ async def register(email: str, code: str, password: str, db: AsyncSession) -> di
             bonus = await billing_service.grant_register_bonus(db, str(user.id))
         except Exception as e:
             print(f"[billing] register bonus failed: {e}")
+        try:
+            from app.services.soul_service import grant_default_soul
+            await grant_default_soul(str(user.id), db)
+        except Exception as e:
+            print(f"[soul] grant default soul failed: {e}")
 
     token = _create_token(str(user.id), email)
     refresh_token = _create_refresh_token(str(user.id), email)

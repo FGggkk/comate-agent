@@ -1,4 +1,4 @@
-const BASE = 'http://localhost:8000/api'
+const BASE = 'http://127.0.0.1:8000/api'
 
 export function apiVoiceRealtimeUrl(sessionId) {
   const wsBase = BASE.replace(/^http/, 'ws')
@@ -100,6 +100,8 @@ export const apiConfirmSoul = (template_id) => post('/souls/users/me/soul', { te
 export const apiGetSoulInventory = () => get('/souls/me/inventory')
 export const apiDrawSoul = () => post('/souls/me/draw', {})
 export const apiInjectSoul = (template_id) => post('/souls/me/inject', { template_id })
+export const apiSaveSoulSlot = (template_id, replace_slot_id = null) => post('/souls/me/slots/save', { template_id, replace_slot_id })
+export const apiDeleteSoulSlot = (slot_id) => del(`/souls/me/slots/${slot_id}`)
 
 // Chat
 export function apiSendMessage(message, sessionId, options = {}) {

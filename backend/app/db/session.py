@@ -116,6 +116,9 @@ MIGRATION_SQL = [
     "CREATE TABLE IF NOT EXISTS app_settings (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), key VARCHAR(64) UNIQUE NOT NULL, value TEXT DEFAULT '', updated_at TIMESTAMPTZ DEFAULT NOW())",
     "INSERT INTO app_settings (key, value) VALUES ('register_bonus', '20'), ('billing_enforce', 'false') ON CONFLICT (key) DO NOTHING",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(16) DEFAULT 'active'",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS slot_capacity INTEGER DEFAULT 4",
+    # 卡槽档位调整为 6/9/12，存量 4 档用户迁移到 6
+    "UPDATE users SET slot_capacity = 6 WHERE slot_capacity = 4",
     "ALTER TABLE soul_templates ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]'",
     "ALTER TABLE soul_templates ADD COLUMN IF NOT EXISTS color VARCHAR(16)",
     "ALTER TABLE soul_templates ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0",
@@ -124,6 +127,8 @@ MIGRATION_SQL = [
     "ALTER TABLE soul_templates ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()",
     "ALTER TABLE soul_templates ADD COLUMN IF NOT EXISTS card_image VARCHAR(512)",
     "ALTER TABLE soul_templates ADD COLUMN IF NOT EXISTS avatar_image VARCHAR(512)",
+    # 灵魂体系收敛：仅保留经典款「温柔陪伴型」，其余内置模板下架（由管理端注入新灵魂）
+    "UPDATE soul_templates SET status = 'inactive' WHERE source = 'builtin' AND slug != 'warm_companion'",
 ]
 
 LOCK_ID = 20240724  # 迁移锁 ID（唯一整数）
