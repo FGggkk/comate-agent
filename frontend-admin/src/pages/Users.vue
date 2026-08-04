@@ -20,6 +20,7 @@
             <th>邮箱</th>
             <th>积分</th>
             <th>状态</th>
+            <th>RAG</th>
             <th>注册时间</th>
             <th style="width:120px;">操作</th>
           </tr>
@@ -35,6 +36,12 @@
             <td style="color:var(--ink-soft);">{{ u.email }}</td>
             <td><b class="num">{{ u.balance }}</b></td>
             <td><span :class="['badge', u.status === 'disabled' ? 'badge-berry' : 'badge-moss']">{{ u.status === 'disabled' ? '已禁用' : '正常' }}</span></td>
+            <td @click.stop>
+              <label class="rag-switch" :title="u.rag_enabled ? '关闭 RAG' : '启用 RAG'">
+                <input type="checkbox" :checked="u.rag_enabled" @change="toggleRag(u, $event.target.checked)" />
+                <span></span>
+              </label>
+            </td>
             <td class="num" style="color:var(--ink-soft);font-size:12px;">{{ (u.created_at || '').slice(0, 10) }}</td>
             <td @click.stop>
               <button class="row-btn" @click="openDetail(u.id)">详情</button>
@@ -43,7 +50,7 @@
             </td>
           </tr>
           <tr v-if="!items.length">
-            <td colspan="6" style="text-align:center;color:var(--ink-soft);padding:40px 0;">暂无用户</td>
+            <td colspan="7" style="text-align:center;color:var(--ink-soft);padding:40px 0;">暂无用户</td>
           </tr>
         </tbody>
       </table>
@@ -153,7 +160,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { apiAdminUsers, apiAdminUserDetail, apiAdminUserStatus, apiAdminUserBalance, apiAdminUserSlotCapacity } from '../api'
+import { apiAdminUsers, apiAdminUserDetail, apiAdminUserStatus, apiAdminUserBalance, apiAdminUserSlotCapacity, apiAdminUserRagEnabled } from '../api'
 
 const tabs = [
   { key: 'all', label: '全部' },
@@ -221,6 +228,14 @@ async function toggleStatus(u, s) {
   if (res.success) { u.status = s; load() }
 }
 
+async function toggleRag(user, enabled) {
+  const previous = user.rag_enabled
+  user.rag_enabled = enabled
+  const res = await apiAdminUserRagEnabled(user.id, enabled)
+  if (!res.success) user.rag_enabled = previous
+  if (detail.value?.id === user.id && res.success) detail.value.rag_enabled = enabled
+}
+
 async function adjustBalance() {
   if (!adjAmount.value) return
   const res = await apiAdminUserBalance(detail.value.id, adjAmount.value, '管理端调整')
@@ -271,6 +286,13 @@ onMounted(load)
 .row-btn:hover { border-color: var(--gold); color: var(--ink); }
 .row-btn.danger:hover { border-color: var(--berry); color: var(--berry); }
 .row-btn.moss:hover { border-color: var(--moss); color: var(--moss); }
+.rag-switch { display:inline-flex; cursor:pointer; }
+.rag-switch input { position:absolute; opacity:0; pointer-events:none; }
+.rag-switch span { width:30px; height:17px; padding:2px; border-radius:10px; background:var(--line); transition:background .15s; }
+.rag-switch span::after { content:''; display:block; width:13px; height:13px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.2); transition:transform .15s; }
+.rag-switch input:checked + span { background:var(--moss); }
+.rag-switch input:checked + span::after { transform:translateX(13px); }
+.rag-switch input:focus-visible + span { outline:2px solid var(--gold); outline-offset:2px; }
 
 .user-av {
   width: 30px; height: 30px;

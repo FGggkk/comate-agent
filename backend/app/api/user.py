@@ -30,6 +30,7 @@ async def get_profile(user_id: str = Depends(get_current_user), db: AsyncSession
             "email": user.email,
             "nickname": user.nickname,
             "avatar_url": user.avatar_url,
+            "rag_enabled": bool(user.rag_enabled),
             "created_at": user.created_at.isoformat() if user.created_at else None,
         },
     }
@@ -61,6 +62,7 @@ async def update_profile(
             "email": user.email,
             "nickname": user.nickname,
             "avatar_url": user.avatar_url,
+            "rag_enabled": bool(user.rag_enabled),
         },
     }
 
@@ -102,5 +104,6 @@ async def upload_avatar_api(
             "email": user.email if user else "",
             "nickname": user.nickname if user else "",
             "avatar_url": url,
+            "rag_enabled": bool(user.rag_enabled) if user else False,
         },
     }

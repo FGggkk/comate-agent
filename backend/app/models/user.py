@@ -21,5 +21,6 @@ class User(Base):
     onboarding_status: Mapped[str] = mapped_column(String(32), default="none")
     status: Mapped[str] = mapped_column(String(16), default="active")  # active / disabled
     slot_capacity: Mapped[int] = mapped_column(Integer, default=6)  # 灵魂卡槽上限（6/9/12，管理端控制）
+    rag_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

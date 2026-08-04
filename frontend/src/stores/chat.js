@@ -15,14 +15,16 @@ export const useChatStore = defineStore('chat', () => {
   })
 
   function addMessage(msg) {
-    messages.value.push({ ...msg, timestamp: msg.timestamp || Date.now() })
+    const storedMessage = { ...msg, timestamp: msg.timestamp || Date.now() }
+    messages.value.push(storedMessage)
+    return storedMessage
   }
 
   function attachMessageId(payload) {
     if (!payload?.role || !payload?.id) return
     for (let i = messages.value.length - 1; i >= 0; i--) {
       const m = messages.value[i]
-      if (m.type === 'text' && m.role === payload.role && !m.id) {
+      if ((m.type === 'text' || m.type === 'company_knowledge') && m.role === payload.role && !m.id) {
         m.id = payload.id
         return
       }

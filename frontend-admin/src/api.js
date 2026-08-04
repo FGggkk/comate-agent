@@ -29,6 +29,55 @@ export const apiAdminLogin = (email, password) =>
 export const apiAdminMe = () => request('/auth/me')
 export const apiDashboard = (days = 7) => request(`/dashboard?days=${days}`)
 
+// 公司知识库
+export const apiAdminCompanyKnowledgeTypes = () => request('/company-knowledge/types')
+export const apiAdminCompanyKnowledgeSources = (knowledgeType = 'policy', status = 'all', page = 1, size = 20) =>
+  request(`/company-knowledge/sources?knowledge_type=${encodeURIComponent(knowledgeType)}&status=${status}&page=${page}&size=${size}`)
+export const apiAdminCompanyKnowledgeSource = (id, chunkSetId = '') => request(`/company-knowledge/sources/${id}${chunkSetId ? `?chunk_set_id=${encodeURIComponent(chunkSetId)}` : ''}`)
+export const apiAdminCompanyKnowledgeUpdate = (id, data) =>
+  request(`/company-knowledge/sources/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+export const apiAdminCompanyKnowledgeDelete = (id) => request(`/company-knowledge/sources/${id}`, { method: 'DELETE' })
+export const apiAdminCompanyKnowledgePublish = (id) => request(`/company-knowledge/sources/${id}/publish`, { method: 'POST', body: '{}' })
+export const apiAdminCompanyKnowledgeArchive = (id) => request(`/company-knowledge/sources/${id}/archive`, { method: 'POST', body: '{}' })
+export const apiAdminCompanyKnowledgeReindex = (id) => request(`/company-knowledge/sources/${id}/reindex`, { method: 'POST', body: '{}' })
+export const apiAdminCompanyKnowledgeCreateChunkSet = (id, data) =>
+  request(`/company-knowledge/sources/${id}/chunk-sets`, { method: 'POST', body: JSON.stringify(data) })
+export const apiAdminCompanyKnowledgeUpdateChunkSet = (sourceId, chunkSetId, chunks) =>
+  request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}`, { method: 'PUT', body: JSON.stringify({ chunks }) })
+export const apiAdminCompanyKnowledgeConfirmChunkSet = (sourceId, chunkSetId) =>
+  request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}/confirm`, { method: 'POST', body: '{}' })
+export const apiAdminCompanyKnowledgeIndexChunkSet = (sourceId, chunkSetId) =>
+  request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}/index`, { method: 'POST', body: '{}' })
+export const apiAdminCompanyKnowledgePreviewChunkSet = (sourceId, chunkSetId, data) =>
+  request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}/retrieval-preview`, { method: 'POST', body: JSON.stringify(data) })
+export const apiAdminCompanyKnowledgeValidateChunkSet = (sourceId, chunkSetId, data) =>
+  request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}/validate`, { method: 'POST', body: JSON.stringify(data) })
+export const apiAdminCompanyKnowledgeJobs = (page = 1, size = 30) =>
+  request(`/company-knowledge/jobs?page=${page}&size=${size}`)
+export const apiAdminCompanyKnowledgeDeleteJob = (id) => request(`/company-knowledge/jobs/${id}`, { method: 'DELETE' })
+export const apiAdminCompanyKnowledgeUpload = async (data) => {
+  const token = localStorage.getItem('admin_token')
+  const form = new FormData()
+  form.append('file', data.file)
+  form.append('title', data.title)
+  form.append('version', data.version)
+  form.append('effective_at', data.effective_at)
+  if (data.expires_at) form.append('expires_at', data.expires_at)
+  form.append('category', data.category || '')
+  form.append('knowledge_type', data.knowledge_type || 'policy')
+  const res = await fetch(`${BASE}/company-knowledge/sources`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  })
+  if (res.status === 401) {
+    localStorage.removeItem('admin_token')
+    window.location.href = '/login'
+    throw new Error('登录已过期')
+  }
+  return res.json()
+}
+
 // 兑换码管理
 export const apiAdminCodes = (status = 'all', page = 1, q = '', size = 20) =>
   request(`/codes?status=${status}&page=${page}&size=${size}${q ? `&q=${q}` : ''}`)
@@ -55,6 +104,8 @@ export const apiAdminUserBalance = (id, change, note) =>
   request(`/users/${id}/balance`, { method: 'POST', body: JSON.stringify({ change, note }) })
 export const apiAdminUserSlotCapacity = (id, capacity) =>
   request(`/users/${id}/slot_capacity`, { method: 'POST', body: JSON.stringify({ capacity }) })
+export const apiAdminUserRagEnabled = (id, enabled) =>
+  request(`/users/${id}/rag_enabled`, { method: 'POST', body: JSON.stringify({ enabled }) })
 
 // 计费规则
 export const apiAdminBillingRules = () => request('/billing-rules')

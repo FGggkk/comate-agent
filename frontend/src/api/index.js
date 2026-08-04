@@ -117,6 +117,19 @@ export function apiSendMessage(message, sessionId, options = {}) {
   })
 }
 
+// Company knowledge
+export const apiGetCompanyKnowledgeTypes = () => get('/company-knowledge/types')
+export const apiListCompanyKnowledgeMessages = (sessionId) =>
+  get(`/company-knowledge/messages?session_id=${encodeURIComponent(sessionId)}`)
+export function apiQueryCompanyKnowledge(data) {
+  const token = localStorage.getItem('comate_token')
+  return fetch(`${BASE}/company-knowledge/query`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
+    body: JSON.stringify(data),
+  })
+}
+
 // Memories
 export const apiGetMemories = () => get('/memories')
 export const apiCreateMemory = (data) => post('/memories', data)
