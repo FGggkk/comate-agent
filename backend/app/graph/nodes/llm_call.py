@@ -6,26 +6,30 @@ from functools import lru_cache
 from pathlib import Path
 
 from app.graph.state import ChatState
-from app.graph.schemas import text_chunk_event, status_event
+from app.graph.schemas import text_chunk_event, status_event, thinking_event
 from app.graph.tools import TOOL_REGISTRY
 from app.services.model_gateway import gateway
 
 
 async def llm_call_node(state: ChatState):
-    """两轮调用：先让模型决策是否要调工具，再流式输出最终回答"""
-    events = [status_event("thinking", "伴行正在思考...")]
+    """两轮调用：先让模型决策是否要调工具，再流式输出最终回答。
+
+    全程流式：第一轮即 stream + tools，reasoning 走 thinking 事件、正文走 text_chunk 事件；
+    命中工具则执行后第二轮流式输出，未命中则第一轮正文即为最终回答。
+    """
+    yield status_event("thinking", "伴行正在思考...")
 
     # 边界回复（禁区等）
     boundary_reply = _boundary_update_reply(state)
     if boundary_reply:
         state.reply = boundary_reply
-        events.append(text_chunk_event(boundary_reply))
-        return events
+        yield text_chunk_event(boundary_reply)
+        return
 
     # 1. 构建 system prompt
     system = _build_system_prompt(state)
 
-    # 2. 第一轮：非流式，带 tools 定义，让模型决策
+    # 2. 第一轮：流式 + tools，边生成边转发
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": state.message},
@@ -33,30 +37,44 @@ async def llm_call_node(state: ChatState):
     tools_def = TOOL_REGISTRY.to_openai_tools()
 
     try:
-        first_resp = await gateway.chat_with_tools(messages, tools=tools_def)
-        choice = first_resp["choices"][0]
-        msg = choice.get("message", {})
+        first_content = ""
+        tool_acc: dict[int, dict] = {}
+        async for reasoning, content, tool_calls in gateway.stream_messages_full(messages, tools=tools_def):
+            if reasoning:
+                yield thinking_event(reasoning)
+            if content:
+                first_content += content
+                yield text_chunk_event(content)
+            for tc in tool_calls or []:
+                idx = tc.get("index", 0)
+                acc = tool_acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                if tc.get("id"):
+                    acc["id"] = tc["id"]
+                fn = tc.get("function") or {}
+                if fn.get("name"):
+                    acc["name"] = fn["name"]
+                if fn.get("arguments"):
+                    acc["arguments"] += fn["arguments"]
 
-        tool_calls = msg.get("tool_calls")
+        tool_calls = None
+        if tool_acc:
+            tool_calls = [
+                {
+                    "id": acc["id"],
+                    "type": "function",
+                    "function": {"name": acc["name"], "arguments": acc["arguments"]},
+                }
+                for _, acc in sorted(tool_acc.items())
+            ]
 
         # 3. 如果有 tool_calls，执行工具
         if tool_calls:
-            events.append(status_event("tool_call", "正在获取信息..."))
-            # 添加 assistant 的 tool_call 消息
+            # 丢弃第一轮过渡文本，进入工具流程
+            yield status_event("tool_call", "正在获取信息...")
             messages.append({
                 "role": "assistant",
-                "content": msg.get("content") or None,
-                "tool_calls": [
-                    {
-                        "id": tc["id"],
-                        "type": "function",
-                        "function": {
-                            "name": tc["function"]["name"],
-                            "arguments": tc["function"]["arguments"],
-                        },
-                    }
-                    for tc in tool_calls
-                ],
+                "content": first_content or None,
+                "tool_calls": tool_calls,
             })
 
             # 逐个执行工具
@@ -80,35 +98,25 @@ async def llm_call_node(state: ChatState):
                 })
 
             # 4. 第二轮：流式输出最终回答
-            events.append(status_event("thinking", "伴行正在整理回答..."))
+            yield status_event("thinking", "伴行正在整理回答...")
             full_reply = ""
-            async for chunk in gateway.stream_messages(messages):
-                full_reply += chunk
-                events.append(text_chunk_event(chunk))
+            async for reasoning, content, _ in gateway.stream_messages_full(messages):
+                if reasoning:
+                    yield thinking_event(reasoning)
+                if content:
+                    full_reply += content
+                    yield text_chunk_event(content)
 
             state.reply = full_reply
         else:
-            # 没有 tool_calls，直接流式输出第一轮的回答
-            content = msg.get("content", "")
-            if content:
-                # 将第一轮的非流式结果拆成一句输出（模拟流式）
-                events.append(text_chunk_event(content))
-                state.reply = content
-            else:
-                # 回退：用 stream_messages 再调一次
-                full_reply = ""
-                async for chunk in gateway.stream_messages(messages):
-                    full_reply += chunk
-                    events.append(text_chunk_event(chunk))
-                state.reply = full_reply
+            # 没有 tool_calls：第一轮流式正文即为最终回答
+            state.reply = first_content
 
     except Exception as e:
         state.error = f"模型调用失败: {str(e)}"
         fallback = "嗯，我在听。能再多说一点吗？"
         state.reply = fallback
-        events.append(text_chunk_event(fallback))
-
-    return events
+        yield text_chunk_event(fallback)
 
 
 def _build_system_prompt(state: ChatState) -> str:
