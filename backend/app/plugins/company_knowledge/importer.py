@@ -49,6 +49,22 @@ def read_text_source(file_name: str, content: bytes) -> ImportedText:
     )
 
 
+def to_markdown(imported: ImportedText, title: str) -> tuple[str, list[str]]:
+    """将第一版文本资料规范为可审阅的 Markdown 正文。"""
+    content = imported.content.strip()
+    warnings: list[str] = []
+    if imported.source_format == "md":
+        markdown = content
+    else:
+        markdown = f"# {title.strip()}\n\n{content}"
+        warnings.append("TXT 已按原文转换为 Markdown；请在切分前确认标题和段落边界。")
+    return _normalize_text(markdown), warnings
+
+
+def content_hash(text: str) -> str:
+    return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
+
+
 def _normalize_text(text: str) -> str:
     normalized = (text or "").replace("\r\n", "\n").replace("\r", "\n")
     lines = [line.rstrip() for line in normalized.split("\n")]

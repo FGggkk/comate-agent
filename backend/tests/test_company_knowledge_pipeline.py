@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from app.plugins.company_knowledge.chunker import chunk_text
-from app.plugins.company_knowledge.importer import SourceImportError, read_text_source
+from app.plugins.company_knowledge.importer import SourceImportError, read_text_source, to_markdown
 from app.plugins.company_knowledge.prompts import COMPANY_KNOWLEDGE_SYSTEM_PROMPT, build_answer_prompt
 
 
@@ -25,6 +25,16 @@ class CompanyKnowledgePipelineTests(unittest.TestCase):
 
         self.assertEqual(imported.source_format, "txt")
         self.assertIn("离开工位", imported.content)
+
+    def test_txt_is_converted_to_reviewable_markdown(self):
+        file_path = self.fixture_dir / "office-conduct-v1.txt"
+        imported = read_text_source(file_path.name, file_path.read_bytes())
+
+        markdown, warnings = to_markdown(imported, "办公行为规范（测试资料）")
+
+        self.assertTrue(markdown.startswith("# 办公行为规范（测试资料）"))
+        self.assertIn("离开工位", markdown)
+        self.assertTrue(warnings)
 
     def test_import_rejects_non_text_format_and_non_utf8_content(self):
         with self.assertRaisesRegex(SourceImportError, "TXT 或 Markdown"):

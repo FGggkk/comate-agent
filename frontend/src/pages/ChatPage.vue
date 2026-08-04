@@ -220,6 +220,17 @@
         @voice="toggleVoice"
         @voice-reply-toggle="toggleVoiceReply"
       />
+      <RagFloatingChat
+        v-if="ragEnabled"
+        ref="ragFloatingRef"
+        :session-id="chatStore.currentSessionId"
+        :ensure-session="ensureSession"
+        :refresh-permission="refreshRagPermission"
+        :voice-state="voiceState"
+        :voice-hint="ragVoiceHint"
+        @voice="toggleRagVoice"
+        @access-revoked="handleRagAccessRevoked"
+      />
     </div>
   </div>
 </template>
@@ -228,7 +239,7 @@
 import { ref, computed, onBeforeUnmount, onMounted, nextTick } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useUserStore } from '../stores/user'
-import { apiGetTemplates, apiPreview, apiConfirmSoul, apiSendMessage, apiListSessions, apiCreateSession, apiDeleteSession, apiGetMessages, apiEditMessage, apiDeleteMessage, apiUpdateSession, apiGetSoulInventory, apiCreateMemory, apiCreateMemoryReminder, apiCreateReminder, apiVoiceRealtimeUrl } from '../api/index'
+import { apiGetTemplates, apiPreview, apiConfirmSoul, apiSendMessage, apiListSessions, apiCreateSession, apiDeleteSession, apiGetMessages, apiEditMessage, apiDeleteMessage, apiUpdateSession, apiGetSoulInventory, apiCreateMemory, apiCreateMemoryReminder, apiCreateReminder, apiGetProfile, apiVoiceRealtimeUrl } from '../api/index'
 import MessageBubble from '../components/MessageBubble.vue'
 import MemoryCard from '../components/MemoryCard.vue'
 import ActionButtons from '../components/ActionButtons.vue'
@@ -236,6 +247,7 @@ import StatusIndicator from '../components/StatusIndicator.vue'
 import InputBar from '../components/InputBar.vue'
 import QuickBar from '../components/QuickBar.vue'
 import SoulOrb from '../components/SoulOrb.vue'
+import RagFloatingChat from '../components/RagFloatingChat.vue'
 
 const props = defineProps({
   currentSoul: { type: Object, default: null },
@@ -253,6 +265,9 @@ const heroSquished = ref(false)
 const inputBarRef = ref(null)
 const showWritingPanel = ref(false)
 const activeWritingScenario = ref('')
+const ragFloatingRef = ref(null)
+const ragEnabled = ref(false)
+const ragVoiceHint = ref('')
 const showReminderPanel = ref(false)
 const reminderSaving = ref(false)
 const reminderMsg = ref('')
@@ -282,6 +297,7 @@ let voiceReplySoul = null
 let voiceReplyMode = 'text'
 let voiceHasAudio = false
 let voiceErrorReported = false
+let voicePurpose = 'chat'
 const voicePlaybackSources = new Set()
 const voiceToolStatus = ref('')
 const voiceToolResponseIds = new Set()
@@ -401,9 +417,10 @@ async function loadMessages(sessionId) {
         if (m.type === 'text') {
           chatStore.addMessage({
             id: m.id,
-            type: 'text',
+            type: m.type,
             role: m.role,
             content: m.content,
+            citations: m.metadata?.company_knowledge?.citations || [],
             soul: m.metadata?.soul || soulByMessageId.get(m.id) || null,
             timestamp: m.created_at ? new Date(m.created_at).getTime() : undefined,
           })
@@ -770,6 +787,32 @@ async function ensureSession() {
   return sessionId
 }
 
+function clearRagFloatingState() {
+  ;[
+    'comate_rag_floating_state',
+    'comate_rag_floating_bubble',
+    'comate_rag_floating_panel',
+    'comate_rag_floating_compact',
+  ].forEach((key) => localStorage.removeItem(key))
+}
+
+async function refreshRagPermission() {
+  try {
+    const profile = await apiGetProfile()
+    ragEnabled.value = profile?.user?.rag_enabled === true
+  } catch {
+    ragEnabled.value = false
+  }
+  if (!ragEnabled.value) clearRagFloatingState()
+  return ragEnabled.value
+}
+
+function handleRagAccessRevoked() {
+  if (voicePurpose === 'rag_floating_chat' && voiceState.value !== 'idle') cancelVoiceResponse()
+  clearRagFloatingState()
+  ragEnabled.value = false
+}
+
 async function handleSend(text, options = {}) {
   showWritingPanel.value = false
   showReminderPanel.value = false
@@ -1066,12 +1109,14 @@ function cleanupVoiceResources() {
   voiceState.value = 'idle'
   voiceReplyEnabled.value = false
   voiceReplyMode = 'text'
+  voicePurpose = 'chat'
   resetVoiceToolState()
 }
 
 function reportVoiceError(message) {
   if (voiceErrorReported) return
   voiceErrorReported = true
+  const isRagVoice = voicePurpose === 'rag_floating_chat'
   stopVoiceCapture()
   stopVoicePlayback()
   closeVoiceSocket()
@@ -1079,8 +1124,14 @@ function reportVoiceError(message) {
   voiceState.value = 'idle'
   voiceReplyEnabled.value = false
   voiceReplyMode = 'text'
+  voicePurpose = 'chat'
   resetVoiceToolState()
-  chatStore.addMessage({ type: 'error', role: 'system', content: message || '语音服务暂时不可用。' })
+  if (isRagVoice) {
+    ragVoiceHint.value = message || '语音服务暂时不可用。'
+    ragFloatingRef.value?.setVoiceHint(ragVoiceHint.value)
+  } else {
+    chatStore.addMessage({ type: 'error', role: 'system', content: message || '语音服务暂时不可用。' })
+  }
   nextTick(() => scrollToBottom())
 }
 
@@ -1088,6 +1139,25 @@ function handleVoiceEvent(event) {
   const eventType = event?.type
   if (eventType === 'voice.error') {
     reportVoiceError(event.message)
+    return
+  }
+  if (eventType === 'voice.transcript_ready' && voicePurpose === 'rag_floating_chat') {
+    const transcript = (event.data?.text || '').trim()
+    stopVoiceCapture()
+    stopVoicePlayback()
+    closeVoiceSocket()
+    voiceState.value = 'idle'
+    voiceReplyEnabled.value = false
+    voiceReplyMode = 'text'
+    voicePurpose = 'chat'
+    resetVoiceToolState()
+    if (transcript) {
+      ragFloatingRef.value?.applyVoiceTranscript(transcript)
+      ragVoiceHint.value = ''
+    } else {
+      ragVoiceHint.value = '未识别到有效语音内容'
+      ragFloatingRef.value?.setVoiceHint(ragVoiceHint.value)
+    }
     return
   }
   if (eventType === 'voice.messages_saved') {
@@ -1184,9 +1254,10 @@ function openVoiceSocket(sessionId) {
   })
 }
 
-async function startVoice() {
+async function startVoice(purpose = 'chat') {
   if (chatStore.isStreaming) return
   voiceErrorReported = false
+  voicePurpose = purpose
   voiceState.value = 'connecting'
   voiceUserMessage = null
   voiceAgentMessage = null
@@ -1194,7 +1265,7 @@ async function startVoice() {
   voiceAgentTranscript = ''
   voiceHasAudio = false
   resetVoiceToolState()
-  voiceReplyMode = voiceReplyEnabled.value ? 'audio' : 'text'
+  voiceReplyMode = purpose === 'rag_floating_chat' ? 'text' : (voiceReplyEnabled.value ? 'audio' : 'text')
   voiceReplySoul = await getReplySoulSnapshot()
   try {
     const sessionId = await ensureSession()
@@ -1208,13 +1279,19 @@ async function startVoice() {
 }
 
 function finishVoiceRecording() {
+  const isRagVoice = voicePurpose === 'rag_floating_chat'
   stopVoiceCapture()
   if (!voiceHasAudio) {
     voiceState.value = 'idle'
     voiceReplyEnabled.value = false
     voiceReplyMode = 'text'
+    voicePurpose = 'chat'
     resetVoiceToolState()
-    chatStore.addMessage({ type: 'error', role: 'system', content: '没有采集到声音，请检查麦克风后重试。' })
+    if (isRagVoice) {
+      ragVoiceHint.value = '没有采集到声音，请检查麦克风后重试。'
+      ragFloatingRef.value?.setVoiceHint(ragVoiceHint.value)
+    }
+    else chatStore.addMessage({ type: 'error', role: 'system', content: '没有采集到声音，请检查麦克风后重试。' })
     return
   }
   if (voiceSocket?.readyState !== WebSocket.OPEN) {
@@ -1222,12 +1299,20 @@ function finishVoiceRecording() {
     return
   }
   voiceState.value = 'responding'
-  updateVoiceUserMessage('正在识别…')
-  chatStore.setStreaming(true)
-  voiceSocket.send(JSON.stringify({ type: 'audio.commit', reply_mode: voiceReplyMode }))
+  if (isRagVoice) ragVoiceHint.value = '正在识别…'
+  else {
+    updateVoiceUserMessage('正在识别…')
+    chatStore.setStreaming(true)
+  }
+  voiceSocket.send(JSON.stringify({
+    type: 'audio.commit',
+    reply_mode: voiceReplyMode,
+    transcription_only: isRagVoice,
+  }))
 }
 
 function cancelVoiceResponse() {
+  const isRagVoice = voicePurpose === 'rag_floating_chat'
   if (voiceSocket?.readyState === WebSocket.OPEN) {
     voiceSocket.send(JSON.stringify({ type: 'response.cancel' }))
   }
@@ -1235,8 +1320,10 @@ function cancelVoiceResponse() {
   voiceState.value = 'idle'
   voiceReplyEnabled.value = false
   voiceReplyMode = 'text'
+  voicePurpose = 'chat'
   resetVoiceToolState()
-  chatStore.finishStream()
+  if (isRagVoice) ragVoiceHint.value = '已取消语音输入'
+  else chatStore.finishStream()
 }
 
 function toggleVoiceReply() {
@@ -1255,6 +1342,18 @@ function toggleVoice() {
   }
 }
 
+function toggleRagVoice() {
+  if (chatStore.isStreaming || voiceState.value === 'connecting') return
+  if (voiceState.value === 'recording') {
+    finishVoiceRecording()
+  } else if (voiceState.value === 'responding') {
+    cancelVoiceResponse()
+  } else {
+    ragVoiceHint.value = ''
+    startVoice('rag_floating_chat')
+  }
+}
+
 // ── 页面初始化 ──
 
 onMounted(async () => {
@@ -1262,7 +1361,7 @@ onMounted(async () => {
     templates.value = await apiGetTemplates()
     return
   }
-  await loadSessions()
+  await Promise.all([loadSessions(), refreshRagPermission()])
   if (chatStore.currentSessionId) {
     await loadMessages(chatStore.currentSessionId)
   } else if (chatStore.sessions.length > 0) {
@@ -1270,7 +1369,9 @@ onMounted(async () => {
   }
 })
 
-onBeforeUnmount(() => cleanupVoiceResources())
+onBeforeUnmount(() => {
+  cleanupVoiceResources()
+})
 
 function startOnboarding() { onboardingStep.value = 'select' }
 
@@ -1287,7 +1388,7 @@ async function confirmSoul() {
   userStore.completeOnboarding()
   showOnboarding.value = false
   // 初始化加载
-  await loadSessions()
+  await Promise.all([loadSessions(), refreshRagPermission()])
 }
 
 const timeGreeting = computed(() => {

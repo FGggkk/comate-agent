@@ -2,6 +2,7 @@
 
 import unittest
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -23,6 +24,9 @@ class CompanyKnowledgeContractTests(unittest.TestCase):
         app.dependency_overrides[get_current_user] = lambda: "test-user"
         app.dependency_overrides[get_current_admin] = lambda: SimpleNamespace(id="admin-1")
         self.client = TestClient(app)
+        self.rag_enabled = patch.object(company_knowledge, "is_rag_enabled", AsyncMock(return_value=True))
+        self.rag_enabled.start()
+        self.addCleanup(self.rag_enabled.stop)
 
     def test_registry_keeps_all_future_types_but_only_policy_is_enabled(self):
         items = {item["key"]: item for item in list_knowledge_types()}
@@ -66,6 +70,14 @@ class CompanyKnowledgeContractTests(unittest.TestCase):
         self.assertEqual(request.knowledge_type, "policy")
         self.assertEqual(request.input_mode, "voice")
 
+    @patch.object(admin_company_knowledge, "delete_company_job", new_callable=AsyncMock)
+    def test_admin_can_delete_completed_job_record(self, delete_job):
+        response = self.client.delete("/api/admin/company-knowledge/jobs/job-1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["success"])
+        delete_job.assert_awaited_once()
+
     def test_company_knowledge_messages_do_not_enter_persona_signal_input(self):
         messages = [
             SimpleNamespace(msg_type="text", content="我下周要申请婚假"),
@@ -80,8 +92,13 @@ class CompanyKnowledgeContractTests(unittest.TestCase):
         migration_sql = "\n".join(MIGRATION_SQL)
 
         self.assertIn("CREATE TABLE IF NOT EXISTS company_knowledge_sources", migration_sql)
+        self.assertIn("uq_company_knowledge_source_active_title_version", migration_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS company_knowledge_chunks", migration_sql)
+        self.assertIn("CREATE TABLE IF NOT EXISTS company_knowledge_chunk_sets", migration_sql)
+        self.assertIn("ALTER TABLE company_knowledge_chunk_sets ADD COLUMN IF NOT EXISTS validated_by", migration_sql)
+        self.assertIn("ALTER TABLE company_knowledge_chunk_sets ADD COLUMN IF NOT EXISTS validated_at", migration_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS company_knowledge_jobs", migration_sql)
+        self.assertIn("ALTER TABLE users ADD COLUMN IF NOT EXISTS rag_enabled", migration_sql)
         self.assertIn("idx_company_knowledge_chunks_embedding_hnsw", migration_sql)
 
 

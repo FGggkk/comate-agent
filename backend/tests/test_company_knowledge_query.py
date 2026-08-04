@@ -3,7 +3,7 @@
 import json
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -52,6 +52,7 @@ class CompanyKnowledgeQueryTests(unittest.TestCase):
             return SimpleNamespace(id="agent-message-1")
 
         with (
+            patch.object(company_knowledge, "is_rag_enabled", AsyncMock(return_value=True)),
             patch.object(company_knowledge, "ensure_company_knowledge_session", fake_session),
             patch.object(company_knowledge, "save_company_knowledge_user_message", fake_save_user),
             patch.object(company_knowledge, "retrieve_company_knowledge", fake_retrieve),
@@ -91,6 +92,7 @@ class CompanyKnowledgeQueryTests(unittest.TestCase):
             return SimpleNamespace(id="agent-message-1")
 
         with (
+            patch.object(company_knowledge, "is_rag_enabled", AsyncMock(return_value=True)),
             patch.object(company_knowledge, "ensure_company_knowledge_session", fake_session),
             patch.object(company_knowledge, "save_company_knowledge_user_message", fake_save_user),
             patch.object(company_knowledge, "retrieve_company_knowledge", fake_retrieve),
@@ -108,6 +110,25 @@ class CompanyKnowledgeQueryTests(unittest.TestCase):
         self.assertEqual(events[1]["data"]["text"], "当前已发布制度中未找到可引用依据。")
         self.assertFalse(answer_stream.called)
         self.assertEqual(saved["citations"], [])
+
+    def test_returns_403_when_rag_is_disabled(self):
+        with patch.object(company_knowledge, "is_rag_enabled", AsyncMock(return_value=False)):
+            response = self.client.post(
+                "/api/company-knowledge/query",
+                json={"message": "年假怎么申请？"},
+            )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(response.json()["success"])
+        self.assertEqual(response.json()["data"]["code"], "rag_disabled")
+
+    def test_history_is_also_forbidden_when_rag_is_disabled(self):
+        with patch.object(company_knowledge, "is_rag_enabled", AsyncMock(return_value=False)):
+            response = self.client.get("/api/company-knowledge/messages?session_id=session-1")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(response.json()["success"])
+        self.assertEqual(response.json()["data"]["code"], "rag_disabled")
 
 
 def _events(body: str) -> list[dict]:

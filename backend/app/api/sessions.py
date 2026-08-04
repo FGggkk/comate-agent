@@ -117,7 +117,10 @@ async def get_messages(
         return fail("会话不存在")
 
     result = await db.execute(
-        select(Message).where(Message.session_id == session_id).order_by(Message.created_at.asc()).limit(100)
+        select(Message)
+        .where(Message.session_id == session_id, Message.msg_type != "company_knowledge")
+        .order_by(Message.created_at.asc())
+        .limit(100)
     )
     messages = result.scalars().all()
     return ok({

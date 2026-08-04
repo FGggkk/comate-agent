@@ -134,22 +134,26 @@ async def _proxy_browser_events(websocket: WebSocket, upstream, turn: dict) -> N
             await upstream.send(json.dumps({"type": "input_audio_buffer.append", "audio": audio}))
         elif event_type == "audio.commit":
             reply_mode = "audio" if payload.get("reply_mode") == "audio" else "text"
+            transcription_only = bool(payload.get("transcription_only"))
             turn.update(
                 user_transcript="",
                 agent_transcript="",
                 reply_mode=reply_mode,
+                transcription_only=transcription_only,
+                transcript_ready=False,
                 saved=False,
                 response_transcripts={},
                 tool_response_ids=set(),
                 handled_tool_call_ids=set(),
             )
             await upstream.send(json.dumps({"type": "input_audio_buffer.commit"}))
-            await upstream.send(json.dumps({
-                "type": "response.create",
-                "response": {
-                    "modalities": _response_modalities(reply_mode),
-                },
-            }))
+            if not transcription_only:
+                await upstream.send(json.dumps({
+                    "type": "response.create",
+                    "response": {
+                        "modalities": _response_modalities(reply_mode),
+                    },
+                }))
         elif event_type == "response.cancel":
             await upstream.send(json.dumps({"type": "response.cancel"}))
         elif event_type == "close":
@@ -315,6 +319,18 @@ async def _proxy_model_events(
 
         await websocket.send_text(raw_event)
 
+        if event_type == "conversation.item.input_audio_transcription.completed" and turn.get("transcription_only"):
+            transcript = turn["user_transcript"].strip()
+            if transcript:
+                turn["transcript_ready"] = True
+                await websocket.send_json({
+                    "type": "voice.transcript_ready",
+                    "data": {"text": transcript},
+                })
+            else:
+                await websocket.send_json({"type": "voice.error", "message": "未识别到有效语音内容"})
+            return
+
         if event_type == "response.function_call_arguments.done":
             await _handle_tool_call(upstream, event, turn)
             continue
@@ -394,6 +410,8 @@ async def voice_realtime(websocket: WebSocket, session_id: str):
                 "user_transcript": "",
                 "agent_transcript": "",
                 "reply_mode": "text",
+                "transcription_only": False,
+                "transcript_ready": False,
                 "saved": False,
                 "response_transcripts": {},
                 "tool_response_ids": set(),

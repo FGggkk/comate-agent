@@ -26,6 +26,10 @@ class SlotCapacityRequest(BaseModel):
     capacity: int  # 6 / 9 / 12
 
 
+class RagEnabledRequest(BaseModel):
+    enabled: bool
+
+
 def _user_brief(u: User, balance: int | None = None) -> dict:
     return {
         "id": str(u.id),
@@ -34,6 +38,7 @@ def _user_brief(u: User, balance: int | None = None) -> dict:
         "avatar_url": u.avatar_url,
         "status": getattr(u, "status", "active") or "active",
         "slot_capacity": u.slot_capacity or 6,
+        "rag_enabled": bool(getattr(u, "rag_enabled", False)),
         "balance": balance if balance is not None else 0,
         "onboarding_status": u.onboarding_status,
         "created_at": u.created_at.isoformat() if u.created_at else None,
@@ -160,6 +165,21 @@ async def update_slot_capacity(
     user.slot_capacity = req.capacity
     await db.commit()
     return {"success": True, "message": f"卡槽上限已设为 {req.capacity}"}
+
+
+@router.post("/{user_id}/rag_enabled")
+async def update_rag_enabled(
+    user_id: str,
+    req: RagEnabledRequest,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not user:
+        return {"success": False, "message": "用户不存在"}
+    user.rag_enabled = req.enabled
+    await db.commit()
+    return {"success": True, "rag_enabled": bool(user.rag_enabled), "message": "RAG 已" + ("启用" if req.enabled else "关闭")}
 
 
 @router.post("/{user_id}/balance")

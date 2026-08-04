@@ -37,6 +37,15 @@ class FakeBrowser:
         self.json_events.append(event)
 
 
+class FakeIncomingBrowser(FakeBrowser):
+    def __init__(self, events):
+        super().__init__()
+        self.events = list(events)
+
+    async def receive_json(self):
+        return self.events.pop(0)
+
+
 class FakeWeatherTool:
     name = "get_weather"
     description = "查询天气"
@@ -78,6 +87,8 @@ class VoiceToolCallingTests(unittest.IsolatedAsyncioTestCase):
             "user_transcript": "北京天气怎么样",
             "agent_transcript": "",
             "reply_mode": reply_mode,
+            "transcription_only": False,
+            "transcript_ready": False,
             "saved": False,
             "response_transcripts": {},
             "tool_response_ids": set(),
@@ -171,6 +182,42 @@ class VoiceToolCallingTests(unittest.IsolatedAsyncioTestCase):
         output = json.loads(upstream.sent[0]["item"]["output"])
         self.assertIn("未注册的工具", output["error"])
         self.assertEqual(upstream.sent[1]["type"], "response.create")
+
+    async def test_transcription_only_commit_does_not_request_a_chat_response(self):
+        upstream = FakeUpstream()
+        browser = FakeIncomingBrowser([
+            {"type": "audio.commit", "transcription_only": True},
+            {"type": "close"},
+        ])
+        turn = self.make_turn()
+
+        await voice._proxy_browser_events(browser, upstream, turn)
+
+        self.assertEqual([item["type"] for item in upstream.sent], ["input_audio_buffer.commit"])
+        self.assertTrue(turn["transcription_only"])
+
+    async def test_transcription_only_returns_text_without_persisting_a_chat_turn(self):
+        upstream = FakeUpstream([
+            {
+                "type": "conversation.item.input_audio_transcription.completed",
+                "transcript": "年假怎么申请",
+            }
+        ])
+        browser = FakeBrowser()
+        turn = self.make_turn()
+        turn["user_transcript"] = ""
+        turn["transcription_only"] = True
+
+        await voice._proxy_model_events(
+            browser, upstream, "user-1", "session-1", None, turn
+        )
+
+        self.assertEqual(self.persisted, [])
+        self.assertTrue(turn["transcript_ready"])
+        self.assertEqual(browser.json_events[-1], {
+            "type": "voice.transcript_ready",
+            "data": {"text": "年假怎么申请"},
+        })
 
 
 if __name__ == "__main__":

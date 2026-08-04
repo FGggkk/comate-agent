@@ -33,12 +33,28 @@ export const apiDashboard = (days = 7) => request(`/dashboard?days=${days}`)
 export const apiAdminCompanyKnowledgeTypes = () => request('/company-knowledge/types')
 export const apiAdminCompanyKnowledgeSources = (knowledgeType = 'policy', status = 'all', page = 1, size = 20) =>
   request(`/company-knowledge/sources?knowledge_type=${encodeURIComponent(knowledgeType)}&status=${status}&page=${page}&size=${size}`)
-export const apiAdminCompanyKnowledgeSource = (id) => request(`/company-knowledge/sources/${id}`)
+export const apiAdminCompanyKnowledgeSource = (id, chunkSetId = '') => request(`/company-knowledge/sources/${id}${chunkSetId ? `?chunk_set_id=${encodeURIComponent(chunkSetId)}` : ''}`)
+export const apiAdminCompanyKnowledgeUpdate = (id, data) =>
+  request(`/company-knowledge/sources/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+export const apiAdminCompanyKnowledgeDelete = (id) => request(`/company-knowledge/sources/${id}`, { method: 'DELETE' })
 export const apiAdminCompanyKnowledgePublish = (id) => request(`/company-knowledge/sources/${id}/publish`, { method: 'POST', body: '{}' })
 export const apiAdminCompanyKnowledgeArchive = (id) => request(`/company-knowledge/sources/${id}/archive`, { method: 'POST', body: '{}' })
 export const apiAdminCompanyKnowledgeReindex = (id) => request(`/company-knowledge/sources/${id}/reindex`, { method: 'POST', body: '{}' })
+export const apiAdminCompanyKnowledgeCreateChunkSet = (id, data) =>
+  request(`/company-knowledge/sources/${id}/chunk-sets`, { method: 'POST', body: JSON.stringify(data) })
+export const apiAdminCompanyKnowledgeUpdateChunkSet = (sourceId, chunkSetId, chunks) =>
+  request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}`, { method: 'PUT', body: JSON.stringify({ chunks }) })
+export const apiAdminCompanyKnowledgeConfirmChunkSet = (sourceId, chunkSetId) =>
+  request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}/confirm`, { method: 'POST', body: '{}' })
+export const apiAdminCompanyKnowledgeIndexChunkSet = (sourceId, chunkSetId) =>
+  request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}/index`, { method: 'POST', body: '{}' })
+export const apiAdminCompanyKnowledgePreviewChunkSet = (sourceId, chunkSetId, data) =>
+  request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}/retrieval-preview`, { method: 'POST', body: JSON.stringify(data) })
+export const apiAdminCompanyKnowledgeValidateChunkSet = (sourceId, chunkSetId, data) =>
+  request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}/validate`, { method: 'POST', body: JSON.stringify(data) })
 export const apiAdminCompanyKnowledgeJobs = (page = 1, size = 30) =>
   request(`/company-knowledge/jobs?page=${page}&size=${size}`)
+export const apiAdminCompanyKnowledgeDeleteJob = (id) => request(`/company-knowledge/jobs/${id}`, { method: 'DELETE' })
 export const apiAdminCompanyKnowledgeUpload = async (data) => {
   const token = localStorage.getItem('admin_token')
   const form = new FormData()
@@ -88,6 +104,8 @@ export const apiAdminUserBalance = (id, change, note) =>
   request(`/users/${id}/balance`, { method: 'POST', body: JSON.stringify({ change, note }) })
 export const apiAdminUserSlotCapacity = (id, capacity) =>
   request(`/users/${id}/slot_capacity`, { method: 'POST', body: JSON.stringify({ capacity }) })
+export const apiAdminUserRagEnabled = (id, enabled) =>
+  request(`/users/${id}/rag_enabled`, { method: 'POST', body: JSON.stringify({ enabled }) })
 
 // 计费规则
 export const apiAdminBillingRules = () => request('/billing-rules')
