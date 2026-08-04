@@ -5,6 +5,7 @@ export const useChatStore = defineStore('chat', () => {
   const messages = ref([])
   const isStreaming = ref(false)
   const streamBuffer = ref('')
+  const thinking = ref({ active: false, stage: '', text: '' })
   const sessions = ref([])
   const currentSessionId = ref(localStorage.getItem('comate_session_id') || '')
   const showSessionList = ref(false)
@@ -52,6 +53,40 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming.value = val
   }
 
+  function startThinking(stage = '') {
+    thinking.value = { active: true, stage: stage || '伴行正在思考...', text: '' }
+  }
+
+  function appendThinking(text) {
+    if (!text) return
+    thinking.value.text += text
+  }
+
+  function setThinkingStage(stage) {
+    if (stage) thinking.value.stage = stage
+  }
+
+  function endThinking() {
+    // 把本次回复累积的推理文本归档到最后一条 thinking_trace，供历史展开查看
+    const reasoning = thinking.value.text
+    thinking.value = { active: false, stage: '', text: '' }
+    if (!reasoning) return
+    // 找本轮 active 的 trace；无记忆线索时新建一条，避免误归档到上一轮
+    const trace = [...messages.value].reverse().find(m => m.type === 'thinking_trace' && m.active)
+    if (trace) {
+      trace.reasoning = (trace.reasoning || '') + reasoning
+    } else {
+      messages.value.push({
+        type: 'thinking_trace',
+        active: false,
+        collapsed: true,
+        memories: [],
+        reasoning,
+        timestamp: Date.now(),
+      })
+    }
+  }
+
   function appendToStream(text) {
     streamBuffer.value += text
     // 找到最后一个 agent 消息（可能被 memory_card 等隔开）
@@ -77,6 +112,7 @@ export const useChatStore = defineStore('chat', () => {
   function finishStream() {
     isStreaming.value = false
     streamBuffer.value = ''
+    endThinking()
     messages.value.forEach((m) => {
       if (m.type === 'thinking_trace' && m.active) {
         m.active = false
@@ -87,6 +123,7 @@ export const useChatStore = defineStore('chat', () => {
 
   function clearHistory() {
     messages.value = []
+    thinking.value = { active: false, stage: '', text: '' }
   }
 
   function setSessions(list) {
@@ -120,8 +157,9 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   return {
-    messages, isStreaming, streamBuffer, sessions, currentSessionId, showSessionList, currentSession,
+    messages, isStreaming, streamBuffer, thinking, sessions, currentSessionId, showSessionList, currentSession,
     addMessage, attachMessageId, addThinkingMemory, setStreaming, appendToStream, setLastAgentSoul, finishStream, clearHistory,
+    startThinking, appendThinking, setThinkingStage, endThinking,
     setSessions, setCurrentSession, toggleSessionList, closeSessionList,
     replaceSessions, removeSession,
   }

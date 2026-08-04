@@ -104,12 +104,13 @@
         <div class="section-head">
           <div>
             <div class="page-label">灵魂图鉴</div>
-            <strong>{{ galleryFilter === 'all' ? '全部灵魂 · 点击卡片查看详情' : '已放置灵魂 · 点击卡片查看详情' }}</strong>
+            <strong>{{ galleryDesc }}</strong>
           </div>
           <div class="head-right">
             <div class="gallery-tabs">
               <button :class="{ active: galleryFilter === 'all' }" @click="setGalleryFilter('all')">全部</button>
-              <button :class="{ active: galleryFilter === 'owned' }" @click="setGalleryFilter('owned')">已放置</button>
+              <button :class="{ active: galleryFilter === 'owned' }" @click="setGalleryFilter('owned')">已点亮</button>
+              <button :class="{ active: galleryFilter === 'unowned' }" @click="setGalleryFilter('unowned')">未点亮</button>
             </div>
             <button class="fold-btn" :class="{ folded: galleryCollapsed }" @click="galleryCollapsed = !galleryCollapsed" :aria-label="galleryCollapsed ? '展开图鉴' : '收起图鉴'">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6" /></svg>
@@ -118,7 +119,7 @@
         </div>
         <div v-show="!galleryCollapsed">
           <div class="deck-grid">
-            <div v-for="item in galleryPageSouls" :key="item.id" class="deck-card" @click="openDetail(item)">
+            <div v-for="item in galleryPageSouls" :key="item.id" class="deck-card" :class="{ dim: !item.owned }" @click="openDetail(item)">
               <div class="deck-inner">
                 <div class="deck-face deck-front" :style="cardFace(item)">
                   <span v-if="item.slug === 'warm_companion'" class="classic-badge">经典</span>
@@ -169,7 +170,7 @@
           <TransitionGroup name="shuffle" tag="div" class="gacha-stage">
             <div
               v-for="(slot, i) in gachaSlots"
-              :key="slot"
+              :key="slot?.id ?? i"
               :class="[
                 'gacha-card',
                 { picked: i === gacha.picked },
@@ -212,7 +213,7 @@
           <p v-if="message" :class="['gacha-msg', messageTone]">{{ message }}</p>
 
           <div class="gacha-cta">
-            <button v-if="gacha.phase === 'idle'" class="draw-btn" :disabled="gacha.busy || !hasUnowned" @click="startGacha">
+            <button v-if="gacha.phase === 'idle'" class="draw-btn" :disabled="gacha.busy || !hasUnowned" @click="startGacha()">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 <path d="M12 3v18M3 12h18" />
               </svg>
@@ -237,14 +238,14 @@
             </template>
 
             <template v-else-if="gacha.phase === 'done' && replaceMode">
-              <div class="replace-hint">卡槽已满，选择一张旧灵魂替换（{{ drawnTemplate?.name }} 将入槽）</div>
+              <div class="replace-hint">卡槽已满，先点选一张旧灵魂，再确认替换（{{ drawnTemplate?.name }} 将入槽）</div>
               <div class="replace-grid">
                 <button
                   v-for="item in ownedSouls"
                   :key="item.id"
                   class="replace-item"
-                  :class="{ active: item.active }"
-                  @click="replaceWith(item)"
+                  :class="{ active: item.active, selected: replaceSelected === item.slot_id }"
+                  @click="replaceSelected = replaceSelected === item.slot_id ? '' : item.slot_id"
                 >
                   <img v-if="item.avatar_image" class="replace-avatar" :src="item.avatar_image" alt="" />
                   <span v-else class="replace-fallback" :style="{ background: soulColor(item) }">{{ item.name?.[0] }}</span>
@@ -252,7 +253,12 @@
                   <small>{{ item.active ? '已注入' : '' }}</small>
                 </button>
               </div>
-              <button class="draw-btn ghost" @click="replaceMode = false">取消</button>
+              <div class="replace-cta">
+                <button class="draw-btn confirm-btn" :disabled="!replaceSelected || saving" @click="confirmReplace">
+                  {{ replaceSelected ? '确认替换' : '请先选择一张旧灵魂' }}
+                </button>
+                <button class="draw-btn ghost" @click="replaceMode = false">取消</button>
+              </div>
             </template>
           </div>
         </div>
@@ -305,7 +311,8 @@ const messageTone = ref('')
 const gacha = ref({ phase: 'idle', picked: null, busy: false, drawn: null })
 const gachaOpen = ref(false)
 const replaceMode = ref(false)
-const gachaSlots = ref([0, 1, 2, 3, 4, 5])
+const replaceSelected = ref('')
+const gachaSlots = ref([])
 const shuffleSeed = ref(0)
 let shuffleTimer = null
 let revealTimer = null
@@ -322,9 +329,18 @@ const colorMap = ref({})
 const templates = computed(() => inventory.value.templates || [])
 const ownedSouls = computed(() => templates.value.filter((item) => item.owned))
 const unownedSouls = computed(() => templates.value.filter((item) => !item.owned))
-// 图鉴筛选：全部 / 已放置
+// 图鉴筛选：全部 / 已点亮 / 未点亮
 const galleryFilter = ref('all')
-const gallerySouls = computed(() => (galleryFilter.value === 'owned' ? ownedSouls.value : templates.value))
+const gallerySouls = computed(() => {
+  if (galleryFilter.value === 'owned') return ownedSouls.value
+  if (galleryFilter.value === 'unowned') return unownedSouls.value
+  return templates.value
+})
+const galleryDesc = computed(() => {
+  if (galleryFilter.value === 'owned') return `已点亮 ${ownedSouls.value.length} 张 · 点击卡片查看详情`
+  if (galleryFilter.value === 'unowned') return `未点亮 ${unownedSouls.value.length} 张 · 抽取后点亮`
+  return `全部灵魂 ${templates.value.length} 张 · 点击卡片查看详情`
+})
 // 区块折叠
 const slotsCollapsed = ref(false)
 const galleryCollapsed = ref(false)
@@ -366,9 +382,9 @@ function slotAt(i) {
 const gachaHint = computed(() => {
   if (replaceMode.value) return '替换旧灵魂'
   switch (gacha.value.phase) {
-    case 'idle': return hasUnowned.value ? '六张命运之卡，凭直觉选一张' : '全部灵魂都已收入卡槽'
+    case 'idle': return hasUnowned.value ? `从 ${unownedSouls.value.length} 张未拥有的灵魂中随机抽取，点一张翻开` : '全部灵魂都已收入卡槽'
     case 'shuffling': return '命运正在洗牌……'
-    case 'picking': return '选择一张命运之卡'
+    case 'picking': return '点一张卡，翻开你的灵魂'
     case 'revealing': return '命运揭晓……'
     case 'done': return drawnTemplate.value ? `抽到「${drawnTemplate.value.name}」` : ''
     default: return ''
@@ -410,6 +426,8 @@ function openGacha() {
   if (!hasUnowned.value) return
   message.value = ''
   replaceMode.value = false
+  // 展示台：随机取 6 张未拥有的灵魂作为候选卡面（不足 6 张则全部）
+  gachaSlots.value = shuffleArr(unownedSouls.value).slice(0, 6)
   gacha.value = { phase: 'idle', picked: null, busy: false, drawn: null }
   gachaOpen.value = true
 }
@@ -420,7 +438,7 @@ function tryCloseGacha() {
   replaceMode.value = false
 }
 
-async function startGacha() {
+async function startGacha(excludeTemplateId = null) {
   if (gacha.value.busy || !hasUnowned.value) return
   gacha.value.busy = true
   message.value = ''
@@ -436,7 +454,7 @@ async function startGacha() {
     if (rounds >= 3) clearInterval(shuffleTimer)
   }, 450)
   try {
-    const res = await apiDrawSoul()
+    const res = await apiDrawSoul(excludeTemplateId)
     if (res.success) {
       gacha.value.drawn = res.template
       if (res.inventory) inventory.value = res.inventory
@@ -493,10 +511,12 @@ function pickCard(i) {
   }, 1780)
 }
 
-// 丢弃重抽：直接再抽一张
+// 丢弃重抽：排除刚抽到的那张，保证重抽结果不同
 async function reroll() {
   if (saving.value) return
-  await startGacha()
+  // 展示台同步换一批随机未拥有候选
+  gachaSlots.value = shuffleArr(unownedSouls.value).slice(0, 6)
+  await startGacha(drawnTemplate.value?.id)
 }
 
 // 保存到卡槽（卡槽满则进入替换模式）
@@ -504,6 +524,7 @@ async function saveDrawn() {
   const t = drawnTemplate.value
   if (!t || saving.value) return
   if (slotsFull.value) {
+    replaceSelected.value = ''
     replaceMode.value = true
     return
   }
@@ -521,7 +542,10 @@ async function saveDrawn() {
     } else {
       messageTone.value = 'error'
       message.value = res.message || '保存失败'
-      if (res.need_replace) replaceMode.value = true
+      if (res.need_replace) {
+        replaceSelected.value = ''
+        replaceMode.value = true
+      }
     }
   } catch (e) {
     console.error('save soul error:', e)
@@ -530,6 +554,13 @@ async function saveDrawn() {
   } finally {
     saving.value = false
   }
+}
+
+// 确认替换：从选中的旧卡执行替换
+function confirmReplace() {
+  const item = ownedSouls.value.find(i => i.slot_id === replaceSelected.value)
+  if (!item) return
+  replaceWith(item)
 }
 
 async function replaceWith(item) {
@@ -741,8 +772,8 @@ function deckDesc(item) {
 function deckStatus(item) {
   if (item.status && item.status !== 'active') return '已下架'
   if (item.active) return '已注入'
-  if (item.owned) return '已放置'
-  return '未放置'
+  if (item.owned) return '已点亮'
+  return '未点亮'
 }
 
 function slotBadge(item) {
@@ -1237,6 +1268,19 @@ onBeforeUnmount(() => {
   height: 190px;
   cursor: pointer;
 }
+/* 未拥有的灵魂：暗色未点亮，只显示卡面 */
+.deck-card.dim {
+  filter: grayscale(0.55) brightness(0.82);
+  opacity: 0.6;
+  transition: filter 0.25s, opacity 0.25s;
+}
+.deck-card.dim:hover {
+  filter: grayscale(0.3) brightness(0.92);
+  opacity: 0.85;
+}
+.deck-card.dim .deck-status {
+  color: #e8e0d0;
+}
 .deck-inner {
   position: relative;
   width: 100%;
@@ -1302,8 +1346,13 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   background: rgba(0,0,0,.28);
 }
+/* 已点亮：金色徽标 + 卡片金色光晕 */
 .deck-status.owned {
-  background: rgba(95, 190, 99, .82);
+  background: linear-gradient(135deg, #ffd76b, #e8a93d);
+  color: #5b3a00;
+}
+.deck-card:not(.dim) {
+  box-shadow: 0 3px 12px rgba(255, 200, 90, .28);
 }
 .deck-status.active {
   background: linear-gradient(135deg, #ffd76b, #ff9f45);
@@ -1704,6 +1753,19 @@ onBeforeUnmount(() => {
   animation: gacha-pop .5s cubic-bezier(.34, 1.8, .64, 1) .25s both;
   box-shadow: 0 3px 10px rgba(255, 159, 69, .5);
 }
+.gacha-unowned-badge {
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(30, 40, 60, .55);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  backdrop-filter: blur(2px);
+}
 @keyframes gacha-pop {
   0% { transform: scale(0); }
   100% { transform: scale(1); }
@@ -1781,6 +1843,7 @@ onBeforeUnmount(() => {
   margin: 8px 0 4px;
 }
 .replace-item {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1795,6 +1858,49 @@ onBeforeUnmount(() => {
 }
 .replace-item:hover { transform: translateY(-2px); border-color: rgba(255, 220, 150, .7); }
 .replace-item.active { border-color: #ffd76b; background: rgba(255, 215, 107, .14); }
+/* 选中的待替换旧卡：高亮描边 + 勾选标记 */
+.replace-item.selected {
+  border-color: #ffd76b;
+  box-shadow: 0 0 0 2px rgba(255, 215, 107, .55), 0 4px 12px rgba(255, 159, 69, .25);
+  background: rgba(255, 215, 107, .2);
+}
+.replace-item.selected::after {
+  content: '✓';
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ffd76b, #ff9f45);
+  color: #5b3a00;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 17px;
+  text-align: center;
+  box-shadow: 0 2px 6px rgba(255, 159, 69, .5);
+}
+.replace-cta {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 10px;
+  width: 100%;
+}
+/* 确认替换：主按钮占大头；取消：小尺寸次级按钮 */
+.replace-cta .draw-btn.confirm-btn {
+  flex: 1.5 1 0;
+  min-width: 0;
+  height: 44px;
+}
+.replace-cta .draw-btn.ghost {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+  padding: 0 18px;
+  height: 44px;
+  font-size: 13px;
+}
 .replace-avatar {
   width: 42px;
   height: 42px;

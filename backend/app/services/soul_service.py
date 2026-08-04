@@ -244,18 +244,28 @@ async def get_inventory(user_id: str, db: AsyncSession) -> dict:
     }
 
 
-async def draw_soul(user_id: str, db: AsyncSession) -> dict:
-    """候选制抽卡：从管理端注入的（active）未收藏灵魂中随机返回一张，不写入卡槽"""
+async def draw_soul(user_id: str, db: AsyncSession, exclude_template_id: str | None = None) -> dict:
+    """候选制抽卡：从管理端注入的（active）未收藏灵魂中随机返回一张，不写入卡槽。
+
+    exclude_template_id：排除某张卡（前端"丢弃重抽"时排除刚抽到的那张，保证重抽结果不同）。
+    """
     await seed_templates(db)
     inventory = await get_inventory(user_id, db)
     available = [item for item in inventory["templates"] if not item["owned"]]
 
+    if exclude_template_id:
+        available = [item for item in available if item["id"] != exclude_template_id]
+
     if not available:
-        return {
-            "success": False,
-            "message": "所有灵魂都已收入卡槽",
-            "inventory": inventory,
-        }
+        # 排除后无可抽卡：若原池有卡则退回原池（避免重抽误报"已全部拥有"），否则提示已抽完
+        if exclude_template_id:
+            available = [item for item in inventory["templates"] if not item["owned"]]
+        if not available:
+            return {
+                "success": False,
+                "message": "所有灵魂都已收入卡槽",
+                "inventory": inventory,
+            }
 
     picked = random.choice(available)
     return {

@@ -38,6 +38,10 @@ class SaveSlotRequest(BaseModel):
     replace_slot_id: str | None = None
 
 
+class DrawRequest(BaseModel):
+    exclude_template_id: str | None = None
+
+
 @router.get("/templates")
 async def api_get_templates(db: AsyncSession = Depends(get_db)):
     await seed_templates(db)
@@ -65,8 +69,13 @@ async def api_get_inventory(db: AsyncSession = Depends(get_db), user_id: str = D
 
 
 @router.post("/me/draw")
-async def api_draw_soul(db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user)):
-    return await draw_soul(user_id, db)
+async def api_draw_soul(
+    req: DrawRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+):
+    exclude = req.exclude_template_id if req else None
+    return await draw_soul(user_id, db, exclude)
 
 
 @router.post("/me/slots/save")
