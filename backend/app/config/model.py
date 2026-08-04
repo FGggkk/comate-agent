@@ -20,4 +20,5 @@ def get_model_config() -> ModelConfig:
         api_key=s.deepseek_api_key,
         base_url=s.deepseek_base_url,
         model=s.deepseek_model,
+        max_tokens=s.deepseek_max_tokens or 16384,
     )

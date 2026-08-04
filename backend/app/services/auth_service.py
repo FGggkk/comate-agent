@@ -87,10 +87,27 @@ async def register(email: str, code: str, password: str, db: AsyncSession) -> di
     await db.commit()
     await db.refresh(user)
 
+    # 新用户注册赠送积分 + 默认拥有经典灵魂（温柔陪伴型）
+    bonus = 0
+    if is_new:
+        try:
+            from app.services import billing_service
+            bonus = await billing_service.grant_register_bonus(db, str(user.id))
+        except Exception as e:
+            print(f"[billing] register bonus failed: {e}")
+        try:
+            from app.services.soul_service import grant_default_soul
+            await grant_default_soul(str(user.id), db)
+        except Exception as e:
+            print(f"[soul] grant default soul failed: {e}")
+
     token = _create_token(str(user.id), email)
+    refresh_token = _create_refresh_token(str(user.id), email)
     return {
         "success": True,
         "token": token,
+        "refresh_token": refresh_token,
+        "expires_in": settings.jwt_expire_hours * 3600,
         "is_new_user": is_new,
         "onboarding_status": user.onboarding_status,
     }
@@ -111,21 +128,53 @@ async def login(email: str, password: str, db: AsyncSession) -> dict:
     await db.commit()
 
     token = _create_token(str(user.id), email)
+    refresh_token = _create_refresh_token(str(user.id), email)
     return {
         "success": True,
         "token": token,
+        "refresh_token": refresh_token,
+        "expires_in": settings.jwt_expire_hours * 3600,
         "is_new_user": False,
         "onboarding_status": user.onboarding_status,
     }
 
 
 def _create_token(user_id: str, email: str) -> str:
+    """短期 access token（默认 72 小时）"""
     payload = {
         "sub": user_id,
         "email": email,
+        "token_type": "access",
         "exp": datetime.now(timezone.utc) + timedelta(hours=settings.jwt_expire_hours),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def _create_refresh_token(user_id: str, email: str) -> str:
+    """长期 refresh token（默认 7 天），仅用于换取新的 access token"""
+    payload = {
+        "sub": user_id,
+        "email": email,
+        "token_type": "refresh",
+        "exp": datetime.now(timezone.utc) + timedelta(days=settings.jwt_refresh_expire_days),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def refresh_access_token(refresh_token: str) -> dict | None:
+    """用 refresh token 换取新的 access token"""
+    payload = verify_token(refresh_token)
+    if not payload or payload.get("token_type") != "refresh":
+        return None
+    user_id = payload.get("sub")
+    email = payload.get("email")
+    if not user_id or not email:
+        return None
+    new_access = _create_token(user_id, email)
+    return {
+        "access_token": new_access,
+        "expires_in": settings.jwt_expire_hours * 3600,
+    }
 
 
 def verify_token(token: str) -> dict | None:

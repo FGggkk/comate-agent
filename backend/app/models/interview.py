@@ -1,8 +1,8 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .user import Base
@@ -16,9 +16,15 @@ class InterviewSession(Base):
     resume_text: Mapped[str] = mapped_column(Text, default="")
     target_role: Mapped[str] = mapped_column(String(255), default="")
     target_company: Mapped[str] = mapped_column(String(255), default="")
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="in_progress")  # in_progress / completed
+    interview_type: Mapped[str] = mapped_column(String(32), default="comprehensive")  # tech/behavior/project/stress/comprehensive
+    difficulty: Mapped[str] = mapped_column(String(16), default="medium")  # easy/medium/hard
     round_number: Mapped[int] = mapped_column(Integer, default=1)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    report_version: Mapped[int] = mapped_column(Integer, default=0)
+    report_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dimension_scores: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # {"tech_depth": 7.5, ...}
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
@@ -31,5 +37,8 @@ class InterviewQuestion(Base):
     question_text: Mapped[str] = mapped_column(Text, nullable=False)
     user_answer: Mapped[str | None] = mapped_column(Text, nullable=True)
     evaluation: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    answer_version: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(16), default="pending")  # pending / answered / resolved
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

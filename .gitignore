@@ -26,3 +26,7 @@ Thumbs.db
 
 # Project specific
 backend/config/.env
+backend/memory_docs/
+
+# Tool runtime artifacts
+.reasonix/truncated-results/

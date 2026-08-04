@@ -10,10 +10,10 @@ class Settings(BaseSettings):
     # App
     app_name: str = "comate-agent"
     debug: bool = False
-    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    cors_origins: list[str] = ["*"]
 
     # Database
-    database_url: str = "postgresql+asyncpg://postgres:${DB_PASSWORD}@49.233.163.93:5432/comate"
+    database_url: str = "postgresql+asyncpg://postgres:${DB_PASSWORD}@localhost:5432/comate"
 
     # Email
     email_host: str = "smtp.qq.com"
@@ -22,15 +22,45 @@ class Settings(BaseSettings):
     email_pass: str = ""
     email_from: str = "伴行agent <noreply@comate.ai>"
 
+    # COS - 腾讯云对象存储
+    cos_secret_id: str = ""
+    cos_secret_key: str = ""
+    cos_region: str = "ap-guangzhou"
+    cos_bucket: str = ""
+
+    # Embedding - 阿里云百炼
+    dashscope_api_key: str = ""
+    dashscope_workspace_id: str = ""
+    embedding_model: str = "text-embedding-v4"
+    embedding_dimensions: int = 1536
+
+    # Voice - Qwen Audio Realtime
+    voice_enabled: bool = False
+    qwen_audio_realtime_model: str = "qwen-audio-3.0-realtime-flash"
+    qwen_audio_realtime_url: str = "wss://{workspace_id}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime"
+    qwen_audio_realtime_voice: str = "longanqian"
+    qwen_audio_realtime_max_history_turns: int = 12
+
     # Model - DeepSeek
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
+    deepseek_max_tokens: int = 16384
 
     # JWT
     jwt_secret: str = "dev-secret-change-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expire_hours: int = 72
+    jwt_refresh_expire_days: int = 7
+
+    # Search - Firecrawl
+    firecrawl_api_key: str = ""
+    firecrawl_base_url: str = "https://api.firecrawl.dev"
+    search_max_results: int = 5
+
+    # Weather - 和风天气
+    heweather_api_key: str = ""
+    heweather_base_url: str = "https://devapi.qweather.com"
 
     model_config: ClassVar[dict] = {
         "env_file": "../config/.env",
@@ -71,12 +101,28 @@ class Settings(BaseSettings):
             email_user=os.path.expandvars(raw.get("email", {}).get("user", cls().email_user)),
             email_pass=os.path.expandvars(raw.get("email", {}).get("pass", cls().email_pass)),
             email_from=os.path.expandvars(raw.get("email", {}).get("from", cls().email_from)),
+            cos_secret_id=os.path.expandvars(raw.get("cos", {}).get("secret_id", cls().cos_secret_id)),
+            cos_secret_key=os.path.expandvars(raw.get("cos", {}).get("secret_key", cls().cos_secret_key)),
+            cos_region=os.path.expandvars(raw.get("cos", {}).get("region", cls().cos_region)),
+            cos_bucket=os.path.expandvars(raw.get("cos", {}).get("bucket", cls().cos_bucket)),
+            dashscope_api_key=os.path.expandvars(raw.get("embedding", {}).get("api_key", cls().dashscope_api_key)),
+            dashscope_workspace_id=os.path.expandvars(raw.get("embedding", {}).get("workspace_id", cls().dashscope_workspace_id)),
+            embedding_model=os.path.expandvars(raw.get("embedding", {}).get("model", cls().embedding_model)),
+            embedding_dimensions=raw.get("embedding", {}).get("dimensions", cls().embedding_dimensions),
             deepseek_api_key=os.path.expandvars(raw.get("model", {}).get("default", {}).get("api_key", "")),
             deepseek_base_url=raw.get("model", {}).get("default", {}).get("base_url", cls().deepseek_base_url),
             deepseek_model=raw.get("model", {}).get("default", {}).get("model", cls().deepseek_model),
+            deepseek_max_tokens=raw.get("model", {}).get("default", {}).get("max_tokens", cls().deepseek_max_tokens),
             jwt_secret=os.path.expandvars(raw.get("jwt", {}).get("secret", cls().jwt_secret)),
             jwt_algorithm=raw.get("jwt", {}).get("algorithm", cls().jwt_algorithm),
             jwt_expire_hours=raw.get("jwt", {}).get("expire_hours", cls().jwt_expire_hours),
+            # Search
+            firecrawl_api_key=os.path.expandvars(raw.get("search", {}).get("api_key", "")),
+            firecrawl_base_url=os.path.expandvars(raw.get("search", {}).get("base_url", cls().firecrawl_base_url)),
+            search_max_results=raw.get("search", {}).get("max_results", cls().search_max_results),
+            # Weather
+            heweather_api_key=os.path.expandvars(raw.get("weather", {}).get("api_key", "")),
+            heweather_base_url=os.path.expandvars(raw.get("weather", {}).get("base_url", cls().heweather_base_url)),
         )
 
 

@@ -1,25 +1,56 @@
 <template>
   <div :class="role === 'user' ? 'msg-user' : 'msg-bot'">
-    <div v-if="role === 'agent'" :class="['companion', squished ? 'squish' : 'bob']" style="--s:28px;flex-shrink:0;" @click="squishIt">
-      <div class="companion-body">
-        <span class="companion-eye l"></span>
-        <span class="companion-eye r"></span>
-        <span class="companion-cheek l"></span>
-        <span class="companion-cheek r"></span>
-        <span class="companion-mouth"></span>
+    <SoulOrb v-if="role === 'agent' && !hideOrb" :template="soul || {}" size="xs" class="message-soul-orb" />
+    <div style="position:relative;" @mouseenter="hover=true" @mouseleave="hover=false">
+      <div :class="role === 'user' ? 'bubble-user' : 'bubble-bot'" v-html="role === 'user' ? content : renderMd(content)"></div>
+      <!-- 用户消息 hover 操作 -->
+      <div v-if="role === 'user' && hover" class="msg-actions">
+        <button @mousedown.prevent.stop @click.stop="$emit('edit', content)" class="msg-action-btn">编辑</button>
+        <button @mousedown.prevent.stop @click.stop="$emit('delete')" class="msg-action-btn" style="color:var(--berry);">删除</button>
       </div>
-      <div class="companion-sprout"><span class="companion-sprout-r"></span></div>
     </div>
-    <div :class="role === 'user' ? 'bubble-user' : 'bubble-bot'">{{ content }}</div>
   </div>
 </template>
 
 <script setup>
 import { ref } from 'vue'
-defineProps({ role: String, content: String })
-const squished = ref(false)
-function squishIt() {
-  squished.value = true
-  setTimeout(() => { squished.value = false }, 450)
+import { marked } from 'marked'
+import SoulOrb from './SoulOrb.vue'
+
+function renderMd(text) {
+  if (!text) return ''
+  return marked.parse(text)
 }
+
+defineProps({
+  role: String,
+  content: String,
+  soul: { type: Object, default: null },
+  hideOrb: { type: Boolean, default: false },
+})
+defineEmits(['edit', 'delete'])
+const hover = ref(false)
 </script>
+
+<style scoped>
+.message-soul-orb {
+  flex-shrink: 0;
+  align-self: flex-end;
+  margin-bottom: 2px;
+  animation: message-orb-bob 3.2s ease-in-out infinite;
+}
+@keyframes message-orb-bob {
+  0%,100% { transform: translateY(0) rotate(-1deg); }
+  50% { transform: translateY(-3px) rotate(1deg); }
+}
+.msg-actions {
+  position: absolute; top: -22px; right: 0; display: flex; gap: 2px;
+  background: var(--card); border-radius: 8px; padding: 2px 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.1); z-index: 10;
+}
+.msg-action-btn {
+  font-size: 11px; padding: 2px 6px; border-radius: 4px;
+  color: var(--ink-soft);
+}
+.msg-action-btn:active { background: var(--cream-2); }
+</style>

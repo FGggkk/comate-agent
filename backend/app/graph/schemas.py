@@ -20,8 +20,22 @@ def text_chunk_event(text: str) -> SSEEvent:
     return SSEEvent(type="text_chunk", data={"text": text})
 
 
-def action_buttons_event(buttons: list[dict]) -> SSEEvent:
-    return SSEEvent(type="action_buttons", data={"buttons": buttons})
+def thinking_event(reasoning: str) -> SSEEvent:
+    """模型推理过程增量（DeepSeek reasoning_content），前端淡色思考块展示"""
+    return SSEEvent(type="thinking", data={"text": reasoning})
+
+
+def action_buttons_event(
+    buttons: list[dict],
+    prompt: str | None = None,
+    candidate_summary: str | None = None,
+) -> SSEEvent:
+    data = {"buttons": buttons}
+    if prompt:
+        data["prompt"] = prompt
+    if candidate_summary:
+        data["candidate_summary"] = candidate_summary
+    return SSEEvent(type="action_buttons", data=data)
 
 
 def done_event() -> SSEEvent:

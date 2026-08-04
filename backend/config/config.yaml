@@ -1,9 +1,20 @@
+search:
+  provider: firecrawl
+  api_key: "${FIRECRAWL_API_KEY}"
+  base_url: "${FIRECRAWL_BASE_URL}"
+  max_results: 5
+
+weather:
+  provider: heweather
+  api_key: "${HEWEATHER_API_KEY}"
+  base_url: "${HEWEATHER_BASE_URL}"
+
 app:
   name: comate-agent
   debug: true
 
 database:
-  url: "postgresql+asyncpg://postgres:${DB_PASSWORD}@49.233.163.93:5432/comate"
+  url: "${DATABASE_URL}"
 
 email:
   host: "smtp.qq.com"
@@ -12,15 +23,29 @@ email:
   pass: "${EMAIL_PASS}"
   from: "伴行agent <${EMAIL_USER}>"
 
+cos:
+  secret_id: "${COS_SECRET_ID}"
+  secret_key: "${COS_SECRET_KEY}"
+  region: "${COS_REGION}"
+  bucket: "${COS_BUCKET}"
+
+embedding:
+  api_key: "${DASHSCOPE_API_KEY}"
+  workspace_id: "${DASHSCOPE_WORKSPACE_ID}"
+  model: "${EMBEDDING_MODEL}"
+  dimensions: 1536
+
 model:
   default:
     provider: deepseek
-    model: "deepseek-chat"
+    model: "deepseek-v4-flash"
     api_key: "${DEEPSEEK_API_KEY}"
     base_url: "https://api.deepseek.com"
+    max_tokens: 16384
     stream: true
 
 jwt:
   secret: "${JWT_SECRET}"
   algorithm: HS256
   expire_hours: 72
+  refresh_expire_days: 7

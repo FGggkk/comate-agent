@@ -7,6 +7,10 @@ INTERVIEW_KEYWORDS = ["面试", "求职", "岗位", "简历", "offer", "招聘",
 
 async def router_node(state: ChatState):
     """Step 4: 意图路由"""
+    if state.forbidden_query_blocked:
+        state.intent = "daily"
+        return [status_event("route", "日常陪伴模式")]
+
     for kw in INTERVIEW_KEYWORDS:
         if kw in state.message:
             state.intent = "interview"

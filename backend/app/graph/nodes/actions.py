@@ -1,9 +1,54 @@
 from app.graph.state import ChatState
 from app.graph.schemas import action_buttons_event
+from app.services.memory_service import is_forbidden_text
+from app.services.reminder_service import parse_reminder_request
 
 
 async def actions_node(state: ChatState):
     """Step 8: 根据意图生成快捷操作按钮"""
+    prompt = None
+    candidate_summary = None
+
+    if (
+        state.forbidden_query_blocked
+        or state.forbidden_updates.get("added")
+        or state.forbidden_updates.get("removed")
+    ):
+        state.actions = []
+        return []
+
+    reminder_candidate = parse_reminder_request(state.message)
+    if reminder_candidate:
+        prompt = "识别到你想设定提醒，请确认内容和时间。"
+        buttons = [
+            {"label": "确认提醒", "action": "set_reminder", "reminder": reminder_candidate},
+        ]
+        state.actions = buttons
+        return [
+            action_buttons_event(
+                buttons,
+                prompt=prompt,
+                candidate_summary=reminder_candidate.get("label"),
+            )
+        ]
+
+    if state.memory_candidates:
+        state.memory_candidates = [
+            candidate for candidate in state.memory_candidates
+            if not is_forbidden_text(candidate, state.forbidden_topics)
+        ]
+
+    if state.memory_candidates:
+        candidate = state.memory_candidates[0]
+        prompt = "检测到需要关注的内容，请问是否需要记忆？"
+        candidate_summary = candidate.get("summary")
+        buttons = [
+            {"label": "需要，记住", "action": "confirm_memory_candidate", "candidate": candidate},
+            {"label": "暂时不用", "action": "dismiss_memory_candidate"},
+        ]
+        state.actions = buttons
+        return [action_buttons_event(buttons, prompt=prompt, candidate_summary=candidate_summary)]
+
     if state.intent == "interview":
         buttons = [
             {"label": "开始模拟面试", "action": "start_interview"},
