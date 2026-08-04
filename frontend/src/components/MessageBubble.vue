@@ -1,6 +1,6 @@
 <template>
   <div :class="role === 'user' ? 'msg-user' : 'msg-bot'">
-    <SoulOrb v-if="role === 'agent'" :template="soul || {}" size="xs" class="message-soul-orb" />
+    <SoulOrb v-if="role === 'agent' && !hideOrb" :template="soul || {}" size="xs" class="message-soul-orb" />
     <div style="position:relative;" @mouseenter="hover=true" @mouseleave="hover=false">
       <div :class="role === 'user' ? 'bubble-user' : 'bubble-bot'" v-html="role === 'user' ? content : renderMd(content)"></div>
       <!-- 用户消息 hover 操作 -->
@@ -26,6 +26,7 @@ defineProps({
   role: String,
   content: String,
   soul: { type: Object, default: null },
+  hideOrb: { type: Boolean, default: false },
 })
 defineEmits(['edit', 'delete'])
 const hover = ref(false)

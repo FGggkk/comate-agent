@@ -47,8 +47,8 @@ async def run_engine(
         for event in await router_node(state):
             yield event
 
-        # Step 5: 模型调用
-        for event in await llm_call_node(state):
+        # Step 5: 模型调用（全程流式）
+        async for event in llm_call_node(state):
             yield event
         if state.error:
             yield error_event(state.error)

@@ -31,7 +31,7 @@
         <div class="persona-current-text">
           <div class="page-label">当前注入</div>
           <h2>{{ currentTemplate?.name || '尚未注入灵魂' }}</h2>
-          <p>{{ currentTemplate?.orb?.tone || (currentTemplate ? '点击卡槽卡片注入灵魂' : '在卡槽中选择一个灵魂注入') }}</p>
+          <p>{{ currentSoulLine }}</p>
         </div>
       </section>
 
@@ -104,12 +104,13 @@
         <div class="section-head">
           <div>
             <div class="page-label">灵魂图鉴</div>
-            <strong>{{ galleryFilter === 'all' ? '全部灵魂 · 点击卡片查看详情' : '已放置灵魂 · 点击卡片查看详情' }}</strong>
+            <strong>{{ galleryDesc }}</strong>
           </div>
           <div class="head-right">
             <div class="gallery-tabs">
               <button :class="{ active: galleryFilter === 'all' }" @click="setGalleryFilter('all')">全部</button>
-              <button :class="{ active: galleryFilter === 'owned' }" @click="setGalleryFilter('owned')">已放置</button>
+              <button :class="{ active: galleryFilter === 'owned' }" @click="setGalleryFilter('owned')">已点亮</button>
+              <button :class="{ active: galleryFilter === 'unowned' }" @click="setGalleryFilter('unowned')">未点亮</button>
             </div>
             <button class="fold-btn" :class="{ folded: galleryCollapsed }" @click="galleryCollapsed = !galleryCollapsed" :aria-label="galleryCollapsed ? '展开图鉴' : '收起图鉴'">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6" /></svg>
@@ -118,7 +119,7 @@
         </div>
         <div v-show="!galleryCollapsed">
           <div class="deck-grid">
-            <div v-for="item in galleryPageSouls" :key="item.id" class="deck-card" @click="openDetail(item)">
+            <div v-for="item in galleryPageSouls" :key="item.id" class="deck-card" :class="{ dim: !item.owned }" @click="openDetail(item)">
               <div class="deck-inner">
                 <div class="deck-face deck-front" :style="cardFace(item)">
                   <span v-if="item.slug === 'warm_companion'" class="classic-badge">经典</span>
@@ -166,21 +167,29 @@
             </button>
           </div>
 
-          <div class="gacha-stage">
+          <TransitionGroup name="shuffle" tag="div" class="gacha-stage">
             <div
               v-for="(slot, i) in gachaSlots"
-              :key="slot"
+              :key="slot?.id ?? i"
               :class="[
                 'gacha-card',
                 { picked: i === gacha.picked },
                 { faded: (gacha.phase === 'revealing' || gacha.phase === 'done') && i !== gacha.picked },
+                'rs' + gacha.revealStep,
               ]"
-              :style="cardShift(i)"
               @click="pickCard(i)"
             >
+              <!-- 光柱（③ 升卡后出现，卡色联动） -->
+              <div v-if="i === gacha.picked && gacha.revealStep >= 2" class="gacha-beam" :style="beamStyle" aria-hidden="true">
+                <span class="beam-dot d1"></span>
+                <span class="beam-dot d2"></span>
+                <span class="beam-dot d3"></span>
+              </div>
+              <!-- 光圈（④ 翻面时扩散） -->
+              <div v-if="i === gacha.picked && gacha.revealStep >= 3" class="gacha-ring" :style="ringStyle" aria-hidden="true"></div>
               <div
                 class="gacha-inner"
-                :class="{ flipped: gacha.phase !== 'idle' && gacha.phase !== 'shuffling' && gacha.phase !== 'picking' && i === gacha.picked }"
+                :class="{ flipped: gacha.revealStep >= 3 && i === gacha.picked }"
               >
                 <div class="gacha-face gacha-back">
                   <span class="gacha-back-star s1">✦</span>
@@ -195,16 +204,16 @@
                   <span class="gacha-result-name">{{ drawnTemplate?.name || '✦' }}</span>
                   <span class="gacha-result-tone">{{ drawnTemplate?.orb?.tone || drawnTemplate?.description || '' }}</span>
                   <span v-if="gacha.phase === 'done'" class="gacha-new-badge">NEW</span>
-                  <span v-for="n in 6" :key="n" class="gacha-spark" :style="sparkStyle(n)" aria-hidden="true"></span>
+                  <span v-if="gacha.revealStep === 3" v-for="n in 6" :key="n" class="gacha-spark" :style="sparkStyle(n)" aria-hidden="true"></span>
                 </div>
               </div>
             </div>
-          </div>
+          </TransitionGroup>
 
           <p v-if="message" :class="['gacha-msg', messageTone]">{{ message }}</p>
 
           <div class="gacha-cta">
-            <button v-if="gacha.phase === 'idle'" class="draw-btn" :disabled="gacha.busy || !hasUnowned" @click="startGacha">
+            <button v-if="gacha.phase === 'idle'" class="draw-btn" :disabled="gacha.busy || !hasUnowned" @click="startGacha()">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 <path d="M12 3v18M3 12h18" />
               </svg>
@@ -229,14 +238,14 @@
             </template>
 
             <template v-else-if="gacha.phase === 'done' && replaceMode">
-              <div class="replace-hint">卡槽已满，选择一张旧灵魂替换（{{ drawnTemplate?.name }} 将入槽）</div>
+              <div class="replace-hint">卡槽已满，先点选一张旧灵魂，再确认替换（{{ drawnTemplate?.name }} 将入槽）</div>
               <div class="replace-grid">
                 <button
                   v-for="item in ownedSouls"
                   :key="item.id"
                   class="replace-item"
-                  :class="{ active: item.active }"
-                  @click="replaceWith(item)"
+                  :class="{ active: item.active, selected: replaceSelected === item.slot_id }"
+                  @click="replaceSelected = replaceSelected === item.slot_id ? '' : item.slot_id"
                 >
                   <img v-if="item.avatar_image" class="replace-avatar" :src="item.avatar_image" alt="" />
                   <span v-else class="replace-fallback" :style="{ background: soulColor(item) }">{{ item.name?.[0] }}</span>
@@ -244,7 +253,12 @@
                   <small>{{ item.active ? '已注入' : '' }}</small>
                 </button>
               </div>
-              <button class="draw-btn ghost" @click="replaceMode = false">取消</button>
+              <div class="replace-cta">
+                <button class="draw-btn confirm-btn" :disabled="!replaceSelected || saving" @click="confirmReplace">
+                  {{ replaceSelected ? '确认替换' : '请先选择一张旧灵魂' }}
+                </button>
+                <button class="draw-btn ghost" @click="replaceMode = false">取消</button>
+              </div>
             </template>
           </div>
         </div>
@@ -276,7 +290,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { marked } from 'marked'
 import { apiDrawSoul, apiGetSoulInventory, apiInjectSoul, apiSaveSoulSlot, apiDeleteSoulSlot } from '../api/index'
 
@@ -297,7 +311,8 @@ const messageTone = ref('')
 const gacha = ref({ phase: 'idle', picked: null, busy: false, drawn: null })
 const gachaOpen = ref(false)
 const replaceMode = ref(false)
-const gachaSlots = ref([0, 1, 2, 3, 4, 5])
+const replaceSelected = ref('')
+const gachaSlots = ref([])
 const shuffleSeed = ref(0)
 let shuffleTimer = null
 let revealTimer = null
@@ -314,9 +329,18 @@ const colorMap = ref({})
 const templates = computed(() => inventory.value.templates || [])
 const ownedSouls = computed(() => templates.value.filter((item) => item.owned))
 const unownedSouls = computed(() => templates.value.filter((item) => !item.owned))
-// 图鉴筛选：全部 / 已放置
+// 图鉴筛选：全部 / 已点亮 / 未点亮
 const galleryFilter = ref('all')
-const gallerySouls = computed(() => (galleryFilter.value === 'owned' ? ownedSouls.value : templates.value))
+const gallerySouls = computed(() => {
+  if (galleryFilter.value === 'owned') return ownedSouls.value
+  if (galleryFilter.value === 'unowned') return unownedSouls.value
+  return templates.value
+})
+const galleryDesc = computed(() => {
+  if (galleryFilter.value === 'owned') return `已点亮 ${ownedSouls.value.length} 张 · 点击卡片查看详情`
+  if (galleryFilter.value === 'unowned') return `未点亮 ${unownedSouls.value.length} 张 · 抽取后点亮`
+  return `全部灵魂 ${templates.value.length} 张 · 点击卡片查看详情`
+})
 // 区块折叠
 const slotsCollapsed = ref(false)
 const galleryCollapsed = ref(false)
@@ -333,6 +357,15 @@ function setGalleryFilter(f) {
   galleryPage.value = 1
 }
 const currentTemplate = computed(() => inventory.value.current || ownedSouls.value.find((item) => item.active) || null)
+// 当前注入第三行：语气 → 标签 → 简介 依次兜底
+const currentSoulLine = computed(() => {
+  const t = currentTemplate.value
+  if (!t) return '在卡槽中选择一个灵魂注入'
+  if (t.orb?.tone) return t.orb.tone
+  if (t.tags?.length) return t.tags.slice(0, 3).join(' · ')
+  if (t.description) return t.description
+  return '点击卡槽卡片注入灵魂'
+})
 const ownedCount = computed(() => inventory.value.owned_count || ownedSouls.value.length)
 const slotCapacity = computed(() => inventory.value.slot_capacity || 6)
 const occupiedCount = computed(() => inventory.value.occupied_count ?? ownedCount.value)
@@ -349,9 +382,9 @@ function slotAt(i) {
 const gachaHint = computed(() => {
   if (replaceMode.value) return '替换旧灵魂'
   switch (gacha.value.phase) {
-    case 'idle': return hasUnowned.value ? '六张命运之卡，凭直觉选一张' : '全部灵魂都已收入卡槽'
+    case 'idle': return hasUnowned.value ? `从 ${unownedSouls.value.length} 张未拥有的灵魂中随机抽取，点一张翻开` : '全部灵魂都已收入卡槽'
     case 'shuffling': return '命运正在洗牌……'
-    case 'picking': return '选择一张命运之卡'
+    case 'picking': return '点一张卡，翻开你的灵魂'
     case 'revealing': return '命运揭晓……'
     case 'done': return drawnTemplate.value ? `抽到「${drawnTemplate.value.name}」` : ''
     default: return ''
@@ -393,6 +426,8 @@ function openGacha() {
   if (!hasUnowned.value) return
   message.value = ''
   replaceMode.value = false
+  // 展示台：随机取 6 张未拥有的灵魂作为候选卡面（不足 6 张则全部）
+  gachaSlots.value = shuffleArr(unownedSouls.value).slice(0, 6)
   gacha.value = { phase: 'idle', picked: null, busy: false, drawn: null }
   gachaOpen.value = true
 }
@@ -403,7 +438,7 @@ function tryCloseGacha() {
   replaceMode.value = false
 }
 
-async function startGacha() {
+async function startGacha(excludeTemplateId = null) {
   if (gacha.value.busy || !hasUnowned.value) return
   gacha.value.busy = true
   message.value = ''
@@ -419,7 +454,7 @@ async function startGacha() {
     if (rounds >= 3) clearInterval(shuffleTimer)
   }, 450)
   try {
-    const res = await apiDrawSoul()
+    const res = await apiDrawSoul(excludeTemplateId)
     if (res.success) {
       gacha.value.drawn = res.template
       if (res.inventory) inventory.value = res.inventory
@@ -450,16 +485,38 @@ function pickCard(i) {
   gacha.value.busy = true
   gacha.value.picked = i
   gacha.value.phase = 'revealing'
+  gacha.value.revealStep = 0
+  // 在锁定（rs0，卡片仍在网格原位）时测量并计算 --lift-x/--lift-y，让任何位置选中的卡都飞到舞台正中央
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      const picked = document.querySelector('.gacha-card.picked')
+      const stage = picked?.closest('.gacha-stage')
+      if (!picked || !stage) return
+      const stageRect = stage.getBoundingClientRect()
+      const cardRect = picked.getBoundingClientRect()
+      const dx = (stageRect.left + stageRect.width / 2) - (cardRect.left + cardRect.width / 2)
+      const dy = (stageRect.top + stageRect.height / 2) - (cardRect.top + cardRect.height / 2)
+      picked.style.setProperty('--lift-x', `${Math.round(dx)}px`)
+      picked.style.setProperty('--lift-y', `${Math.round(dy)}px`)
+    })
+  })
+  // 四步仪式：①锁定 → ②升卡 → ③光柱 → ④翻面
+  setTimeout(() => { gacha.value.revealStep = 1 }, 260)
+  setTimeout(() => { gacha.value.revealStep = 2 }, 620)
+  setTimeout(() => { gacha.value.revealStep = 3 }, 980)
   pickTimer = setTimeout(() => {
     gacha.value.phase = 'done'
+    gacha.value.revealStep = 4
     gacha.value.busy = false
-  }, 1300)
+  }, 1780)
 }
 
-// 丢弃重抽：直接再抽一张
+// 丢弃重抽：排除刚抽到的那张，保证重抽结果不同
 async function reroll() {
   if (saving.value) return
-  await startGacha()
+  // 展示台同步换一批随机未拥有候选
+  gachaSlots.value = shuffleArr(unownedSouls.value).slice(0, 6)
+  await startGacha(drawnTemplate.value?.id)
 }
 
 // 保存到卡槽（卡槽满则进入替换模式）
@@ -467,6 +524,7 @@ async function saveDrawn() {
   const t = drawnTemplate.value
   if (!t || saving.value) return
   if (slotsFull.value) {
+    replaceSelected.value = ''
     replaceMode.value = true
     return
   }
@@ -484,7 +542,10 @@ async function saveDrawn() {
     } else {
       messageTone.value = 'error'
       message.value = res.message || '保存失败'
-      if (res.need_replace) replaceMode.value = true
+      if (res.need_replace) {
+        replaceSelected.value = ''
+        replaceMode.value = true
+      }
     }
   } catch (e) {
     console.error('save soul error:', e)
@@ -493,6 +554,13 @@ async function saveDrawn() {
   } finally {
     saving.value = false
   }
+}
+
+// 确认替换：从选中的旧卡执行替换
+function confirmReplace() {
+  const item = ownedSouls.value.find(i => i.slot_id === replaceSelected.value)
+  if (!item) return
+  replaceWith(item)
 }
 
 async function replaceWith(item) {
@@ -560,7 +628,7 @@ async function inject(item) {
   message.value = ''
   try {
     const res = await apiInjectSoul(item.id)
-    if (res.inventory) inventory.value = res.inventory
+    inventory.value = await apiGetSoulInventory()
     messageTone.value = res.success ? 'ok' : 'error'
     message.value = res.success ? `已注入「${item.name}」` : (res.message || '注入失败')
     if (res.success) emit('changed')
@@ -668,15 +736,23 @@ const resultStyle = computed(() => {
   return { background: `radial-gradient(circle at 32% 26%, ${c}, ${c}bb 58%, #3a2a55 130%)` }
 })
 
-function cardShift(i) {
-  const r = (n) => {
-    const x = Math.sin((shuffleSeed.value + 1) * (i + 1) * 12.9898 + n * 78.233) * 43758.5453
-    return x - Math.floor(x)
-  }
-  if (gacha.value.phase !== 'shuffling') return {}
+// 揭示光效跟随抽到的灵魂卡色
+const beamStyle = computed(() => {
+  const c = soulColor(drawnTemplate.value)
+  return { background: `linear-gradient(to top, ${c}80, ${c}26 60%, transparent)` }
+})
+const ringStyle = computed(() => {
+  const c = soulColor(drawnTemplate.value)
+  return { borderColor: c, boxShadow: `0 0 34px 8px ${c}66, inset 0 0 20px ${c}55` }
+})
+function burstStyle(n) {
+  const angle = (n / 8) * Math.PI * 2
+  const dist = 74 + (n % 3) * 20
   return {
-    transform: `translate(${(r(1) - 0.5) * 64}px, ${(r(2) - 0.5) * 34}px) rotate(${(r(3) - 0.5) * 16}deg)`,
-    transitionDelay: `${r(4) * 0.1}s`,
+    '--bx': `${Math.cos(angle) * dist}px`,
+    '--by': `${Math.sin(angle) * dist}px`,
+    color: soulColor(drawnTemplate.value),
+    animationDelay: `${n * 0.045}s`,
   }
 }
 
@@ -696,8 +772,8 @@ function deckDesc(item) {
 function deckStatus(item) {
   if (item.status && item.status !== 'active') return '已下架'
   if (item.active) return '已注入'
-  if (item.owned) return '已放置'
-  return '未放置'
+  if (item.owned) return '已点亮'
+  return '未点亮'
 }
 
 function slotBadge(item) {
@@ -1192,6 +1268,19 @@ onBeforeUnmount(() => {
   height: 190px;
   cursor: pointer;
 }
+/* 未拥有的灵魂：暗色未点亮，只显示卡面 */
+.deck-card.dim {
+  filter: grayscale(0.55) brightness(0.82);
+  opacity: 0.6;
+  transition: filter 0.25s, opacity 0.25s;
+}
+.deck-card.dim:hover {
+  filter: grayscale(0.3) brightness(0.92);
+  opacity: 0.85;
+}
+.deck-card.dim .deck-status {
+  color: #e8e0d0;
+}
 .deck-inner {
   position: relative;
   width: 100%;
@@ -1257,8 +1346,13 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   background: rgba(0,0,0,.28);
 }
+/* 已点亮：金色徽标 + 卡片金色光晕 */
 .deck-status.owned {
-  background: rgba(95, 190, 99, .82);
+  background: linear-gradient(135deg, #ffd76b, #e8a93d);
+  color: #5b3a00;
+}
+.deck-card:not(.dim) {
+  box-shadow: 0 3px 12px rgba(255, 200, 90, .28);
 }
 .deck-status.active {
   background: linear-gradient(135deg, #ffd76b, #ff9f45);
@@ -1407,23 +1501,130 @@ onBeforeUnmount(() => {
 }
 .gacha-modal.phase-picking .gacha-card:hover {
   transform: translateY(-8px) scale(1.05);
+  filter: drop-shadow(0 4px 14px rgba(255, 201, 101, .35));
 }
 .gacha-modal.phase-picking .gacha-card:active {
   transform: scale(.96);
 }
-.gacha-modal.phase-shuffling .gacha-card {
-  transition: transform .5s ease, opacity .4s ease;
+/* TransitionGroup 洗牌换位：卡片平滑滑到新位置 */
+.shuffle-move {
+  transition: transform .42s cubic-bezier(.34, 1.2, .64, 1);
 }
+.gacha-modal.phase-shuffling .gacha-card {
+  transition: transform .42s cubic-bezier(.34, 1.2, .64, 1), opacity .4s ease;
+}
+/* 揭示阶段：其他卡完全淡出，聚焦选中卡 */
 .gacha-modal.phase-revealing .gacha-card:not(.picked),
 .gacha-modal.phase-done .gacha-card:not(.picked) {
-  opacity: .12;
-  transform: scale(.9);
+  opacity: 0;
+  transform: scale(.8) translateY(14px);
   pointer-events: none;
+  transition: transform .45s ease, opacity .4s ease;
 }
+/* 揭示四步：①锁定 ②升卡 ③光柱 ④翻面（--lift 由 JS 动态计算，选中卡统一对齐舞台中央） */
 .gacha-modal.phase-revealing .gacha-card.picked,
 .gacha-modal.phase-done .gacha-card.picked {
-  transform: scale(1.12) translateY(-6px);
-  filter: drop-shadow(0 0 18px rgba(255, 201, 101, .55));
+  transition: transform .38s cubic-bezier(.34, 1.4, .64, 1), filter .4s ease;
+}
+.gacha-card.picked.rs0 { transform: scale(.94); }
+.gacha-card.picked.rs1 { transform: translate(calc(var(--lift-x, 0px)), calc(var(--lift-y, -52px) - 24px)) scale(1.5); z-index: 8; }
+.gacha-card.picked.rs2 { transform: translate(calc(var(--lift-x, 0px)), calc(var(--lift-y, -52px) - 24px)) scale(1.5); z-index: 8; filter: drop-shadow(0 0 22px rgba(255, 201, 101, .6)); }
+.gacha-card.picked.rs3 { transform: translate(calc(var(--lift-x, 0px)), calc(var(--lift-y, -44px) - 24px)) scale(1.32); z-index: 8; filter: drop-shadow(0 0 22px rgba(255, 201, 101, .6)); }
+.gacha-card.picked.rs4 { transform: translate(calc(var(--lift-x, 0px)), calc(var(--lift-y, -34px) - 24px)) scale(1.26); z-index: 8; filter: drop-shadow(0 0 20px rgba(255, 201, 101, .5)); }
+
+/* 揭示时舞台聚焦：暗角让中央卡面更突出 */
+.gacha-modal.phase-revealing .gacha-stage::after,
+.gacha-modal.phase-done .gacha-stage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 14px;
+  background: radial-gradient(circle at 50% 50%, transparent 20%, rgba(10, 8, 20, .6) 78%);
+  pointer-events: none;
+  z-index: 4;
+  transition: opacity .4s ease;
+}
+
+/* 光柱（卡色联动，从卡后上下延伸） */
+.gacha-beam {
+  position: absolute;
+  left: 50%;
+  bottom: -18%;
+  width: 56%;
+  height: 170%;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+  animation: beam-in .5s ease .05s forwards, beam-pulse 1.4s ease-in-out .5s infinite;
+  z-index: 0;
+}
+@keyframes beam-in {
+  from { opacity: 0; transform: translateX(-50%) scaleY(.3); }
+  to { opacity: 1; transform: translateX(-50%) scaleY(1); }
+}
+@keyframes beam-pulse {
+  0%, 100% { opacity: .85; }
+  50% { opacity: .55; }
+}
+.beam-dot {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 10px 2px currentColor;
+  transform: translateX(-50%);
+  animation: beam-rise 1.1s linear infinite;
+  opacity: 0;
+}
+.beam-dot.d1 { animation-delay: 0s; }
+.beam-dot.d2 { animation-delay: .35s; }
+.beam-dot.d3 { animation-delay: .7s; }
+@keyframes beam-rise {
+  0% { bottom: 4%; opacity: 0; }
+  15% { opacity: .9; }
+  100% { bottom: 92%; opacity: 0; }
+}
+
+/* 光圈（④ 翻面时扩散） */
+.gacha-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 100%;
+  aspect-ratio: 1;
+  border: 2px solid;
+  border-radius: 50%;
+  transform: translate(-50%, -50%) scale(.35);
+  opacity: 0;
+  pointer-events: none;
+  animation: ring-out .8s ease-out .1s forwards;
+  z-index: 6;
+}
+@keyframes ring-out {
+  0% { transform: translate(-50%, -50%) scale(.35); opacity: .9; }
+  100% { transform: translate(-50%, -50%) scale(1.7); opacity: 0; }
+}
+
+/* 星芒爆开（卡色联动） */
+.gacha-burst {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  font-size: 13px;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  pointer-events: none;
+  text-shadow: 0 0 8px currentColor;
+  animation: burst-fly .7s ease-out .1s forwards;
+  z-index: 7;
+}
+@keyframes burst-fly {
+  0% { transform: translate(-50%, -50%) scale(.4) rotate(0deg); opacity: 1; }
+  100% { transform: translate(calc(-50% + var(--bx)), calc(-50% + var(--by))) scale(1) rotate(90deg); opacity: 0; }
 }
 .gacha-inner {
   position: relative;
@@ -1494,41 +1695,45 @@ onBeforeUnmount(() => {
   padding: 8px 4px;
   border: 1px solid rgba(255, 220, 150, .5);
   color: #fff;
-  box-shadow: inset 0 0 24px rgba(255, 255, 255, .12), 0 8px 20px rgba(0, 0, 0, .3);
+  box-shadow: inset 0 0 14px rgba(255, 255, 255, .08), 0 8px 20px rgba(0, 0, 0, .3);
 }
 .gacha-result-img {
-  width: 46%;
+  width: 60%;
   aspect-ratio: 1;
   border-radius: 50%;
   object-fit: cover;
-  border: 2px solid rgba(255, 255, 255, .55);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, .3);
+  border: 2.5px solid rgba(255, 255, 255, .7);
+  box-shadow: 0 5px 16px rgba(0, 0, 0, .35);
 }
 .gacha-result-fallback {
-  width: 46%;
+  width: 60%;
   aspect-ratio: 1;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 26px;
+  font-size: 30px;
   font-weight: 800;
-  border: 2px solid rgba(255, 255, 255, .55);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, .3);
+  border: 2.5px solid rgba(255, 255, 255, .7);
+  box-shadow: 0 5px 16px rgba(0, 0, 0, .35);
 }
 .gacha-result-name {
-  margin-top: 3px;
-  font-size: 13px;
+  margin-top: 6px;
+  font-size: 15px;
   font-weight: 800;
-  text-shadow: 0 1px 6px rgba(0, 0, 0, .35);
-  max-width: 96%;
+  max-width: 92%;
+  line-height: 1.3;
+  text-align: center;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-all;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, .5);
 }
 .gacha-result-tone {
-  font-size: 9.5px;
-  opacity: .85;
+  font-size: 11px;
+  opacity: .92;
   max-width: 96%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1548,10 +1753,24 @@ onBeforeUnmount(() => {
   animation: gacha-pop .5s cubic-bezier(.34, 1.8, .64, 1) .25s both;
   box-shadow: 0 3px 10px rgba(255, 159, 69, .5);
 }
+.gacha-unowned-badge {
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(30, 40, 60, .55);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  backdrop-filter: blur(2px);
+}
 @keyframes gacha-pop {
   0% { transform: scale(0); }
   100% { transform: scale(1); }
 }
+/* 卡面内金色粒子：仅在翻面瞬间（rs3）播一次，不遮卡面 */
 .gacha-spark {
   position: absolute;
   top: 50%;
@@ -1562,11 +1781,11 @@ onBeforeUnmount(() => {
   background: #ffe9a8;
   opacity: 0;
   box-shadow: 0 0 8px 2px rgba(255, 224, 150, .8);
-  animation: gacha-spark .9s ease-out .5s infinite;
+  animation: gacha-spark .8s ease-out forwards;
 }
 @keyframes gacha-spark {
   0% { transform: translate(0, 0) scale(.4); opacity: 0; }
-  20% { opacity: 1; }
+  15% { opacity: 1; }
   100% { transform: translate(var(--sx), var(--sy)) scale(.9); opacity: 0; }
 }
 .gacha-cta {
@@ -1575,6 +1794,24 @@ onBeforeUnmount(() => {
   gap: 10px;
   margin-top: 14px;
   flex-wrap: wrap;
+}
+/* done 阶段按钮逐个滑入 */
+.gacha-modal.phase-done .gacha-cta button {
+  animation: cta-rise .4s cubic-bezier(.34, 1.4, .64, 1) both;
+}
+.gacha-modal.phase-done .gacha-cta button:nth-child(2) { animation-delay: .08s; }
+.gacha-modal.phase-done .gacha-cta button:nth-child(3) { animation-delay: .16s; }
+@keyframes cta-rise {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: none; }
+}
+/* done 卡面定格后轻微呼吸 */
+.gacha-modal.phase-done .gacha-card.picked .gacha-result {
+  animation: result-float 2.6s ease-in-out .3s infinite;
+}
+@keyframes result-float {
+  0%, 100% { transform: rotateY(180deg) translateY(0); }
+  50% { transform: rotateY(180deg) translateY(-5px); }
 }
 .gacha-cta .draw-btn { flex: 1; }
 .gacha-cta .draw-btn.ghost { flex: 0 0 auto; }
@@ -1606,6 +1843,7 @@ onBeforeUnmount(() => {
   margin: 8px 0 4px;
 }
 .replace-item {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1620,6 +1858,49 @@ onBeforeUnmount(() => {
 }
 .replace-item:hover { transform: translateY(-2px); border-color: rgba(255, 220, 150, .7); }
 .replace-item.active { border-color: #ffd76b; background: rgba(255, 215, 107, .14); }
+/* 选中的待替换旧卡：高亮描边 + 勾选标记 */
+.replace-item.selected {
+  border-color: #ffd76b;
+  box-shadow: 0 0 0 2px rgba(255, 215, 107, .55), 0 4px 12px rgba(255, 159, 69, .25);
+  background: rgba(255, 215, 107, .2);
+}
+.replace-item.selected::after {
+  content: '✓';
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ffd76b, #ff9f45);
+  color: #5b3a00;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 17px;
+  text-align: center;
+  box-shadow: 0 2px 6px rgba(255, 159, 69, .5);
+}
+.replace-cta {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 10px;
+  width: 100%;
+}
+/* 确认替换：主按钮占大头；取消：小尺寸次级按钮 */
+.replace-cta .draw-btn.confirm-btn {
+  flex: 1.5 1 0;
+  min-width: 0;
+  height: 44px;
+}
+.replace-cta .draw-btn.ghost {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+  padding: 0 18px;
+  height: 44px;
+  font-size: 13px;
+}
 .replace-avatar {
   width: 42px;
   height: 42px;

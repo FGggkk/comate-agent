@@ -20,6 +20,11 @@ def text_chunk_event(text: str) -> SSEEvent:
     return SSEEvent(type="text_chunk", data={"text": text})
 
 
+def thinking_event(reasoning: str) -> SSEEvent:
+    """模型推理过程增量（DeepSeek reasoning_content），前端淡色思考块展示"""
+    return SSEEvent(type="thinking", data={"text": reasoning})
+
+
 def action_buttons_event(
     buttons: list[dict],
     prompt: str | None = None,

@@ -92,6 +92,7 @@
             :role="msg.role"
             :content="msg.content"
             :soul="msg.soul || {}"
+            :hide-orb="chatStore.isStreaming && i === lastAgentMsgIndex"
             @edit="startEdit(msg,i)"
             @delete="confirmDelete(msg,i)"
           />
@@ -101,6 +102,7 @@
               <span>{{ msg.memories?.length || 0 }} 条线索 {{ msg.collapsed ? '展开' : '收起' }}</span>
             </button>
             <div v-if="!msg.collapsed" class="thinking-body">
+              <div v-if="msg.reasoning" class="thinking-reasoning">{{ msg.reasoning }}</div>
               <MemoryCard
                 v-for="(memory, memoryIndex) in msg.memories"
                 :key="`${memory.layer}-${memory.summary}-${memoryIndex}`"
@@ -123,7 +125,11 @@
           </div>
         </div>
 
-        <StatusIndicator v-if="chatStore.isStreaming" />
+        <ThinkingBlock
+          v-if="chatStore.isStreaming"
+          :thinking="chatStore.thinking"
+          :memories="lastActiveTraceMemories"
+        />
         <div v-if="voiceToolStatus" class="voice-tool-status" role="status">
           <span class="voice-tool-status-icon">⌛</span>
           <span>{{ voiceToolStatus }}</span>
@@ -236,18 +242,18 @@
 </template>
 
 <script setup>
-import { ref, computed, onBeforeUnmount, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, onMounted, nextTick } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useUserStore } from '../stores/user'
 import { apiGetTemplates, apiPreview, apiConfirmSoul, apiSendMessage, apiListSessions, apiCreateSession, apiDeleteSession, apiGetMessages, apiEditMessage, apiDeleteMessage, apiUpdateSession, apiGetSoulInventory, apiCreateMemory, apiCreateMemoryReminder, apiCreateReminder, apiGetProfile, apiVoiceRealtimeUrl } from '../api/index'
 import MessageBubble from '../components/MessageBubble.vue'
 import MemoryCard from '../components/MemoryCard.vue'
 import ActionButtons from '../components/ActionButtons.vue'
-import StatusIndicator from '../components/StatusIndicator.vue'
 import InputBar from '../components/InputBar.vue'
 import QuickBar from '../components/QuickBar.vue'
 import SoulOrb from '../components/SoulOrb.vue'
 import RagFloatingChat from '../components/RagFloatingChat.vue'
+import ThinkingBlock from '../components/ThinkingBlock.vue'
 
 const props = defineProps({
   currentSoul: { type: Object, default: null },
@@ -277,6 +283,33 @@ const reminderDraft = ref({
   time: '',
 })
 const activeSoul = computed(() => props.currentSoul || null)
+const lastActiveTraceMemories = computed(() => {
+  const trace = [...chatStore.messages].reverse().find(m => m.type === 'thinking_trace' && m.active)
+  return trace?.memories || []
+})
+// 流式期间最后一条 agent 消息的位置（用于隐藏其旁的小球，避免"两个球"）
+const lastAgentMsgIndex = computed(() => {
+  for (let i = chatStore.messages.length - 1; i >= 0; i--) {
+    const m = chatStore.messages[i]
+    if (m.role === 'agent' && m.type === 'text') return i
+  }
+  return -1
+})
+// 切换 SOUL 风格后：清理消息区残留的记忆卡/思考过程（记忆本身按用户全局延续），保留对话文本
+const pendingSoulCleanup = ref(false)
+function clearSoulMemoryCards() {
+  chatStore.messages = chatStore.messages.filter(m => !['thinking_trace', 'memory_card'].includes(m.type))
+}
+watch(() => props.currentSoul, (newSoul, oldSoul) => {
+  if (!oldSoul || !newSoul) return
+  if (oldSoul.id && newSoul.id && oldSoul.id === newSoul.id) return
+  if (chatStore.isStreaming) {
+    // 流式中途切换：等本轮结束后补清理
+    pendingSoulCleanup.value = true
+    return
+  }
+  clearSoulMemoryCards()
+})
 const voiceState = ref('idle')
 const voiceReplyEnabled = ref(false)
 
@@ -827,6 +860,7 @@ async function handleSend(text, options = {}) {
     chatStore.addMessage({ type: 'text', role: 'user', content: text })
   }
   chatStore.setStreaming(true)
+  chatStore.startThinking()
   chatStore.addMessage({ type: 'text', role: 'agent', content: '', soul: replySoul })
   try {
     const response = await apiSendMessage(text, sessionId, {
@@ -866,6 +900,9 @@ async function handleSend(text, options = {}) {
               chatStore.appendToStream(event.data.text)
               await new Promise(r => setTimeout(r, 0))
               break
+            case 'thinking':
+              chatStore.appendThinking(event.data.text || '')
+              break
             case 'action_buttons':
               chatStore.addMessage({
                 type: 'actions',
@@ -875,7 +912,7 @@ async function handleSend(text, options = {}) {
               })
               break
             case 'status':
-              // 状态事件可选使用，目前 StreamingIndicator 已覆盖
+              chatStore.setThinkingStage(event.data.label)
               break
             case 'error':
               chatStore.addMessage({ type: 'error', role: 'system', content: event.data.message || '出错了' })
@@ -891,6 +928,11 @@ async function handleSend(text, options = {}) {
   } catch { chatStore.addMessage({ type: 'text', role: 'agent', content: '嗯，我在听。能再多说一点吗？', soul: replySoul }) }
   finally {
     chatStore.finishStream()
+    // 流式中途切换过 SOUL：流结束后补一次记忆卡清理
+    if (pendingSoulCleanup.value) {
+      pendingSoulCleanup.value = false
+      clearSoulMemoryCards()
+    }
     // 刷新会话列表；保留当前页面消息快照，避免新回复刚生成就被历史重载冲掉。
     loadSessions()
     nextTick(() => scrollToBottom())
@@ -1794,6 +1836,19 @@ async function confirmRename(session) {
   flex-direction: column;
   gap: 6px;
   margin-top: 6px;
+}
+.thinking-reasoning {
+  font-size: 12px;
+  line-height: 1.7;
+  color: #a49a88;
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  border-radius: 10px;
+  padding: 8px 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow-y: auto;
 }
 .voice-tool-status {
   display: flex;
