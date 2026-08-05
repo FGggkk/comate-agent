@@ -1,6 +1,7 @@
 """发布前检索验证的服务与接口契约测试。"""
 
 import unittest
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -11,6 +12,7 @@ from app.api import admin_company_knowledge
 from app.api.admin_auth import get_current_admin
 from app.db.session import get_db
 from app.plugins.company_knowledge import service
+from app.plugins.company_knowledge import retriever
 from app.plugins.company_knowledge.retriever import RetrievedChunk
 
 
@@ -86,6 +88,34 @@ class CompanyKnowledgeValidationServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(chunk_set.status, "validated")
         self.assertEqual(source.status, "published")
+
+
+class CompanyKnowledgeRetrieverTests(unittest.IsolatedAsyncioTestCase):
+    async def test_user_query_includes_near_threshold_published_active_chunk_set(self):
+        row = {
+            "chunk_id": "chunk-1",
+            "chunk_set_id": "chunk-set-1",
+            "source_id": "source-1",
+            "title": "公司文化",
+            "version": "1.0",
+            "effective_at": datetime(2026, 8, 4, tzinfo=timezone.utc),
+            "section_path": "公司文化",
+            "content": "公司名称为伴行。",
+            "similarity": 0.345,
+        }
+        result = SimpleNamespace(mappings=lambda: SimpleNamespace(all=lambda: [row]))
+        db = SimpleNamespace(execute=AsyncMock(return_value=result))
+
+        with patch.object(retriever, "get_embedding", AsyncMock(return_value=[0.1, 0.2])):
+            chunks = await retriever.retrieve_company_knowledge(
+                "我们公司叫什么名字？", "policy", db, top_k=3
+            )
+
+        statement = str(db.execute.await_args.args[0])
+        self.assertIn("chunk_set.status IN ('indexed', 'validated', 'published')", statement)
+        self.assertEqual([chunk.chunk_id for chunk in chunks], ["chunk-1"])
+        self.assertLess(chunks[0].similarity, retriever.MIN_SIMILARITY)
+        self.assertGreaterEqual(chunks[0].similarity, retriever.MIN_USER_QUERY_SIMILARITY)
 
 
 class CompanyKnowledgeValidationApiTests(unittest.TestCase):
