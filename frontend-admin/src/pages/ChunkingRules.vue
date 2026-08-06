@@ -3,7 +3,7 @@
     <div class="page-head">
       <div>
         <div class="page-title">RAG 执行流程</div>
-        <div class="page-sub">上传资料、确认分片、向量化、检索验证并发布</div>
+        <div class="page-sub">上传资料、确认分片、向量化、人工问答验证并发布</div>
       </div>
       <div class="page-actions">
         <button class="btn-ghost" @click="goKnowledge">查看知识库</button>
@@ -71,10 +71,10 @@
           <button v-else-if="selectedSetDisplayStatus === 'confirmed' && detail.source.status !== 'archived'" class="btn-gold" :disabled="indexing" @click="indexDraft">{{ indexing ? '向量化中…' : '向量化' }}</button>
           <div v-else-if="selectedSetDisplayStatus === 'indexed'" class="workflow-action">
             <span class="indexed-note">已向量化</span>
-            <button class="btn-gold" @click="openValidation">检索验证</button>
+            <button class="btn-gold" @click="openValidation">问答验证</button>
           </div>
           <div v-else-if="selectedSetDisplayStatus === 'validated'" class="workflow-action">
-            <span class="indexed-note">检索验证已确认</span>
+            <span class="indexed-note">问答验证已确认</span>
             <button class="btn-gold" :disabled="sourceActing" @click="publishSource">{{ sourceActing ? '发布中…' : '发布' }}</button>
           </div>
           <span v-else-if="selectedSetDisplayStatus === 'published'" class="indexed-note">已发布</span>
@@ -83,61 +83,77 @@
         <section v-if="(selectedSetDisplayStatus === 'indexed' || selectedSetDisplayStatus === 'validated') && validationOpen" ref="validationPanel" class="retrieval-validation">
           <div class="validation-head">
             <div>
-              <h2>检索验证</h2>
-              <p>仅检索当前分片版本，核对典型问题的相似度与预期章节命中情况。</p>
+              <h2>问答验证</h2>
+              <p>选择预期切分段并手动提问，生成 RAG 回答后与全部切片进行匹配和质量评估。</p>
             </div>
             <span class="validation-status">{{ selectedSetDisplayStatus === 'validated' ? '已确认' : '待确认' }}</span>
           </div>
-          <div class="validation-mode" role="radiogroup" aria-label="检索验证方式">
-            <label :class="['validation-mode-option', validationMode === 'auto' ? 'selected' : '']">
-              <input v-model="validationMode" type="radio" value="auto" @change="changeValidationMode" />
-              <span><b>自动生成</b><small>从当前 Markdown 随机抽取主题生成问题</small></span>
-            </label>
-            <label :class="['validation-mode-option', validationMode === 'manual' ? 'selected' : '']">
-              <input v-model="validationMode" type="radio" value="manual" @change="changeValidationMode" />
-              <span><b>手动输入</b><small>自行输入需要验证的典型问题</small></span>
-            </label>
-          </div>
-          <div v-if="validationMode === 'auto'" class="auto-question">
-            <div><b>自动问题</b><p>{{ autoQuestion || '未能从 Markdown 生成问题，请改用手动输入。' }}</p></div>
-            <button class="btn-ghost" @click="regenerateAutoQuestion">换一个问题</button>
-          </div>
-          <label v-else class="manual-question">典型问题<textarea v-model="manualQuestion" rows="3" maxlength="2000" placeholder="如：员工年假如何申请？" @input="clearValidationResult" /></label>
-          <div class="validation-fields">
-            <label>预期分片（手动验证可选）
-              <select v-model="expectedChunkId" :disabled="validationMode === 'auto'" @change="clearValidationResult">
-                <option value="">仅查看相似度</option>
-                <option v-for="(chunk, index) in verificationChunks" :key="chunk.id" :value="chunk.id">第 {{ index + 1 }} 段 · {{ chunk.section_path || '未标注章节' }}</option>
-              </select>
-            </label>
-            <label>返回条数
-              <select v-model.number="verificationTopK" @change="clearValidationResult">
-                <option :value="3">3</option>
-                <option :value="6">6</option>
-                <option :value="10">10</option>
-              </select>
-            </label>
-          </div>
+          <label v-if="validationRuns.length" class="validation-run-picker">验证记录
+            <select v-model="selectedValidationRunId">
+              <option value="">请选择验证记录</option>
+              <option v-for="run in validationRuns" :key="run.id" :value="run.id">{{ formatDate(run.created_at) }} · {{ validationModeLabel(run.mode) }} · {{ statusLabel(run.status) }}</option>
+            </select>
+          </label>
+          <label class="manual-question">预期切分段
+            <select :value="expectedChunkId" :disabled="runningValidation" @change="selectExpectedChunk">
+              <option value="">请选择本问题应命中的切分段</option>
+              <option v-for="(chunk, index) in verificationChunks" :key="chunk.id" :value="String(chunk.id)">第 {{ index + 1 }} 段 · {{ chunk.section_path || '未标注章节' }}</option>
+            </select>
+          </label>
+          <label class="manual-question">验证问题<textarea v-model="manualQuestion" :disabled="runningValidation" rows="3" maxlength="2000" placeholder="如：员工年假如何申请？" @input="clearValidationInput" /></label>
           <div class="validation-actions">
-            <button class="btn-gold" :disabled="verifying || !activeVerificationQuestion" @click="previewRetrieval">{{ verifying ? '检索中…' : '测试检索' }}</button>
-            <button v-if="selectedSetDisplayStatus === 'indexed'" class="btn-ghost" :disabled="validating || !canConfirmValidation" @click="confirmValidation">{{ validating ? '确认中…' : '确认检索验证' }}</button>
+            <button class="btn-gold" :disabled="runningValidation" @click="runAnswerValidation">{{ runningValidation ? '验证运行中…' : '执行问答验证' }}</button>
+            <button class="btn-ghost" :disabled="refreshingValidation" @click="refreshValidationResults">{{ refreshingValidation ? '刷新中…' : '刷新验证结果' }}</button>
+            <span v-if="!runningValidation && activeValidationRun?.status === 'succeeded'" class="validation-complete">执行完成</span>
+            <span v-else-if="!runningValidation && activeValidationRun?.status === 'failed'" class="validation-failed">执行失败</span>
+            <button v-if="selectedSetDisplayStatus === 'indexed'" class="btn-ghost" :disabled="confirmingValidation || !canConfirmValidation" @click="confirmValidation">{{ confirmingValidation ? '确认中…' : '确认问答验证' }}</button>
             <button v-if="selectedSetDisplayStatus === 'validated'" class="btn-gold" :disabled="sourceActing" @click="publishSource">{{ sourceActing ? '发布中…' : '发布' }}</button>
           </div>
-          <p v-if="retrievalResult" :class="['validation-summary', expectedChunkId && !retrievalResult.expected_hit ? 'is-miss' : '']">
-            返回 {{ retrievalResult.items.length }} 条结果，{{ retrievalResult.above_threshold_count }} 条达到最低相似度 {{ formatSimilarity(retrievalResult.minimum_similarity) }}。
-            <template v-if="expectedChunkId">{{ retrievalResult.expected_hit ? '预期分片已命中。' : '预期分片未命中，请调整切分或提问。' }}</template>
-            <template v-else>选择预期分片后可验证 Top-K 命中。</template>
-          </p>
-          <div v-if="retrievalResult?.items.length" class="retrieval-results">
-            <article v-for="(item, index) in retrievalResult.items" :key="item.chunk_id" :class="['retrieval-result', item.meets_minimum_similarity ? 'is-qualified' : 'is-low']">
-              <div class="retrieval-result-head">
-                <b>Top {{ index + 1 }} · {{ item.section_path || '未标注章节' }}</b>
-                <span>{{ formatSimilarity(item.similarity) }}</span>
+          <p v-if="runningValidation" class="validation-summary">验证请求已提交，正在检索、生成回答并评估结果；完成后会自动展示结果。</p>
+          <template v-if="activeValidationRun">
+            <p v-if="activeValidationRun.status === 'failed'" class="validation-summary is-miss">本次运行失败：{{ activeValidationRun.error_message || '请稍后重试。' }}</p>
+            <template v-else>
+              <div class="validation-question-result"><span>验证问题</span><b>{{ activeValidationRun.question }}</b></div>
+              <p :class="['validation-summary', !activeValidationRun.retrieval?.question_match?.expected_is_top || !activeValidationRun.retrieval?.answer_match?.expected_is_top ? 'is-miss' : '']">
+                生成回答前使用 {{ activeValidationRun.retrieval?.items?.length || 0 }} 条检索结果；所选切分段在问题匹配中为 Top {{ activeValidationRun.retrieval?.question_match?.expected_rank || '—' }}，在回答全量匹配中为 Top {{ activeValidationRun.retrieval?.answer_match?.expected_rank || '—' }}。
+              </p>
+              <div v-if="activeValidationRun.retrieval?.items?.length" class="retrieval-results">
+                <h3>生成回答的检索结果</h3>
+                <article v-for="(item, index) in activeValidationRun.retrieval.items" :key="item.chunk_id" :class="['retrieval-result', item.meets_minimum_similarity ? 'is-qualified' : 'is-low']">
+                  <div class="retrieval-result-head">
+                    <b>Top {{ index + 1 }} · {{ item.section_path || '未标注章节' }}</b>
+                    <span>{{ formatOptionalSimilarity(item.similarity) }}</span>
+                  </div>
+                  <p>{{ item.meets_minimum_similarity ? '达到最低相似度' : '低于最低相似度' }}<em v-if="activeValidationRun.expected_chunk_ids?.includes(item.chunk_id)">预期分片</em></p>
+                  <details><summary>查看分片正文</summary><pre>{{ item.content }}</pre></details>
+                </article>
               </div>
-              <p>{{ item.meets_minimum_similarity ? '达到最低相似度' : '低于最低相似度' }}<em v-if="expectedChunkId === item.chunk_id">预期分片</em></p>
-              <details><summary>查看分片正文</summary><pre>{{ item.content }}</pre></details>
-            </article>
-          </div>
+              <section class="answer-evaluation">
+                <div class="answer-evaluation-head"><h3>RAG 回答</h3><span :class="['badge', statusClass(activeValidationRun.evaluation_verdict)]">{{ evaluationLabel(activeValidationRun.evaluation_verdict) }}</span></div>
+                <pre>{{ activeValidationRun.answer || '未生成回答。' }}</pre>
+                <div class="evaluation-metrics">
+                  <span>问题-所选切分段：<b>{{ formatOptionalSimilarity(activeValidationRun.retrieval?.question_match?.expected_similarity) }}</b></span>
+                  <span>回答-所选切分段：<b>{{ formatOptionalSimilarity(activeValidationRun.retrieval?.answer_match?.expected_similarity) }}</b></span>
+                  <span>问题匹配排名：<b>Top {{ activeValidationRun.retrieval?.question_match?.expected_rank || '—' }}</b></span>
+                  <span>回答匹配排名：<b>Top {{ activeValidationRun.retrieval?.answer_match?.expected_rank || '—' }}</b></span>
+                  <span>正确性：<b>{{ formatOptionalSimilarity(activeValidationRun.correctness_score) }}</b></span>
+                  <span>忠实性：<b>{{ formatOptionalSimilarity(activeValidationRun.faithfulness_score) }}</b></span>
+                </div>
+                <p class="evaluation-reason">{{ activeValidationRun.evaluation_reason || '未选择预期分片，未进行证据评估。' }}</p>
+              </section>
+              <details v-if="activeValidationRun.retrieval?.answer_match?.items?.length" class="full-match-results" open>
+                <summary>回答与全部 {{ activeValidationRun.retrieval.answer_match.total_chunks }} 个切片的匹配结果</summary>
+                <p>所选切分段的回答匹配度为 {{ formatOptionalSimilarity(activeValidationRun.retrieval.answer_match.expected_similarity) }}，排名 Top {{ activeValidationRun.retrieval.answer_match.expected_rank || '—' }}。</p>
+                <div class="retrieval-results">
+                  <article v-for="(item, index) in activeValidationRun.retrieval.answer_match.items" :key="item.chunk_id" :class="['retrieval-result', item.is_expected ? 'is-expected' : '']">
+                    <div class="retrieval-result-head"><b>Top {{ index + 1 }} · {{ item.section_path || '未标注章节' }}</b><span>{{ formatOptionalSimilarity(item.similarity) }}</span></div>
+                    <p><em v-if="item.is_expected">所选切分段</em><span v-else>非所选切分段</span></p>
+                    <details><summary>查看分片正文</summary><pre>{{ item.content }}</pre></details>
+                  </article>
+                </div>
+              </details>
+            </template>
+          </template>
         </section>
 
         <div class="chunk-list">
@@ -219,24 +235,25 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   apiAdminCompanyKnowledgeArchive,
+  apiAdminCompanyKnowledgeConfirmValidationRun,
   apiAdminCompanyKnowledgeConfirmChunkSet,
+  apiAdminCompanyKnowledgeCreateValidationRun,
   apiAdminCompanyKnowledgeCreateChunkSet,
   apiAdminCompanyKnowledgeDelete,
   apiAdminCompanyKnowledgeDeleteJob,
   apiAdminCompanyKnowledgeIndexChunkSet,
   apiAdminCompanyKnowledgeJobs,
-  apiAdminCompanyKnowledgePreviewChunkSet,
   apiAdminCompanyKnowledgePublish,
   apiAdminCompanyKnowledgeSource,
   apiAdminCompanyKnowledgeSources,
   apiAdminCompanyKnowledgeUpdate,
   apiAdminCompanyKnowledgeUpdateChunkSet,
   apiAdminCompanyKnowledgeUpload,
-  apiAdminCompanyKnowledgeValidateChunkSet,
+  apiAdminCompanyKnowledgeValidationRuns,
 } from '../api'
 
 const route = useRoute()
@@ -251,17 +268,19 @@ const rule = ref({ max_chars: 650, overlap_chars: 100 })
 const creating = ref(false)
 const saving = ref(false)
 const indexing = ref(false)
-const verifying = ref(false)
-const validating = ref(false)
+const runningValidation = ref(false)
+const refreshingValidation = ref(false)
+const confirmingValidation = ref(false)
 const sourceActing = ref(false)
 const notice = ref(null)
-const validationMode = ref('auto')
-const autoQuestion = ref('')
 const manualQuestion = ref('')
-const verificationTopK = ref(6)
 const expectedChunkId = ref('')
-const retrievalResult = ref(null)
-const previewedQuestion = ref('')
+const validationRuns = computed(() => detail.value?.validation_runs || [])
+const selectedValidationRunId = ref('')
+const pendingValidationRunId = ref('')
+let validationPollingTimer = null
+let validationPollingDeadline = 0
+let validationPollingFailures = 0
 const validationOpen = ref(false)
 const validationPanel = ref(null)
 const uploadOpen = ref(false)
@@ -282,10 +301,10 @@ const selectedSet = computed(() => detail.value?.chunk_sets.find((item) => item.
 const selectedSetDisplayStatus = computed(() => chunkSetDisplayStatus(selectedSet.value))
 const editable = computed(() => selectedSetDisplayStatus.value === 'draft' && detail.value?.source.status !== 'archived')
 const verificationChunks = computed(() => detail.value?.chunks || [])
-const activeVerificationQuestion = computed(() => (validationMode.value === 'auto' ? autoQuestion.value : manualQuestion.value).trim())
+const activeValidationRun = computed(() => validationRuns.value.find((item) => item.id === selectedValidationRunId.value) || validationRuns.value[0] || null)
 const canConfirmValidation = computed(() => {
-  if (!activeVerificationQuestion.value || previewedQuestion.value !== activeVerificationQuestion.value || !retrievalResult.value?.items?.length) return false
-  return !expectedChunkId.value || retrievalResult.value.expected_hit === true
+  const run = activeValidationRun.value
+  return selectedSetDisplayStatus.value === 'indexed' && run?.status === 'succeeded' && run?.retrieval?.can_confirm === true
 })
 const canUpload = computed(() => upload.value.file && upload.value.title.trim() && upload.value.version.trim() && upload.value.effective_at)
 const canSaveEdit = computed(() => edit.value.id && edit.value.title.trim() && edit.value.version.trim() && edit.value.effective_at)
@@ -293,63 +312,125 @@ const canSaveEdit = computed(() => edit.value.id && edit.value.title.trim() && e
 function emptyUpload() { return { file: null, title: '', version: '', effective_at: '', expires_at: '', category: '', knowledge_type: 'policy' } }
 function emptyEdit() { return { id: '', title: '', version: '', effective_at: '', expires_at: '', category: '' } }
 function statusLabel(value) {
-  return ({ markdown_ready: '待切分', chunking: '切分草稿', chunk_ready: '待向量化', indexed: '待检索验证', validated: '待发布', indexing: '向量化中', published: '已发布', archived: '已下架', draft: '草稿', confirmed: '已确认', superseded: '已替换', failed: '失败', running: '进行中', succeeded: '成功' }[value] || value)
+  return ({ markdown_ready: '待切分', chunking: '切分草稿', chunk_ready: '待向量化', indexed: '待问答验证', validated: '待发布', indexing: '向量化中', published: '已发布', archived: '已下架', draft: '草稿', confirmed: '已确认', superseded: '已替换', failed: '失败', running: '进行中', succeeded: '成功', skipped: '未评估' }[value] || value)
 }
 function statusClass(value) {
-  return ({ published: 'badge-moss', succeeded: 'badge-moss', indexed: 'badge-gold', validated: 'badge-gold', markdown_ready: 'badge-gold', chunking: 'badge-gold', chunk_ready: 'badge-gold', indexing: 'badge-gold', running: 'badge-gold', failed: 'badge-berry', archived: 'badge-berry' }[value] || '')
+  return ({ published: 'badge-moss', succeeded: 'badge-moss', pass: 'badge-moss', indexed: 'badge-gold', validated: 'badge-gold', markdown_ready: 'badge-gold', chunking: 'badge-gold', chunk_ready: 'badge-gold', indexing: 'badge-gold', running: 'badge-gold', skipped: 'badge-gold', failed: 'badge-berry', fail: 'badge-berry', archived: 'badge-berry' }[value] || '')
 }
 function modeLabel(value) { return ({ auto: '自动切分', manual: '手动切分', auto_then_manual: '自动后调优', legacy: '历史分片' }[value] || value) }
+function validationModeLabel() { return '人工验证' }
+function evaluationLabel(value) { return ({ pass: '通过', fail: '未通过', pending: '待评估', skipped: '未评估' }[value] || value || '未评估') }
 function chunkSetDisplayStatus(chunkSet) {
   if (chunkSet && detail.value?.source.status === 'published' && detail.value.source.active_chunk_set_id === chunkSet.id) return 'published'
   return chunkSet?.status || ''
 }
 function jobLabel(value) { return ({ convert: '转换 Markdown', auto_chunk: '自动切分', manual_chunk: '手动切分', index: '显式向量化', reindex: '重新索引' }[value] || value) }
 function formatDate(value) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—' }
-function formatSimilarity(value) { return Number(value || 0).toFixed(4) }
+function formatOptionalSimilarity(value) { return value === null || value === undefined ? '—' : Number(value).toFixed(4) }
 function showNotice(text, type = 'success') { notice.value = { text, type } }
 function goKnowledge() { router.push('/company-knowledge') }
 function replaceSourceQuery(id) { router.replace({ query: id ? { source: id } : {} }) }
-function clearValidationResult() {
-  retrievalResult.value = null
-  previewedQuestion.value = ''
+function clearValidationInput() { selectedValidationRunId.value = '' }
+function selectExpectedChunk(event) {
+  expectedChunkId.value = String(event.target.value || '')
+  clearValidationInput()
 }
-function cleanMarkdownText(value) {
-  return value.replace(/[`*_>#\[\]()]/g, ' ').replace(/\s+/g, ' ').trim()
+function validationRunMessage(run) {
+  if (run.status === 'running') return { text: '问答验证已提交，正在后台生成回答和评估结果。', type: 'success' }
+  if (run.status === 'failed') return { text: run.error_message || '问答验证运行失败', type: 'error' }
+  return run.retrieval?.can_confirm
+    ? { text: '问答验证通过，可以确认发布。', type: 'success' }
+    : { text: '问答验证完成，请查看检索和证据评估结果。', type: 'error' }
 }
-function markdownQuestionCandidates(markdown) {
-  const headings = []
-  const candidates = []
-  for (const line of (markdown || '').split(/\r?\n/)) {
-    const heading = line.match(/^(#{1,6})\s+(.+)$/)
-    if (heading) {
-      const level = heading[1].length
-      headings.splice(level - 1)
-      headings[level - 1] = cleanMarkdownText(heading[2])
-      continue
-    }
-    const content = cleanMarkdownText(line)
-    if (content.length >= 12) candidates.push({ topic: headings.filter(Boolean).join(' / '), content })
+function stopValidationPolling({ clearPending = false } = {}) {
+  if (validationPollingTimer) window.clearInterval(validationPollingTimer)
+  validationPollingTimer = null
+  validationPollingDeadline = 0
+  validationPollingFailures = 0
+  if (clearPending) pendingValidationRunId.value = ''
+}
+function finishValidationRun(run, { notify = true } = {}) {
+  selectedValidationRunId.value = run.id
+  runningValidation.value = false
+  stopValidationPolling({ clearPending: true })
+  if (notify) {
+    const message = validationRunMessage(run)
+    showNotice(message.text, message.type)
   }
-  return candidates
 }
-function regenerateAutoQuestion() {
-  clearValidationResult()
-  const candidates = markdownQuestionCandidates(detail.value?.markdown)
-  const selected = candidates[Math.floor(Math.random() * candidates.length)]
-  const fallbackChunk = verificationChunks.value[Math.floor(Math.random() * verificationChunks.value.length)]
-  const topic = selected?.topic || fallbackChunk?.section_path || cleanMarkdownText(selected?.content || fallbackChunk?.content || '')
-  if (!topic) { autoQuestion.value = ''; expectedChunkId.value = ''; return }
-  const templates = [
-    `请说明“${topic}”的具体规定。`,
-    `关于“${topic}”，资料中有哪些要求？`,
-    `“${topic}”需要如何执行？`,
-  ]
-  autoQuestion.value = templates[Math.floor(Math.random() * templates.length)]
-  expectedChunkId.value = ''
+async function pollValidationRun(runId, pollingSourceId, pollingChunkSetId) {
+  if (
+    !runningValidation.value
+    || pendingValidationRunId.value !== runId
+    || sourceId.value !== pollingSourceId
+    || selectedSet.value?.id !== pollingChunkSetId
+  ) {
+    // 热更新或切换资料时，旧轮询仍可能执行一次，必须一并清理界面的运行态。
+    runningValidation.value = false
+    stopValidationPolling({ clearPending: true })
+    return
+  }
+  try {
+    const runs = await loadValidationRuns({ notify: false, throwOnError: true })
+    validationPollingFailures = 0
+    const targetRun = runs.find((item) => item.id === runId)
+    if (targetRun && targetRun.status !== 'running') {
+      finishValidationRun(targetRun)
+      await loadDetail()
+      return
+    }
+    if (Date.now() >= validationPollingDeadline) {
+      runningValidation.value = false
+      stopValidationPolling({ clearPending: true })
+      showNotice('验证超过 90 秒仍未完成，请刷新验证记录后重试。', 'error')
+    }
+  } catch (error) {
+    validationPollingFailures += 1
+    if (validationPollingFailures >= 3 || Date.now() >= validationPollingDeadline) {
+      runningValidation.value = false
+      stopValidationPolling({ clearPending: true })
+      showNotice(error.message || '连续加载验证结果失败，请检查后端服务后重试。', 'error')
+    }
+  }
 }
-function changeValidationMode() {
-  clearValidationResult()
-  if (validationMode.value === 'auto') regenerateAutoQuestion()
+async function refreshValidationResults() {
+  if (!selectedSet.value) return
+  refreshingValidation.value = true
+  try {
+    const runs = await loadValidationRuns({ notify: false, throwOnError: true })
+    const currentRun = runs.find((item) => item.id === pendingValidationRunId.value)
+      || runs.find((item) => item.id === selectedValidationRunId.value)
+      || runs[0]
+    if (!currentRun) {
+      runningValidation.value = false
+      stopValidationPolling({ clearPending: true })
+      showNotice('当前分片版本没有可显示的问答验证记录。', 'error')
+      return
+    }
+    selectedValidationRunId.value = currentRun.id
+    if (currentRun.status === 'running') {
+      runningValidation.value = true
+      startValidationPolling(currentRun.id, sourceId.value, selectedSet.value.id)
+      showNotice('后台仍在执行问答验证，正在继续等待结果。')
+      return
+    }
+    finishValidationRun(currentRun)
+    await loadDetail()
+  } catch (error) {
+    runningValidation.value = false
+    stopValidationPolling({ clearPending: true })
+    showNotice(error.message || '刷新验证结果失败，请检查后端服务。', 'error')
+  } finally {
+    refreshingValidation.value = false
+  }
+}
+function startValidationPolling(runId, pollingSourceId, pollingChunkSetId) {
+  stopValidationPolling()
+  pendingValidationRunId.value = runId
+  validationPollingDeadline = Date.now() + 90000
+  const poll = () => { void pollValidationRun(runId, pollingSourceId, pollingChunkSetId) }
+  validationPollingTimer = window.setInterval(poll, 2000)
+  poll()
 }
 
 async function loadSources() {
@@ -360,19 +441,77 @@ async function loadJobs() {
   const res = await apiAdminCompanyKnowledgeJobs()
   if (res.success) jobs.value = res.data.items
 }
+async function fetchValidationRuns(targetSourceId, targetChunkSetId) {
+  const res = await apiAdminCompanyKnowledgeValidationRuns(targetSourceId, targetChunkSetId)
+  if (!res.success) throw new Error(res.message || '加载问答验证记录失败')
+  // 自动验证已停用；历史记录留在数据库中，但不进入当前人工验证流程。
+  return (res.data.items || []).filter((item) => item.mode === 'manual')
+}
+function setValidationRuns(runs) {
+  if (detail.value) detail.value.validation_runs = runs
+  if (!runs.some((item) => item.id === selectedValidationRunId.value)) {
+    selectedValidationRunId.value = runs[0]?.id || ''
+  }
+  return runs
+}
+async function loadValidationRuns({ notify = true, throwOnError = false } = {}) {
+  if (!sourceId.value || !selectedSet.value) return []
+  try {
+    return setValidationRuns(await fetchValidationRuns(sourceId.value, selectedSet.value.id))
+  } catch (error) {
+    if (notify) showNotice(error.message || '加载问答验证记录失败', 'error')
+    if (throwOnError) throw error
+    return null
+  }
+}
+function resumeRunningValidation() {
+  const runningRun = validationRuns.value.find((item) => item.status === 'running')
+  if (!runningRun || !sourceId.value || !selectedSet.value) return
+  selectedValidationRunId.value = runningRun.id
+  runningValidation.value = true
+  startValidationPolling(runningRun.id, sourceId.value, selectedSet.value.id)
+}
 async function loadDetail() {
   if (!sourceId.value) { detail.value = null; return }
-  const res = await apiAdminCompanyKnowledgeSource(sourceId.value, activeChunkSetId.value)
+  const targetSourceId = sourceId.value
+  const targetChunkSetId = activeChunkSetId.value
+  stopValidationPolling({ clearPending: true })
+  runningValidation.value = false
+  detail.value = null
+  await nextTick()
+  const res = await apiAdminCompanyKnowledgeSource(targetSourceId, targetChunkSetId)
   if (!res.success) { showNotice(res.message || '加载资料失败', 'error'); return }
-  detail.value = res.data
-  activeChunkSetId.value = res.data.selected_chunk_set_id || ''
-  draftChunks.value = res.data.chunks.map((item) => ({ section_path: item.section_path || '', content: item.content || '' }))
-  autoQuestion.value = ''
+  const nextDetail = res.data
+  const nextChunkSetId = nextDetail.selected_chunk_set_id || ''
+  const nextChunkSet = nextDetail.chunk_sets.find((item) => item.id === nextChunkSetId) || null
+  const nextChunkSetStatus = nextDetail.source.status === 'published' && nextDetail.source.active_chunk_set_id === nextChunkSetId
+    ? 'published'
+    : nextChunkSet?.status || ''
+  const shouldOpenValidation = ['indexed', 'validated'].includes(nextChunkSetStatus)
+  let nextValidationRuns = []
+  if (shouldOpenValidation && nextChunkSetId) {
+    try {
+      nextValidationRuns = await fetchValidationRuns(targetSourceId, nextChunkSetId)
+    } catch (error) {
+      showNotice(error.message || '加载问答验证记录失败', 'error')
+    }
+  }
+  if (sourceId.value !== targetSourceId) return
+  activeChunkSetId.value = nextChunkSetId
+  draftChunks.value = nextDetail.chunks.map((item) => ({ section_path: item.section_path || '', content: item.content || '' }))
   manualQuestion.value = ''
   expectedChunkId.value = ''
-  clearValidationResult()
-  validationOpen.value = ['indexed', 'validated'].includes(selectedSetDisplayStatus.value)
-  if (validationOpen.value && validationMode.value === 'auto') regenerateAutoQuestion()
+  selectedValidationRunId.value = ''
+  nextDetail.validation_runs = nextValidationRuns
+  if (!nextValidationRuns.some((item) => item.id === selectedValidationRunId.value)) {
+    selectedValidationRunId.value = nextValidationRuns[0]?.id || ''
+  }
+  validationOpen.value = shouldOpenValidation
+  // 先准备验证记录，再挂载详情区域，避免结果区以空记录状态首次渲染。
+  detail.value = nextDetail
+  if (shouldOpenValidation) {
+    resumeRunningValidation()
+  }
 }
 async function refreshSourceContext() {
   await loadSources()
@@ -498,41 +637,61 @@ async function indexDraft() {
     validationOpen.value = true
     await nextTick()
     validationPanel.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    showNotice('向量化完成，请在下方完成检索验证。')
+    showNotice('向量化完成，请在下方完成问答验证。')
   } catch (error) { showNotice(error.message || '向量化失败', 'error') } finally { indexing.value = false }
 }
 async function openValidation() {
   validationOpen.value = true
-  if (validationMode.value === 'auto' && !autoQuestion.value) regenerateAutoQuestion()
+  await loadValidationRuns()
+  resumeRunningValidation()
   await nextTick()
   validationPanel.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
-async function previewRetrieval() {
-  const question = activeVerificationQuestion.value
-  if (!selectedSet.value || !question) return
-  verifying.value = true
+async function runAnswerValidation() {
+  if (!selectedSet.value) return
+  if (!expectedChunkId.value) {
+    showNotice('请先选择本问题预期命中的切分段。', 'error')
+    return
+  }
+  if (!manualQuestion.value.trim()) {
+    showNotice('请输入需要验证的问题。', 'error')
+    return
+  }
+  const pollingSourceId = sourceId.value
+  const pollingChunkSetId = selectedSet.value.id
+  runningValidation.value = true
+  let waitingForBackgroundRun = false
   try {
-    const res = await apiAdminCompanyKnowledgePreviewChunkSet(sourceId.value, selectedSet.value.id, {
-      question, top_k: verificationTopK.value, expected_chunk_ids: expectedChunkId.value ? [expectedChunkId.value] : [],
+    const res = await apiAdminCompanyKnowledgeCreateValidationRun(pollingSourceId, pollingChunkSetId, {
+      question: manualQuestion.value.trim(),
+      expected_chunk_id: expectedChunkId.value,
     })
     if (res.success) {
-      retrievalResult.value = res.data
-      previewedQuestion.value = question
-      showNotice(res.data.expected_hit === false ? '预期分片未命中，请检查切分或提问。' : '检索验证结果已更新。', res.data.expected_hit === false ? 'error' : 'success')
-    } else showNotice(res.message || '检索验证失败', 'error')
-  } catch (error) { showNotice(error.message || '检索验证失败', 'error') } finally { verifying.value = false }
+      const run = res.data.run
+      setValidationRuns([run, ...validationRuns.value.filter((item) => item.id !== run.id)])
+      selectedValidationRunId.value = run.id
+      const message = validationRunMessage(run)
+      showNotice(message.text, message.type)
+      waitingForBackgroundRun = run.status === 'running'
+      if (waitingForBackgroundRun) startValidationPolling(run.id, pollingSourceId, pollingChunkSetId)
+      else finishValidationRun(run, { notify: false })
+    } else showNotice(res.message || '问答验证失败', 'error')
+  } catch (error) { showNotice(error.message || '问答验证失败', 'error') } finally {
+    if (!waitingForBackgroundRun) {
+      runningValidation.value = false
+      stopValidationPolling({ clearPending: true })
+    }
+  }
 }
 async function confirmValidation() {
-  if (!selectedSet.value || !canConfirmValidation.value || !confirm('确认当前分片已完成检索验证并允许发布？')) return
-  const question = activeVerificationQuestion.value
-  validating.value = true
+  const run = activeValidationRun.value
+  if (!selectedSet.value || !run || !canConfirmValidation.value || !confirm('确认当前问答验证已通过，并允许发布？')) return
+  confirmingValidation.value = true
   try {
-    const res = await apiAdminCompanyKnowledgeValidateChunkSet(sourceId.value, selectedSet.value.id, {
-      question, top_k: verificationTopK.value, expected_chunk_ids: expectedChunkId.value ? [expectedChunkId.value] : [],
-    })
-    if (res.success) { await Promise.all([loadDetail(), loadSources()]); validationOpen.value = true; showNotice('检索验证已确认，可以直接发布。') }
+    const res = await apiAdminCompanyKnowledgeConfirmValidationRun(sourceId.value, selectedSet.value.id, run.id)
+    if (res.success) { await Promise.all([loadDetail(), loadSources()]); validationOpen.value = true; showNotice('问答验证已确认，可以直接发布。') }
     else showNotice(res.message || '确认失败', 'error')
-  } catch (error) { showNotice(error.message || '确认失败', 'error') } finally { validating.value = false }
+  } catch (error) { showNotice(error.message || '确认失败', 'error') } finally { confirmingValidation.value = false }
 }
 async function publishSource() {
   const source = detail.value?.source
@@ -569,6 +728,7 @@ onMounted(async () => {
   if (typeof route.query.source === 'string') sourceId.value = route.query.source
   if (sourceId.value) await loadDetail()
 })
+onBeforeUnmount(() => stopValidationPolling({ clearPending: true }))
 </script>
 
 <style scoped>
@@ -576,7 +736,7 @@ onMounted(async () => {
 .page-actions, .source-actions, .workspace-actions, .workflow-action { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 .source-picker { display:flex; align-items:center; gap:12px; margin:18px 0; flex-wrap:wrap; }
 .source-picker label, .source-picker select { font-size:13px; }
-.source-picker select, .set-select, .rule-fields input, .chunk-editor input, .chunk-editor textarea, .validation-fields textarea, .validation-fields select { border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--ink); font:inherit; }
+.source-picker select, .set-select, .rule-fields input, .chunk-editor input, .chunk-editor textarea { border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--ink); font:inherit; }
 .source-picker select { min-width:280px; max-width:100%; padding:8px 10px; }
 .row-btn { border:1px solid var(--line); border-radius:6px; background:transparent; color:var(--ink-soft); padding:4px 8px; font-size:12px; }
 .row-btn:hover { border-color:var(--gold); color:var(--ink); }
@@ -612,6 +772,8 @@ onMounted(async () => {
 .validation-head h2 { font-size:15px; }
 .validation-head p { margin-top:4px; color:var(--ink-soft); font-size:12px; }
 .validation-status { color:var(--moss); font-size:12px; white-space:nowrap; }
+.validation-run-picker { display:block; margin-top:12px; color:var(--ink-soft); font-size:12px; }
+.validation-run-picker select { display:block; min-width:min(100%, 340px); max-width:100%; margin-top:5px; padding:8px 9px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--ink); font:inherit; }
 .validation-mode { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:12px; }
 .validation-mode-option { display:flex; gap:8px; min-height:54px; padding:9px; border:1px solid var(--line); border-radius:6px; cursor:pointer; }
 .validation-mode-option.selected { border-color:var(--gold); background:var(--gold-soft); }
@@ -619,20 +781,20 @@ onMounted(async () => {
 .validation-mode-option b, .validation-mode-option small { display:block; }
 .validation-mode-option b { font-size:13px; }
 .validation-mode-option small { margin-top:3px; color:var(--ink-soft); font-size:11px; line-height:1.35; }
-.auto-question { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:10px; padding:10px; border:1px solid var(--line); border-radius:6px; background:var(--bg); }
-.auto-question b { font-size:12px; color:var(--ink-soft); }
-.auto-question p { margin-top:4px; font-size:13px; line-height:1.5; }
-.auto-question .btn-ghost { flex:none; }
 .manual-question { display:block; margin-top:10px; color:var(--ink-soft); font-size:12px; }
-.manual-question textarea { display:block; box-sizing:border-box; width:100%; margin-top:5px; padding:8px 9px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--ink); font:inherit; resize:vertical; line-height:1.5; }
-.validation-fields { display:grid; grid-template-columns:180px 100px; justify-content:end; gap:10px; margin-top:12px; }
-.validation-fields label { color:var(--ink-soft); font-size:12px; }
-.validation-fields textarea, .validation-fields select { display:block; box-sizing:border-box; width:100%; margin-top:5px; padding:8px 9px; }
-.validation-fields textarea { resize:vertical; line-height:1.5; }
+.manual-question textarea, .manual-question select { display:block; box-sizing:border-box; width:100%; margin-top:5px; padding:8px 9px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--ink); font:inherit; }
+.manual-question textarea { resize:vertical; line-height:1.5; }
 .validation-actions { justify-content:flex-start; margin-top:10px; }
+.validation-complete, .validation-failed { align-self:center; font-size:12px; }
+.validation-complete { color:var(--moss); }
+.validation-failed { color:var(--berry); }
 .validation-summary { margin:12px 0; padding:9px 10px; border-left:3px solid var(--moss); background:var(--bg); color:var(--ink-soft); font-size:12px; line-height:1.55; }
 .validation-summary.is-miss { border-color:var(--berry); color:var(--berry); }
+.validation-question-result { display:grid; gap:4px; margin-top:12px; padding:10px; border:1px solid var(--line); border-radius:6px; background:var(--bg); }
+.validation-question-result span { color:var(--ink-soft); font-size:12px; }
+.validation-question-result b { font-size:14px; line-height:1.5; }
 .retrieval-results, .chunk-list { display:grid; gap:8px; }
+.retrieval-results h3 { margin:4px 0 2px; font-size:13px; }
 .retrieval-result { padding:10px; border:1px solid var(--line); border-radius:6px; background:var(--card); }
 .retrieval-result.is-qualified { border-left:3px solid var(--moss); }
 .retrieval-result.is-low { border-left:3px solid var(--gold); }
@@ -643,6 +805,17 @@ onMounted(async () => {
 .retrieval-result details { margin-top:8px; }
 .retrieval-result summary { cursor:pointer; color:var(--ink-soft); font-size:12px; }
 .retrieval-result pre { max-height:220px; overflow:auto; margin:7px 0 0; padding:8px; background:var(--bg); color:var(--ink); white-space:pre-wrap; overflow-wrap:anywhere; font:11px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.answer-evaluation { margin-top:12px; padding:12px; border:1px solid var(--line); border-radius:6px; background:var(--card); }
+.answer-evaluation-head { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+.answer-evaluation-head h3 { font-size:14px; }
+.answer-evaluation pre { max-height:240px; overflow:auto; margin:10px 0 0; padding:10px; background:var(--bg); color:var(--ink); white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.evaluation-metrics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px 12px; margin-top:10px; color:var(--ink-soft); font-size:12px; }
+.evaluation-metrics b { color:var(--ink); font-family:ui-monospace, SFMono-Regular, Consolas, monospace; }
+.evaluation-reason { margin-top:10px; color:var(--ink-soft); font-size:12px; line-height:1.55; }
+.full-match-results { margin-top:12px; padding:12px; border:1px solid var(--line); border-radius:6px; background:var(--bg); }
+.full-match-results summary { cursor:pointer; font-size:13px; font-weight:700; }
+.full-match-results > p { margin:9px 0; color:var(--ink-soft); font-size:12px; line-height:1.5; }
+.retrieval-result.is-expected { border-left:3px solid var(--gold); background:var(--gold-soft); }
 .chunk-list { gap:12px; }
 .chunk-editor { position:relative; padding:13px; border:1px solid var(--line); border-radius:6px; background:var(--card); }
 .chunk-editor-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; font-size:13px; }
@@ -684,9 +857,7 @@ onMounted(async () => {
   .page-head, .source-head, .workspace-head, .jobs-head { align-items:stretch; flex-direction:column; }
   .source-picker { align-items:stretch; flex-direction:column; }
   .source-picker select, .set-select { max-width:none; width:100%; }
-  .mode-options, .validation-mode, .validation-fields, .form-row { grid-template-columns:1fr; }
-  .validation-fields { justify-content:stretch; }
-  .auto-question { align-items:stretch; flex-direction:column; }
+  .mode-options, .validation-mode, .evaluation-metrics, .form-row { grid-template-columns:1fr; }
   .form-row { gap:0; }
   .job-row { grid-template-columns:1fr 76px; }
   .job-row .error-text { grid-column:1 / -1; }

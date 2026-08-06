@@ -1,9 +1,10 @@
 """发布前检索验证的服务与接口契约测试。"""
 
+import asyncio
 import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -17,6 +18,197 @@ from app.plugins.company_knowledge.retriever import RetrievedChunk
 
 
 class CompanyKnowledgeValidationServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_manual_answer_validation_compares_generated_answer_with_all_chunks(self):
+        source = SimpleNamespace(id="source-1", title="测试制度", version="V1.0")
+        chunk_set = SimpleNamespace(id="chunk-set-1", status="indexed")
+        chunk = SimpleNamespace(
+            id="chunk-1",
+            chunk_index=0,
+            section_path="年假",
+            content="员工应提前提交年假申请。",
+            embedding=[1.0, 0.0],
+        )
+        other_chunk = SimpleNamespace(
+            id="chunk-2",
+            chunk_index=1,
+            section_path="考勤",
+            content="员工应按时打卡。",
+            embedding=[0.0, 1.0],
+        )
+        match = RetrievedChunk(
+            chunk_id="chunk-1",
+            chunk_set_id="chunk-set-1",
+            source_id="source-1",
+            title="测试制度",
+            version="V1.0",
+            effective_at="2026-08-04",
+            section_path="年假",
+            content="员工应提前提交年假申请。",
+            similarity=0.92,
+        )
+        run = SimpleNamespace(
+            id="run-1",
+            source_id="source-1",
+            chunk_set_id="chunk-set-1",
+            question="年假如何申请？",
+            expected_chunk_ids=["chunk-1"],
+            top_k=2,
+            status="running",
+            answer="",
+            answer_similarity=None,
+            correctness_score=None,
+            faithfulness_score=None,
+            evaluation_verdict="pending",
+            evaluation_reason="",
+            retrieval_snapshot={},
+            error_message="",
+            completed_at=None,
+        )
+        db = SimpleNamespace(get=AsyncMock(return_value=run), commit=AsyncMock(), refresh=AsyncMock())
+
+        with (
+            patch.object(service, "_load_validation_context", AsyncMock(return_value=(source, chunk_set, [chunk, other_chunk]))),
+            patch.object(service, "preview_company_knowledge_chunk_set", AsyncMock(return_value=[match])),
+            patch.object(service, "get_embedding", AsyncMock(side_effect=[[1.0, 0.0], [1.0, 0.0]])),
+            patch.object(service, "generate_company_knowledge_answer", AsyncMock(return_value="员工应提前提交年假申请。")),
+            patch.object(
+                service,
+                "_evaluate_company_knowledge_answer",
+                AsyncMock(
+                    return_value={
+                        "correctness_score": 0.96,
+                        "faithfulness_score": 0.98,
+                        "verdict": "pass",
+                        "reason": "回答与预期证据一致。",
+                    }
+                ),
+            ),
+        ):
+            run = await service.execute_company_knowledge_validation_run(
+                db,
+                run_id="run-1",
+            )
+
+        self.assertEqual(run.status, "succeeded")
+        self.assertEqual(run.question, "年假如何申请？")
+        self.assertEqual(run.expected_chunk_ids, ["chunk-1"])
+        self.assertEqual(run.answer, "员工应提前提交年假申请。")
+        self.assertEqual(run.answer_similarity, 1.0)
+        self.assertEqual(run.evaluation_verdict, "pass")
+        self.assertTrue(run.retrieval_snapshot["expected_hit"])
+        self.assertTrue(run.retrieval_snapshot["expected_qualified"])
+        self.assertEqual(run.retrieval_snapshot["answer_match"]["total_chunks"], 2)
+        self.assertEqual(run.retrieval_snapshot["answer_match"]["expected_rank"], 1)
+        self.assertTrue(run.retrieval_snapshot["answer_match"]["expected_is_top"])
+        self.assertTrue(run.retrieval_snapshot["can_confirm"])
+        db.commit.assert_awaited_once()
+
+    async def test_manual_answer_validation_requires_selected_chunk(self):
+        source = SimpleNamespace(id="source-1", title="测试制度", version="V1.0")
+        chunk_set = SimpleNamespace(id="chunk-set-1", status="indexed")
+        chunk = SimpleNamespace(
+            id="chunk-1",
+            chunk_index=0,
+            section_path="年假",
+            content="员工应提前提交年假申请。",
+            embedding=[1.0, 0.0],
+        )
+        db = SimpleNamespace(add=Mock(), flush=AsyncMock(), commit=AsyncMock(), refresh=AsyncMock())
+
+        with patch.object(service, "_load_validation_context", AsyncMock(return_value=(source, chunk_set, [chunk]))):
+            with self.assertRaisesRegex(service.CompanyKnowledgeServiceError, "请选择需要验证的切分段"):
+                await service.create_company_knowledge_validation_run(
+                    db,
+                    source_id="source-1",
+                    chunk_set_id="chunk-set-1",
+                    question="年假如何申请？",
+                    expected_chunk_id="",
+                    admin_id="admin-1",
+                )
+
+    async def test_manual_answer_validation_reuses_running_task_for_same_chunk_set(self):
+        source = SimpleNamespace(id="source-1", title="测试制度", version="V1.0")
+        chunk_set = SimpleNamespace(id="chunk-set-1", source_id="source-1", status="indexed")
+        chunk = SimpleNamespace(id="chunk-1", chunk_index=0, section_path="年假", content="员工应提前提交年假申请。")
+        running_run = SimpleNamespace(id="run-1", status="running")
+
+        with (
+            patch.object(service, "_load_validation_context", AsyncMock(return_value=(source, chunk_set, [chunk]))),
+            patch.object(service, "_expire_stale_validation_runs", AsyncMock(return_value=0)),
+            patch.object(service, "_get_active_validation_run", AsyncMock(return_value=running_run)),
+        ):
+            run = await service.create_company_knowledge_validation_run(
+                SimpleNamespace(),
+                source_id="source-1",
+                chunk_set_id="chunk-set-1",
+                question="年假如何申请？",
+                expected_chunk_id="chunk-1",
+                admin_id="admin-1",
+            )
+
+        self.assertIs(run, running_run)
+        self.assertFalse(run._starts_background_task)
+
+    async def test_manual_answer_validation_timeout_marks_task_failed(self):
+        run = SimpleNamespace(id="run-1", status="running", error_message="", completed_at=None)
+        db = SimpleNamespace(
+            get=AsyncMock(side_effect=[run, run]),
+            rollback=AsyncMock(),
+            commit=AsyncMock(),
+            refresh=AsyncMock(),
+        )
+
+        async def never_finish(*args, **kwargs):
+            await asyncio.Future()
+
+        with (
+            patch.object(service, "VALIDATION_RUN_TIMEOUT_SECONDS", 0.01),
+            patch.object(service, "_run_company_knowledge_validation_pipeline", never_finish),
+        ):
+            result = await service.execute_company_knowledge_validation_run(db, run_id="run-1")
+
+        self.assertEqual(result.status, "failed")
+        self.assertIn("超过 0.01 秒", result.error_message)
+        db.rollback.assert_awaited_once()
+
+    async def test_only_a_passing_answer_validation_run_can_confirm_chunk_set(self):
+        source = SimpleNamespace(id="source-1", status="indexed")
+        chunk_set = SimpleNamespace(id="chunk-set-1", status="indexed")
+        run = SimpleNamespace(
+            id="run-1",
+            source_id="source-1",
+            chunk_set_id="chunk-set-1",
+            status="succeeded",
+            expected_chunk_ids=["chunk-1"],
+            retrieval_snapshot={
+                "question_match": {"expected_is_top": True},
+                "answer_match": {"expected_is_top": True},
+            },
+            evaluation_verdict="pass",
+            confirmed_by=None,
+            confirmed_at=None,
+        )
+        db = SimpleNamespace(get=AsyncMock(return_value=run), refresh=AsyncMock())
+        validated_set = SimpleNamespace(id="chunk-set-1", status="validated")
+
+        with (
+            patch.object(service, "_get_source", AsyncMock(return_value=source)),
+            patch.object(service, "_get_chunk_set", AsyncMock(return_value=chunk_set)),
+            patch.object(service, "validate_chunk_set", AsyncMock(return_value=validated_set)) as validate,
+        ):
+            result_run, result_chunk_set = await service.confirm_company_knowledge_validation_run(
+                db,
+                source_id="source-1",
+                chunk_set_id="chunk-set-1",
+                run_id="run-1",
+                admin_id="admin-1",
+            )
+
+        self.assertIs(result_run, run)
+        self.assertIs(result_chunk_set, validated_set)
+        self.assertEqual(run.status, "confirmed")
+        validate.assert_awaited_once()
+
     async def test_publish_requires_retrieval_validation(self):
         source = SimpleNamespace(id="source-1", status="indexed")
         db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None)))
@@ -190,6 +382,50 @@ class CompanyKnowledgeValidationApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(payload["success"])
         self.assertIn("最低相似度", payload["message"])
+
+    def test_answer_validation_run_endpoint_returns_persisted_run(self):
+        run = SimpleNamespace(
+            id="run-1",
+            source_id="source-1",
+            chunk_set_id="chunk-set-1",
+            mode="manual",
+            question="年假如何申请？",
+            expected_chunk_ids=["chunk-1"],
+            top_k=3,
+            retrieval_snapshot={"expected_hit": True, "can_confirm": True},
+            answer="员工应提前提交年假申请。",
+            answer_similarity=0.91,
+            correctness_score=0.95,
+            faithfulness_score=0.97,
+            evaluation_verdict="pass",
+            evaluation_reason="回答有资料依据。",
+            status="succeeded",
+            error_message="",
+            created_at=datetime(2026, 8, 5, tzinfo=timezone.utc),
+            completed_at=datetime(2026, 8, 5, tzinfo=timezone.utc),
+            confirmed_at=None,
+        )
+
+        async def fake_create(*args, **kwargs):
+            return run
+
+        with (
+            patch.object(admin_company_knowledge, "create_company_knowledge_validation_run", fake_create),
+            patch.object(admin_company_knowledge, "_execute_validation_run_in_background", AsyncMock()),
+        ):
+            response = self.client.post(
+                "/api/admin/company-knowledge/sources/source-1/chunk-sets/chunk-set-1/validation-runs",
+                json={
+                    "question": "年假如何申请？",
+                    "expected_chunk_id": "chunk-1",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["data"]["run"]["answer"], "员工应提前提交年假申请。")
+        self.assertEqual(payload["data"]["run"]["evaluation_verdict"], "pass")
 
 
 if __name__ == "__main__":

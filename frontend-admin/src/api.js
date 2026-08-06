@@ -52,6 +52,12 @@ export const apiAdminCompanyKnowledgePreviewChunkSet = (sourceId, chunkSetId, da
   request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}/retrieval-preview`, { method: 'POST', body: JSON.stringify(data) })
 export const apiAdminCompanyKnowledgeValidateChunkSet = (sourceId, chunkSetId, data) =>
   request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}/validate`, { method: 'POST', body: JSON.stringify(data) })
+export const apiAdminCompanyKnowledgeValidationRuns = (sourceId, chunkSetId) =>
+  request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}/validation-runs?refresh=${Date.now()}`, { cache: 'no-store' })
+export const apiAdminCompanyKnowledgeCreateValidationRun = (sourceId, chunkSetId, data) =>
+  request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}/validation-runs`, { method: 'POST', body: JSON.stringify(data) })
+export const apiAdminCompanyKnowledgeConfirmValidationRun = (sourceId, chunkSetId, runId) =>
+  request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}/validation-runs/${runId}/confirm`, { method: 'POST', body: '{}' })
 export const apiAdminCompanyKnowledgeJobs = (page = 1, size = 30) =>
   request(`/company-knowledge/jobs?page=${page}&size=${size}`)
 export const apiAdminCompanyKnowledgeDeleteJob = (id) => request(`/company-knowledge/jobs/${id}`, { method: 'DELETE' })

@@ -10,7 +10,13 @@ from .tacit import SessionSummary, TacitProfile, TacitProfileVersion
 from .finance import FinanceRecord, FinanceMessage
 from .travel import TravelPlan, TravelDay
 from .billing import Admin, RedemptionCode, RedemptionUsage, BalanceAccount, BalanceTransaction, BillingRule, AppSetting
-from .company_knowledge import CompanyKnowledgeChunk, CompanyKnowledgeJob, CompanyKnowledgeSource
+from .company_knowledge import (
+    CompanyKnowledgeChunk,
+    CompanyKnowledgeChunkSet,
+    CompanyKnowledgeJob,
+    CompanyKnowledgeSource,
+    CompanyKnowledgeValidationRun,
+)
 
 __all__ = [
     "User",
@@ -43,5 +49,7 @@ __all__ = [
     "AppSetting",
     "CompanyKnowledgeSource",
     "CompanyKnowledgeChunk",
+    "CompanyKnowledgeChunkSet",
     "CompanyKnowledgeJob",
+    "CompanyKnowledgeValidationRun",
 ]
