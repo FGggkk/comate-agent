@@ -26,3 +26,31 @@ def build_answer_prompt(question: str, chunks: list[dict]) -> str:
 {chr(10).join(sources)}
 
 请基于可引用资料回答用户问题。"""
+
+
+VALIDATION_EVALUATOR_SYSTEM_PROMPT = """你负责评估公司知识库问答的发布前质量。
+只以“预期证据”判断回答是否正确且忠实，不能用常识补全资料未说明的内容。
+correctness 衡量回答是否正确回答问题；faithfulness 衡量回答中的结论是否有预期证据支持；分数范围均为 0 到 1。
+仅返回 JSON 对象，格式为 {"correctness": 0.0, "faithfulness": 0.0, "verdict": "pass 或 fail", "reason": "简短原因"}，不要输出 Markdown 或其他文字。"""
+
+
+def build_validation_evaluation_prompt(question: str, answer: str, expected_chunks: list[dict]) -> str:
+    evidence = []
+    for index, chunk in enumerate(expected_chunks, start=1):
+        evidence.append(
+            "\n".join(
+                [
+                    f"[预期证据 {index}] {chunk['title']}（版本 {chunk['version']}）",
+                    f"章节：{chunk['section_path'] or '未标注章节'}",
+                    f"内容：{chunk['content']}",
+                ]
+            )
+        )
+    return f"""测试问题：{question}
+
+RAG 回答：{answer}
+
+预期证据：
+{chr(10).join(evidence)}
+
+请评估该回答。"""

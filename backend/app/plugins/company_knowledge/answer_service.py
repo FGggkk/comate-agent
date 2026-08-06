@@ -10,11 +10,8 @@ from app.services.model_gateway import gateway
 NO_EVIDENCE_REPLY = "当前已发布制度中未找到可引用依据。"
 
 
-async def stream_company_knowledge_answer(
-    question: str,
-    chunks: list[RetrievedChunk],
-) -> AsyncIterator[str]:
-    prompt = build_answer_prompt(
+def _build_company_knowledge_answer_prompt(question: str, chunks: list[RetrievedChunk]) -> str:
+    return build_answer_prompt(
         question,
         [
             {
@@ -27,5 +24,22 @@ async def stream_company_knowledge_answer(
             for chunk in chunks
         ],
     )
+
+
+async def generate_company_knowledge_answer(question: str, chunks: list[RetrievedChunk]) -> str:
+    """使用和用户端相同的资料提示词生成非流式回答，供验证流程复用。"""
+    if not chunks:
+        return NO_EVIDENCE_REPLY
+    return (await gateway.chat(_build_company_knowledge_answer_prompt(question, chunks), system=COMPANY_KNOWLEDGE_SYSTEM_PROMPT)).strip()
+
+
+async def stream_company_knowledge_answer(
+    question: str,
+    chunks: list[RetrievedChunk],
+) -> AsyncIterator[str]:
+    if not chunks:
+        yield NO_EVIDENCE_REPLY
+        return
+    prompt = _build_company_knowledge_answer_prompt(question, chunks)
     async for text in gateway.stream(prompt, system=COMPANY_KNOWLEDGE_SYSTEM_PROMPT):
         yield text

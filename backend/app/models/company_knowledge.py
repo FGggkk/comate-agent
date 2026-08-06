@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -138,3 +138,41 @@ class CompanyKnowledgeJob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class CompanyKnowledgeValidationRun(Base):
+    """一次可复核的发布前问答验证运行。"""
+
+    __tablename__ = "company_knowledge_validation_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("company_knowledge_sources.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    chunk_set_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("company_knowledge_chunk_sets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    expected_chunk_ids: Mapped[list] = mapped_column(JSONB, default=list)
+    top_k: Mapped[int] = mapped_column(Integer, nullable=False, default=6)
+    retrieval_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict)
+    answer: Mapped[str] = mapped_column(Text, default="")
+    answer_similarity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    correctness_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    faithfulness_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    evaluation_verdict: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    evaluation_reason: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="running", index=True)
+    error_message: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("admins.id"), nullable=False)
+    confirmed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("admins.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -12,6 +12,8 @@ from app.services.embedding_service import get_embedding
 
 DEFAULT_TOP_K = 6
 MIN_SIMILARITY = 0.35
+# User questions may use evidence just below the stricter validation threshold.
+MIN_USER_QUERY_SIMILARITY = 0.34
 
 
 class RetrievalError(RuntimeError):
@@ -91,7 +93,7 @@ async def retrieve_company_knowledge(
               AND source.effective_at <= :now
               AND (source.expires_at IS NULL OR source.expires_at > :now)
               AND source.active_chunk_set_id = chunk_set.id
-              AND chunk_set.status IN ('indexed', 'validated')
+              AND chunk_set.status IN ('indexed', 'validated', 'published')
               AND chunk.status = 'indexed'
               AND chunk.embedding IS NOT NULL
             ORDER BY chunk.embedding <=> CAST(:query_vector AS vector)
@@ -103,7 +105,7 @@ async def retrieve_company_knowledge(
     chunks = []
     for row in result.mappings().all():
         similarity = float(row["similarity"] or 0)
-        if similarity < MIN_SIMILARITY:
+        if similarity < MIN_USER_QUERY_SIMILARITY:
             continue
         effective_at = row["effective_at"]
         chunks.append(

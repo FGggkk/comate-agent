@@ -1,10 +1,13 @@
 """公司资料导入、发布、版本替换与会话写入服务。"""
 
+import asyncio
 import json
-from datetime import datetime, timezone
+import math
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.company_knowledge import (
@@ -12,16 +15,31 @@ from app.models.company_knowledge import (
     CompanyKnowledgeChunkSet,
     CompanyKnowledgeJob,
     CompanyKnowledgeSource,
+    CompanyKnowledgeValidationRun,
 )
 from app.models.conversation import Message, Session
 from app.plugins.company_knowledge.chunker import chunk_text
 from app.plugins.company_knowledge.importer import SourceImportError, content_hash, read_text_source, to_markdown
 from app.plugins.company_knowledge.memory_boundary import COMPANY_KNOWLEDGE_MESSAGE_TYPE
+from app.plugins.company_knowledge.answer_service import generate_company_knowledge_answer
+from app.plugins.company_knowledge.prompts import (
+    VALIDATION_EVALUATOR_SYSTEM_PROMPT,
+    build_validation_evaluation_prompt,
+)
 from app.plugins.company_knowledge.registry import get_knowledge_type, is_import_enabled
-from app.services.embedding_service import get_embeddings_batch
+from app.plugins.company_knowledge.retriever import (
+    MIN_SIMILARITY,
+    RetrievedChunk,
+    preview_company_knowledge_chunk_set,
+)
+from app.services.embedding_service import get_embedding, get_embeddings_batch
+from app.services.model_gateway import gateway
 
 
 EMBEDDING_BATCH_SIZE = 16
+VALIDATION_RETRIEVAL_TOP_K = 6
+VALIDATION_RUN_TIMEOUT_SECONDS = 75
+VALIDATION_RUN_STALE_SECONDS = 90
 
 
 class CompanyKnowledgeServiceError(RuntimeError):
@@ -96,6 +114,32 @@ def job_to_dict(job: CompanyKnowledgeJob) -> dict:
         "created_at": _format_datetime(job.created_at),
         "started_at": _format_datetime(job.started_at),
         "finished_at": _format_datetime(job.finished_at),
+    }
+
+
+def validation_run_to_dict(run: CompanyKnowledgeValidationRun) -> dict:
+    """将问答验证的检索、回答与评估结果完整返回给管理端。"""
+    snapshot = run.retrieval_snapshot or {}
+    return {
+        "id": str(run.id),
+        "source_id": str(run.source_id),
+        "chunk_set_id": str(run.chunk_set_id),
+        "mode": run.mode,
+        "question": run.question,
+        "expected_chunk_ids": run.expected_chunk_ids or [],
+        "top_k": run.top_k,
+        "retrieval": snapshot,
+        "answer": run.answer or "",
+        "answer_similarity": run.answer_similarity,
+        "correctness_score": run.correctness_score,
+        "faithfulness_score": run.faithfulness_score,
+        "evaluation_verdict": run.evaluation_verdict,
+        "evaluation_reason": run.evaluation_reason or "",
+        "status": run.status,
+        "error_message": run.error_message or "",
+        "created_at": _format_datetime(run.created_at),
+        "completed_at": _format_datetime(run.completed_at),
+        "confirmed_at": _format_datetime(run.confirmed_at),
     }
 
 
@@ -655,6 +699,448 @@ async def validate_chunk_set(
     await db.commit()
     await db.refresh(chunk_set)
     return chunk_set
+
+
+async def create_company_knowledge_validation_run(
+    db: AsyncSession,
+    *,
+    source_id: str,
+    chunk_set_id: str,
+    question: str,
+    expected_chunk_id: str,
+    admin_id,
+) -> CompanyKnowledgeValidationRun:
+    """提交一条人工问答验证任务，耗时执行由后台任务完成。"""
+
+    normalized_expected_id = str(expected_chunk_id or "").strip()
+    if not normalized_expected_id:
+        raise CompanyKnowledgeServiceError("请选择需要验证的切分段")
+    normalized_question = (question or "").strip()
+    if not normalized_question:
+        raise CompanyKnowledgeServiceError("请输入需要验证的问题")
+    if len(normalized_question) > 2000:
+        raise CompanyKnowledgeServiceError("验证问题不能超过 2000 个字符")
+
+    _, chunk_set, chunks = await _load_validation_context(db, source_id, chunk_set_id)
+    chunks_by_id = {str(chunk.id): chunk for chunk in chunks}
+    if normalized_expected_id not in chunks_by_id:
+        raise CompanyKnowledgeServiceError("预期分片不属于当前分片版本")
+
+    await _expire_stale_validation_runs(
+        db,
+        source_id=chunk_set.source_id,
+        chunk_set_id=chunk_set.id,
+    )
+    existing_run = await _get_active_validation_run(
+        db,
+        source_id=chunk_set.source_id,
+        chunk_set_id=chunk_set.id,
+    )
+    if existing_run:
+        # 接口会直接返回现有任务，避免双击或多窗口重复调用模型。
+        existing_run._starts_background_task = False
+        return existing_run
+
+    run = CompanyKnowledgeValidationRun(
+        source_id=chunk_set.source_id,
+        chunk_set_id=chunk_set.id,
+        mode="manual",
+        question=normalized_question,
+        expected_chunk_ids=[normalized_expected_id],
+        top_k=min(VALIDATION_RETRIEVAL_TOP_K, len(chunks)),
+        status="running",
+        created_by=admin_id,
+    )
+    db.add(run)
+    try:
+        await db.commit()
+    except IntegrityError:
+        # 数据库的运行中唯一索引处理并发提交；冲突时复用先提交的任务。
+        await db.rollback()
+        existing_run = await _get_active_validation_run(
+            db,
+            source_id=chunk_set.source_id,
+            chunk_set_id=chunk_set.id,
+        )
+        if existing_run:
+            existing_run._starts_background_task = False
+            return existing_run
+        raise
+    await db.refresh(run)
+    run._starts_background_task = True
+    return run
+
+
+async def execute_company_knowledge_validation_run(
+    db: AsyncSession,
+    *,
+    run_id: str,
+) -> CompanyKnowledgeValidationRun | None:
+    """在独立数据库会话中完成已提交的问答验证任务。"""
+    run = await db.get(CompanyKnowledgeValidationRun, run_id)
+    if not run or run.status != "running":
+        return run
+
+    try:
+        await asyncio.wait_for(
+            _run_company_knowledge_validation_pipeline(db, run),
+            timeout=VALIDATION_RUN_TIMEOUT_SECONDS,
+        )
+        run.status = "succeeded"
+        run.completed_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(run)
+    except asyncio.TimeoutError:
+        await db.rollback()
+        run = await db.get(CompanyKnowledgeValidationRun, run_id)
+        if not run:
+            return None
+        run.status = "failed"
+        run.error_message = f"问答验证超过 {VALIDATION_RUN_TIMEOUT_SECONDS} 秒，任务已自动结束，请稍后重试"
+        run.completed_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(run)
+    except Exception as exc:
+        await db.rollback()
+        run = await db.get(CompanyKnowledgeValidationRun, run_id)
+        if not run:
+            return None
+        run.status = "failed"
+        run.error_message = str(exc)[:2000]
+        run.completed_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(run)
+    return run
+
+
+async def _run_company_knowledge_validation_pipeline(
+    db: AsyncSession,
+    run: CompanyKnowledgeValidationRun,
+) -> None:
+    """执行会调用向量与模型服务的验证主体，由外层统一限制总时长。"""
+    source, _, chunks = await _load_validation_context(
+        db,
+        str(run.source_id),
+        str(run.chunk_set_id),
+    )
+    expected_chunk_id = str((run.expected_chunk_ids or [""])[0])
+    chunks_by_id = {str(chunk.id): chunk for chunk in chunks}
+    expected_chunk = chunks_by_id.get(expected_chunk_id)
+    if not expected_chunk:
+        raise CompanyKnowledgeServiceError("预期分片不属于当前分片版本")
+    matches = await preview_company_knowledge_chunk_set(
+        run.question,
+        db,
+        source_id=str(run.source_id),
+        chunk_set_id=str(run.chunk_set_id),
+        top_k=run.top_k,
+    )
+    question_vector = await get_embedding(run.question)
+    if not question_vector:
+        raise CompanyKnowledgeServiceError("暂时无法生成验证问题向量")
+    snapshot = _build_validation_retrieval_snapshot(matches, chunks, expected_chunk, question_vector)
+
+    run.answer = await generate_company_knowledge_answer(run.question, matches)
+    if not run.answer:
+        raise CompanyKnowledgeServiceError("未生成有效的 RAG 回答")
+
+    answer_vector = await get_embedding(run.answer)
+    if not answer_vector:
+        raise CompanyKnowledgeServiceError("暂时无法生成回答向量")
+    answer_match = _build_full_chunk_match_snapshot(answer_vector, chunks, expected_chunk)
+    snapshot["answer_match"] = answer_match
+    run.answer_similarity = answer_match["expected_similarity"]
+    evaluation = await _evaluate_company_knowledge_answer(
+        run.question,
+        run.answer,
+        source,
+        [expected_chunk],
+    )
+    run.correctness_score = evaluation["correctness_score"]
+    run.faithfulness_score = evaluation["faithfulness_score"]
+    run.evaluation_verdict = evaluation["verdict"]
+    run.evaluation_reason = evaluation["reason"]
+    snapshot["can_confirm"] = bool(
+        snapshot["question_match"]["expected_is_top"]
+        and answer_match["expected_is_top"]
+        and run.evaluation_verdict == "pass"
+    )
+    run.retrieval_snapshot = snapshot
+
+
+async def list_company_knowledge_validation_runs(
+    db: AsyncSession,
+    *,
+    source_id: str,
+    chunk_set_id: str,
+) -> list[CompanyKnowledgeValidationRun]:
+    """按分片版本返回问答验证运行历史，供管理员回看。"""
+    source = await _get_source(db, source_id)
+    await _get_chunk_set(db, source.id, chunk_set_id)
+    await _expire_stale_validation_runs(
+        db,
+        source_id=source.id,
+        chunk_set_id=chunk_set_id,
+    )
+    result = await db.execute(
+        select(CompanyKnowledgeValidationRun)
+        .where(
+            CompanyKnowledgeValidationRun.source_id == source.id,
+            CompanyKnowledgeValidationRun.chunk_set_id == chunk_set_id,
+        )
+        .order_by(CompanyKnowledgeValidationRun.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def _get_active_validation_run(
+    db: AsyncSession,
+    *,
+    source_id,
+    chunk_set_id,
+) -> CompanyKnowledgeValidationRun | None:
+    result = await db.execute(
+        select(CompanyKnowledgeValidationRun)
+        .where(
+            CompanyKnowledgeValidationRun.source_id == source_id,
+            CompanyKnowledgeValidationRun.chunk_set_id == chunk_set_id,
+            CompanyKnowledgeValidationRun.status == "running",
+        )
+        .order_by(CompanyKnowledgeValidationRun.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _expire_stale_validation_runs(
+    db: AsyncSession,
+    *,
+    source_id=None,
+    chunk_set_id=None,
+) -> int:
+    """将应用重启或外部模型超时留下的旧任务收口为失败状态。"""
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=VALIDATION_RUN_STALE_SECONDS)
+    statement = select(CompanyKnowledgeValidationRun).where(
+        CompanyKnowledgeValidationRun.status == "running",
+        CompanyKnowledgeValidationRun.created_at < cutoff,
+    )
+    if source_id is not None:
+        statement = statement.where(CompanyKnowledgeValidationRun.source_id == source_id)
+    if chunk_set_id is not None:
+        statement = statement.where(CompanyKnowledgeValidationRun.chunk_set_id == chunk_set_id)
+    result = await db.execute(statement)
+    stale_runs = list(result.scalars().all())
+    if not stale_runs:
+        return 0
+    now = datetime.now(timezone.utc)
+    for stale_run in stale_runs:
+        stale_run.status = "failed"
+        stale_run.error_message = "问答验证超过允许时长，已自动结束，请重新执行"
+        stale_run.completed_at = now
+    await db.commit()
+    return len(stale_runs)
+
+
+async def confirm_company_knowledge_validation_run(
+    db: AsyncSession,
+    *,
+    source_id: str,
+    chunk_set_id: str,
+    run_id: str,
+    admin_id,
+) -> tuple[CompanyKnowledgeValidationRun, CompanyKnowledgeChunkSet]:
+    """仅在检索命中和证据评估均通过后，允许验证运行推进发布状态。"""
+    source = await _get_source(db, source_id)
+    chunk_set = await _get_chunk_set(db, source.id, chunk_set_id)
+    run = await db.get(CompanyKnowledgeValidationRun, run_id)
+    if not run or run.source_id != source.id or run.chunk_set_id != chunk_set.id:
+        raise CompanyKnowledgeServiceError("问答验证记录不存在")
+    if run.status == "confirmed":
+        return run, chunk_set
+    if run.status != "succeeded":
+        raise CompanyKnowledgeServiceError("请先完成一次成功的问答验证")
+
+    snapshot = run.retrieval_snapshot or {}
+    can_confirm = bool(
+        run.expected_chunk_ids
+        and snapshot.get("question_match", {}).get("expected_is_top")
+        and snapshot.get("answer_match", {}).get("expected_is_top")
+        and run.evaluation_verdict == "pass"
+    )
+    if not can_confirm:
+        raise CompanyKnowledgeServiceError("该问答验证未通过，不能确认发布")
+    if chunk_set.status not in {"indexed", "validated"}:
+        raise CompanyKnowledgeServiceError("当前分片版本不能执行发布前验证确认")
+
+    run.status = "confirmed"
+    run.confirmed_by = admin_id
+    run.confirmed_at = datetime.now(timezone.utc)
+    if chunk_set.status == "indexed":
+        chunk_set = await validate_chunk_set(
+            db,
+            source_id=source_id,
+            chunk_set_id=chunk_set_id,
+            admin_id=admin_id,
+        )
+    else:
+        await db.commit()
+    await db.refresh(run)
+    return run, chunk_set
+
+
+async def _load_validation_context(
+    db: AsyncSession,
+    source_id: str,
+    chunk_set_id: str,
+) -> tuple[CompanyKnowledgeSource, CompanyKnowledgeChunkSet, list[CompanyKnowledgeChunk]]:
+    source = await _get_source(db, source_id)
+    chunk_set = await _get_chunk_set(db, source.id, chunk_set_id)
+    if chunk_set.status not in {"indexed", "validated"}:
+        raise CompanyKnowledgeServiceError("请先完成向量化，再执行问答验证")
+    rows = await db.execute(
+        select(CompanyKnowledgeChunk)
+        .where(
+            CompanyKnowledgeChunk.chunk_set_id == chunk_set.id,
+            CompanyKnowledgeChunk.status == "indexed",
+            CompanyKnowledgeChunk.embedding.is_not(None),
+        )
+        .order_by(CompanyKnowledgeChunk.chunk_index.asc())
+    )
+    chunks = list(rows.scalars().all())
+    if not chunks:
+        raise CompanyKnowledgeServiceError("当前分片版本没有可验证的向量化分片")
+    return source, chunk_set, chunks
+
+
+async def _evaluate_company_knowledge_answer(
+    question: str,
+    answer: str,
+    source: CompanyKnowledgeSource,
+    expected_chunks: list[CompanyKnowledgeChunk],
+) -> dict:
+    response = await gateway.chat(
+        build_validation_evaluation_prompt(
+            question,
+            answer,
+            [_chunk_to_evidence(source, chunk) for chunk in expected_chunks],
+        ),
+        system=VALIDATION_EVALUATOR_SYSTEM_PROMPT,
+    )
+    payload = _parse_model_json(response, "回答评估")
+    verdict = str(payload.get("verdict") or "").strip().lower()
+    if verdict not in {"pass", "fail"}:
+        raise CompanyKnowledgeServiceError("回答评估结果无效")
+    return {
+        "correctness_score": _normalize_score(payload.get("correctness"), "正确性"),
+        "faithfulness_score": _normalize_score(payload.get("faithfulness"), "忠实性"),
+        "verdict": verdict,
+        "reason": str(payload.get("reason") or "").strip()[:2000],
+    }
+
+
+def _build_validation_retrieval_snapshot(
+    matches: list[RetrievedChunk],
+    chunks: list[CompanyKnowledgeChunk],
+    expected_chunk: CompanyKnowledgeChunk,
+    question_vector: list[float],
+) -> dict:
+    items = [item.to_preview() for item in matches]
+    question_match = _build_full_chunk_match_snapshot(question_vector, chunks, expected_chunk)
+    return {
+        "items": items,
+        "minimum_similarity": MIN_SIMILARITY,
+        "above_threshold_count": sum(item["meets_minimum_similarity"] for item in items),
+        "expected_chunk_ids": [str(expected_chunk.id)],
+        "expected_hit": question_match["expected_is_top"],
+        "expected_rank": question_match["expected_rank"],
+        "expected_similarity": question_match["expected_similarity"],
+        "expected_qualified": question_match["expected_qualified"],
+        "question_match": question_match,
+    }
+
+
+def _build_full_chunk_match_snapshot(
+    vector: list[float],
+    chunks: list[CompanyKnowledgeChunk],
+    expected_chunk: CompanyKnowledgeChunk,
+) -> dict:
+    """将一个问题或回答向量与当前版本所有切片进行完整排序比较。"""
+    ranked_chunks = sorted(
+        ((chunk, _cosine_similarity(vector, chunk.embedding)) for chunk in chunks),
+        key=lambda item: (-item[1], item[0].chunk_index),
+    )
+    items = [
+        {
+            "chunk_id": str(chunk.id),
+            "chunk_index": chunk.chunk_index,
+            "section_path": chunk.section_path or "",
+            "content": chunk.content,
+            "similarity": round(similarity, 4),
+            "is_expected": str(chunk.id) == str(expected_chunk.id),
+        }
+        for chunk, similarity in ranked_chunks
+    ]
+    expected_rank = next((index for index, item in enumerate(items, start=1) if item["is_expected"]), None)
+    expected_similarity = next((item["similarity"] for item in items if item["is_expected"]), None)
+    return {
+        "items": items,
+        "total_chunks": len(items),
+        "minimum_similarity": MIN_SIMILARITY,
+        "expected_rank": expected_rank,
+        "expected_similarity": expected_similarity,
+        "expected_is_top": expected_rank == 1,
+        "expected_qualified": bool(expected_similarity is not None and expected_similarity >= MIN_SIMILARITY),
+    }
+
+
+def _chunk_to_evidence(source: CompanyKnowledgeSource, chunk: CompanyKnowledgeChunk) -> dict:
+    return {
+        "title": source.title,
+        "version": source.version,
+        "section_path": chunk.section_path or "",
+        "content": chunk.content,
+    }
+
+
+def _parse_model_json(response: str, label: str) -> dict:
+    content = (response or "").strip()
+    if content.startswith("```"):
+        content = content.split("\n", 1)[1] if "\n" in content else ""
+        if content.endswith("```"):
+            content = content[:-3].strip()
+    if not content.startswith("{"):
+        start = content.find("{")
+        end = content.rfind("}")
+        if start >= 0 and end > start:
+            content = content[start:end + 1]
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise CompanyKnowledgeServiceError(f"{label}未返回有效 JSON") from exc
+    if not isinstance(payload, dict):
+        raise CompanyKnowledgeServiceError(f"{label}未返回对象")
+    return payload
+
+
+def _normalize_score(value: Any, label: str) -> float:
+    try:
+        score = float(value)
+    except (TypeError, ValueError) as exc:
+        raise CompanyKnowledgeServiceError(f"回答评估缺少{label}分数") from exc
+    if not math.isfinite(score):
+        raise CompanyKnowledgeServiceError(f"回答评估的{label}分数无效")
+    return min(1.0, max(0.0, score))
+
+
+def _cosine_similarity(left: list[float], right: list[float] | None) -> float:
+    if right is None or len(left) != len(right):
+        raise CompanyKnowledgeServiceError("验证向量维度不一致")
+    numerator = sum(float(a) * float(b) for a, b in zip(left, right, strict=True))
+    left_norm = math.sqrt(sum(float(value) ** 2 for value in left))
+    right_norm = math.sqrt(sum(float(value) ** 2 for value in right))
+    if not left_norm or not right_norm:
+        raise CompanyKnowledgeServiceError("验证向量不能为空")
+    return max(-1.0, min(1.0, numerator / (left_norm * right_norm)))
 
 
 async def _replace_chunk_items(

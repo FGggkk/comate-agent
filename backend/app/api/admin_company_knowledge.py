@@ -1,12 +1,12 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import get_current_admin
 from app.api.response import fail, ok
-from app.db.session import get_db
+from app.db.session import async_session_factory, get_db
 from app.models.billing import Admin
 from app.plugins.company_knowledge.importer import SourceImportError
 from app.plugins.company_knowledge.retriever import (
@@ -20,15 +20,19 @@ from app.plugins.company_knowledge.service import (
     archive_company_source,
     chunk_set_to_dict,
     chunk_to_dict,
+    confirm_company_knowledge_validation_run,
     confirm_chunk_set,
+    create_company_knowledge_validation_run,
     create_chunk_set,
     delete_archived_company_source,
     delete_company_job,
+    execute_company_knowledge_validation_run,
     get_company_source_detail,
     import_company_source,
     index_chunk_set,
     job_to_dict,
     list_company_jobs,
+    list_company_knowledge_validation_runs,
     list_company_sources,
     publish_company_source,
     reindex_company_source,
@@ -36,10 +40,17 @@ from app.plugins.company_knowledge.service import (
     update_chunk_set,
     update_company_source_metadata,
     validate_chunk_set,
+    validation_run_to_dict,
 )
 
 
 router = APIRouter(prefix="/api/admin/company-knowledge", tags=["admin"])
+
+
+async def _execute_validation_run_in_background(run_id: str) -> None:
+    """使用独立会话运行耗时的模型与向量验证，避免占用管理端 HTTP 请求。"""
+    async with async_session_factory() as task_db:
+        await execute_company_knowledge_validation_run(task_db, run_id=run_id)
 
 
 class ChunkInput(BaseModel):
@@ -69,6 +80,11 @@ class RetrievalPreviewRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     top_k: int = Field(default=6, ge=1, le=10)
     expected_chunk_ids: list[str] = Field(default_factory=list, max_length=10)
+
+
+class AnswerValidationRunRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+    expected_chunk_id: str = Field(min_length=1, max_length=64)
 
 
 async def _run_retrieval_preview(
@@ -336,6 +352,76 @@ async def validate_source_chunk_set(
     return ok(
         {"chunk_set": chunk_set_to_dict(chunk_set), "preview": preview},
         "检索验证已确认，可以发布",
+    )
+
+
+@router.get("/sources/{source_id}/chunk-sets/{chunk_set_id}/validation-runs")
+async def list_source_chunk_set_validation_runs(
+    source_id: str,
+    chunk_set_id: str,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        runs = await list_company_knowledge_validation_runs(
+            db,
+            source_id=source_id,
+            chunk_set_id=chunk_set_id,
+        )
+    except CompanyKnowledgeServiceError as exc:
+        return fail(str(exc))
+    return ok({"items": [validation_run_to_dict(item) for item in runs]})
+
+
+@router.post("/sources/{source_id}/chunk-sets/{chunk_set_id}/validation-runs")
+async def create_source_chunk_set_validation_run(
+    source_id: str,
+    chunk_set_id: str,
+    req: AnswerValidationRunRequest,
+    background_tasks: BackgroundTasks,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        run = await create_company_knowledge_validation_run(
+            db,
+            source_id=source_id,
+            chunk_set_id=chunk_set_id,
+            question=req.question,
+            expected_chunk_id=req.expected_chunk_id,
+            admin_id=admin.id,
+        )
+    except CompanyKnowledgeServiceError as exc:
+        return fail(str(exc))
+    if getattr(run, "_starts_background_task", True):
+        background_tasks.add_task(_execute_validation_run_in_background, str(run.id))
+        message = "问答验证已提交，正在后台运行"
+    else:
+        message = "已有一条问答验证正在运行，已为你恢复该任务"
+    return ok({"run": validation_run_to_dict(run)}, message)
+
+
+@router.post("/sources/{source_id}/chunk-sets/{chunk_set_id}/validation-runs/{run_id}/confirm")
+async def confirm_source_chunk_set_validation_run(
+    source_id: str,
+    chunk_set_id: str,
+    run_id: str,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        run, chunk_set = await confirm_company_knowledge_validation_run(
+            db,
+            source_id=source_id,
+            chunk_set_id=chunk_set_id,
+            run_id=run_id,
+            admin_id=admin.id,
+        )
+    except CompanyKnowledgeServiceError as exc:
+        return fail(str(exc))
+    return ok(
+        {"run": validation_run_to_dict(run), "chunk_set": chunk_set_to_dict(chunk_set)},
+        "问答验证已确认，可以发布",
     )
 
 

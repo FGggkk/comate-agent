@@ -30,3 +30,4 @@ backend/memory_docs/
 
 # Tool runtime artifacts
 .reasonix/truncated-results/
+docs/memory-opt-session-handoff.md
