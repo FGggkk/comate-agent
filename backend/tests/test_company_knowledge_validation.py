@@ -209,6 +209,42 @@ class CompanyKnowledgeValidationServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run.status, "confirmed")
         validate.assert_awaited_once()
 
+    async def test_confirm_does_not_depend_on_question_match_top(self):
+        """回归：问题向量匹配非 Top-1 不应阻止确认（bug：can_confirm 误依赖 question_match）。"""
+        source = SimpleNamespace(id="source-1", status="indexed")
+        chunk_set = SimpleNamespace(id="chunk-set-1", status="indexed")
+        run = SimpleNamespace(
+            id="run-1",
+            source_id="source-1",
+            chunk_set_id="chunk-set-1",
+            status="succeeded",
+            expected_chunk_ids=["chunk-1"],
+            retrieval_snapshot={
+                "question_match": {"expected_is_top": False},  # 问题匹配未到 Top-1
+                "answer_match": {"expected_is_top": True},      # 回答匹配通过
+            },
+            evaluation_verdict="pass",
+            confirmed_by=None,
+            confirmed_at=None,
+        )
+        db = SimpleNamespace(get=AsyncMock(return_value=run), refresh=AsyncMock())
+        validated_set = SimpleNamespace(id="chunk-set-1", status="validated")
+
+        with (
+            patch.object(service, "_get_source", AsyncMock(return_value=source)),
+            patch.object(service, "_get_chunk_set", AsyncMock(return_value=chunk_set)),
+            patch.object(service, "validate_chunk_set", AsyncMock(return_value=validated_set)),
+        ):
+            result_run, _ = await service.confirm_company_knowledge_validation_run(
+                db,
+                source_id="source-1",
+                chunk_set_id="chunk-set-1",
+                run_id="run-1",
+                admin_id="admin-1",
+            )
+
+        self.assertEqual(result_run.status, "confirmed")
+
     async def test_publish_requires_retrieval_validation(self):
         source = SimpleNamespace(id="source-1", status="indexed")
         db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None)))
@@ -394,6 +430,90 @@ class CompanyKnowledgeRetrieverTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(chunks[0].similarity, retriever.MIN_SIMILARITY)
         self.assertGreaterEqual(chunks[0].similarity, retriever.MIN_USER_QUERY_SIMILARITY)
 
+    async def test_hybrid_retrieval_includes_keyword_only_hit(self):
+        """关键词精确命中但向量相似度未知的分片也应进入结果（RRF 融合）。"""
+        candidate = {
+            "chunk_id": "chunk-1",
+            "chunk_set_id": "chunk-set-1",
+            "source_id": "source-1",
+            "title": "考勤制度",
+            "version": "1.0",
+            "effective_at": datetime(2026, 8, 4, tzinfo=timezone.utc),
+            "section_path": "年假",
+            "content": "员工年假应至少提前五个工作日申请。",
+        }
+        other = {
+            "chunk_id": "chunk-2",
+            "chunk_set_id": "chunk-set-1",
+            "source_id": "source-1",
+            "title": "考勤制度",
+            "version": "1.0",
+            "effective_at": datetime(2026, 8, 4, tzinfo=timezone.utc),
+            "section_path": "报销",
+            "content": "报销需要提交发票。",
+            "similarity": 0.6,
+        }
+
+        async def fake_execute(statement, params=None):
+            sql = str(statement)
+            if "LIMIT" in sql:
+                # 向量召回：只命中 chunk-2（相似度高于阈值）
+                return SimpleNamespace(mappings=lambda: SimpleNamespace(all=lambda: [other]))
+            return SimpleNamespace(
+                mappings=lambda: SimpleNamespace(all=lambda: [candidate, other])
+            )
+
+        db = SimpleNamespace(execute=fake_execute)
+
+        with patch.object(retriever, "get_embedding", AsyncMock(return_value=[0.1, 0.2])):
+            with patch.object(
+                retriever,
+                "_keyword_rank",
+                return_value=["chunk-1", "chunk-2"],
+            ):
+                chunks = await retriever.retrieve_company_knowledge(
+                    "年假提前几天申请", "policy", db, top_k=2
+                )
+
+        chunk_ids = [chunk.chunk_id for chunk in chunks]
+        self.assertIn("chunk-1", chunk_ids)
+        self.assertIn("chunk-2", chunk_ids)
+
+    async def test_hybrid_retrieval_drops_below_threshold_vector_hit(self):
+        """向量命中的分片若低于用户查询阈值，应从结果中剔除。"""
+        candidate = {
+            "chunk_id": "chunk-1",
+            "chunk_set_id": "chunk-set-1",
+            "source_id": "source-1",
+            "title": "考勤制度",
+            "version": "1.0",
+            "effective_at": datetime(2026, 8, 4, tzinfo=timezone.utc),
+            "section_path": "年假",
+            "content": "员工年假应至少提前五个工作日申请。",
+        }
+        low_similarity_row = {
+            "chunk_id": "chunk-1",
+            "similarity": 0.1,
+        }
+
+        async def fake_execute(statement, params=None):
+            sql = str(statement)
+            if "LIMIT" in sql:
+                return SimpleNamespace(mappings=lambda: SimpleNamespace(all=lambda: [low_similarity_row]))
+            return SimpleNamespace(
+                mappings=lambda: SimpleNamespace(all=lambda: [candidate])
+            )
+
+        db = SimpleNamespace(execute=fake_execute)
+
+        with patch.object(retriever, "get_embedding", AsyncMock(return_value=[0.1, 0.2])):
+            with patch.object(retriever, "_keyword_rank", return_value=[]):
+                chunks = await retriever.retrieve_company_knowledge(
+                    "年假提前几天申请", "policy", db, top_k=2
+                )
+
+        self.assertEqual(chunks, [])
+
 
 class CompanyKnowledgeValidationApiTests(unittest.TestCase):
     def setUp(self):
@@ -511,6 +631,111 @@ class CompanyKnowledgeValidationApiTests(unittest.TestCase):
         self.assertTrue(payload["success"])
         self.assertEqual(payload["data"]["run"]["answer"], "员工应提前提交年假申请。")
         self.assertEqual(payload["data"]["run"]["evaluation_verdict"], "pass")
+
+
+class CompanyKnowledgePreprocessServiceTests(unittest.IsolatedAsyncioTestCase):
+    def _source(self, status="markdown_ready"):
+        return SimpleNamespace(
+            id="source-1",
+            status=status,
+            markdown_content="联系电话：13812345678\n正文内容",
+            raw_content="联系电话：13812345678\n正文内容",
+            preprocessed_content=None,
+            preprocess_warnings=None,
+            preprocessed_at=None,
+            preprocessed_by=None,
+        )
+
+    async def test_preprocess_returns_report_without_persisting(self):
+        source = self._source()
+        db = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock())
+
+        with patch.object(service, "_get_source", AsyncMock(return_value=source)):
+            returned, report = await service.preprocess_company_source(db, "source-1", "admin-1")
+
+        self.assertIs(returned, source)
+        self.assertIn("【手机号已脱敏】", report["content"])
+        self.assertNotIn("13812345678", report["content"])
+        self.assertGreaterEqual(report["stats"]["replaced_phone_count"], 1)
+        self.assertIsNone(source.preprocessed_content)
+        self.assertEqual(source.status, "markdown_ready")
+        db.commit.assert_not_awaited()
+
+    async def test_confirm_preprocess_persists_and_advances_status(self):
+        source = self._source()
+        db = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock())
+
+        with patch.object(service, "_get_source", AsyncMock(return_value=source)):
+            result = await service.confirm_preprocess_company_source(db, "source-1", "admin-1")
+
+        self.assertIs(result, source)
+        self.assertNotIn("13812345678", source.preprocessed_content)
+        self.assertEqual(source.status, "preprocessed")
+        self.assertEqual(source.preprocessed_by, "admin-1")
+        self.assertIsNotNone(source.preprocessed_at)
+        db.commit.assert_awaited_once()
+
+    async def test_skip_preprocess_advances_status_without_cleaning(self):
+        source = self._source()
+        db = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock())
+
+        with patch.object(service, "_get_source", AsyncMock(return_value=source)):
+            result = await service.skip_preprocess_company_source(db, "source-1", "admin-1")
+
+        self.assertIs(result, source)
+        self.assertIsNone(source.preprocessed_content)
+        self.assertEqual(source.status, "preprocessed")
+        self.assertTrue(source.preprocess_warnings)
+        db.commit.assert_awaited_once()
+
+    async def test_preprocess_rejects_archived_source(self):
+        source = self._source(status="archived")
+        db = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock())
+
+        with patch.object(service, "_get_source", AsyncMock(return_value=source)):
+            with self.assertRaisesRegex(service.CompanyKnowledgeServiceError, "已下架"):
+                await service.preprocess_company_source(db, "source-1", "admin-1")
+
+    async def test_preprocess_rejects_published_source(self):
+        source = self._source(status="published")
+        db = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock())
+
+        with patch.object(service, "_get_source", AsyncMock(return_value=source)):
+            with self.assertRaisesRegex(service.CompanyKnowledgeServiceError, "只有待切分"):
+                await service.confirm_preprocess_company_source(db, "source-1", "admin-1")
+
+    async def test_create_chunk_set_prefers_preprocessed_content(self):
+        source = SimpleNamespace(
+            id="source-1",
+            status="preprocessed",
+            preprocessed_content="清洗后的制度正文",
+            markdown_content="原始 Markdown 正文",
+            raw_content="原始文本",
+            markdown_version=1,
+        )
+        db = SimpleNamespace(
+            add=Mock(),
+            add_all=Mock(),
+            execute=AsyncMock(),
+            flush=AsyncMock(),
+            commit=AsyncMock(),
+            refresh=AsyncMock(),
+        )
+
+        with (
+            patch.object(service, "_get_source", AsyncMock(return_value=source)),
+            patch.object(service, "chunk_text", return_value=[]) as chunk_text_mock,
+            patch.object(service, "_normalize_chunk_rule", return_value={"max_chars": 650, "overlap_chars": 100}),
+            patch.object(service, "_normalize_chunk_items", return_value=[]),
+            patch.object(service, "_replace_chunk_items", AsyncMock()),
+        ):
+            with self.assertRaises(service.CompanyKnowledgeServiceError):
+                await service.create_chunk_set(
+                    db, source_id="source-1", mode="auto", rule=None, chunks=None, admin_id="admin-1"
+                )
+
+        called_text = chunk_text_mock.call_args.args[0]
+        self.assertEqual(called_text, "清洗后的制度正文")
 
 
 if __name__ == "__main__":

@@ -105,7 +105,7 @@ import {
 
 const router = useRouter()
 const statusTabs = [
-  { key: 'all', label: '全部' }, { key: 'markdown_ready', label: '待切分' }, { key: 'chunk_ready', label: '待向量化' }, { key: 'indexed', label: '待验证' }, { key: 'validated', label: '待发布' }, { key: 'published', label: '已发布' }, { key: 'indexing', label: '向量化中' }, { key: 'failed', label: '失败' }, { key: 'archived', label: '已下架' },
+  { key: 'all', label: '全部' }, { key: 'markdown_ready', label: '待预处理' }, { key: 'preprocessed', label: '待切分' }, { key: 'chunk_ready', label: '待向量化' }, { key: 'indexed', label: '待验证' }, { key: 'validated', label: '待发布' }, { key: 'published', label: '已发布' }, { key: 'indexing', label: '向量化中' }, { key: 'failed', label: '失败' }, { key: 'archived', label: '已下架' },
 ]
 const status = ref('all')
 const items = ref([])
@@ -127,8 +127,8 @@ const canSaveEdit = computed(() => edit.value.id && edit.value.title.trim() && e
 
 function emptyUpload() { return { file: null, title: '', version: '', effective_at: '', expires_at: '', category: '', knowledge_type: 'policy' } }
 function emptyEdit() { return { id: '', title: '', version: '', effective_at: '', expires_at: '', category: '' } }
-function statusLabel(value) { return ({ markdown_ready: '待切分', chunking: '切分草稿', chunk_ready: '待向量化', indexed: '待检索验证', validated: '待发布', published: '已发布', indexing: '向量化中', failed: '失败', archived: '已下架', running: '进行中', succeeded: '成功' }[value] || value) }
-function statusClass(value) { return ({ published: 'badge-moss', succeeded: 'badge-moss', indexed: 'badge-gold', validated: 'badge-gold', markdown_ready: 'badge-gold', chunking: 'badge-gold', chunk_ready: 'badge-gold', indexing: 'badge-gold', running: 'badge-gold', failed: 'badge-berry', archived: 'badge-berry' }[value] || '') }
+function statusLabel(value) { return ({ markdown_ready: '待预处理', preprocessed: '待切分', chunking: '切分草稿', chunk_ready: '待向量化', indexed: '待检索验证', validated: '待发布', published: '已发布', indexing: '向量化中', failed: '失败', archived: '已下架', running: '进行中', succeeded: '成功' }[value] || value) }
+function statusClass(value) { return ({ published: 'badge-moss', succeeded: 'badge-moss', indexed: 'badge-gold', validated: 'badge-gold', markdown_ready: 'badge-gold', preprocessed: 'badge-gold', chunking: 'badge-gold', chunk_ready: 'badge-gold', indexing: 'badge-gold', running: 'badge-gold', failed: 'badge-berry', archived: 'badge-berry' }[value] || '') }
 function formatDate(value, withTime = false) { if (!value) return '—'; const date = new Date(value); if (Number.isNaN(date.getTime())) return value.slice(0, withTime ? 16 : 10); return withTime ? date.toLocaleString('zh-CN', { hour12: false }) : date.toLocaleDateString('zh-CN') }
 function showNotice(text, type = 'success') { notice.value = { text, type }; window.setTimeout(() => { if (notice.value?.text === text) notice.value = null }, 3500) }
 async function load() {

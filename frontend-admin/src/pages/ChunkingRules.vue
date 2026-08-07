@@ -43,7 +43,37 @@
         <pre>{{ detail.markdown }}</pre>
       </details>
 
-      <section v-if="detail.source.status !== 'archived'" class="card controls">
+      <section v-if="detail.source.status === 'markdown_ready' || detail.source.status === 'preprocessed'" class="card controls preprocess-card">
+        <div class="control-title">数据预处理</div>
+        <p class="preprocess-desc">清洗 Markdown 正文：规范化全角符号、去除页眉页脚/HTML 残留、合并重复行、脱敏手机号与身份证号。清洗结果将作为切分输入。</p>
+
+        <div v-if="preprocessReport" class="preprocess-report">
+          <div class="preprocess-stats">
+            <span>行数 {{ preprocessReport.stats.lines_before }} → {{ preprocessReport.stats.lines_after }}</span>
+            <span>去重行 <b>{{ preprocessReport.stats.removed_duplicate_lines }}</b></span>
+            <span>去噪行 <b>{{ preprocessReport.stats.removed_header_footer_lines }}</b></span>
+            <span>HTML 清理 <b>{{ preprocessReport.stats.removed_html_tags }}</b></span>
+            <span>手机号脱敏 <b>{{ preprocessReport.stats.replaced_phone_count }}</b></span>
+            <span>身份证脱敏 <b>{{ preprocessReport.stats.replaced_id_card_count }}</b></span>
+          </div>
+          <div v-if="preprocessReport.warnings.length" class="preprocess-warnings">
+            <p v-for="warning in preprocessReport.warnings" :key="warning">{{ warning }}</p>
+          </div>
+          <div class="preprocess-compare">
+            <div><b>清洗后正文预览</b><pre>{{ preprocessReport.content.slice(0, 1200) }}</pre></div>
+          </div>
+          <div class="preprocess-actions">
+            <button class="btn-gold" :disabled="preprocessing" @click="confirmPreprocess">确认使用清洗结果</button>
+            <button class="btn-ghost" :disabled="preprocessing" @click="preprocessReport = null">重新执行</button>
+            <button class="btn-ghost" :disabled="preprocessing" @click="skipPreprocess">跳过预处理</button>
+          </div>
+        </div>
+
+        <button v-else class="btn-gold" :disabled="preprocessing" @click="runPreprocess">{{ preprocessing ? '清洗中…' : '执行数据预处理' }}</button>
+        <button v-if="detail.source.status === 'preprocessed'" class="btn-ghost" :disabled="preprocessing" @click="skipPreprocess" style="margin-left:8px">已预处理，仍可跳过</button>
+      </section>
+
+      <section v-if="detail.source.status === 'preprocessed' || detail.source.status === 'published' || detail.source.status === 'failed'" class="card controls">
         <div class="control-title">生成分片草稿</div>
         <div class="mode-options" role="radiogroup" aria-label="切分方式">
           <label v-for="item in modes" :key="item.key" :class="['mode-option', mode === item.key ? 'selected' : '']">
@@ -231,6 +261,9 @@ import {
   apiAdminCompanyKnowledgeDeleteJob,
   apiAdminCompanyKnowledgeIndexChunkSet,
   apiAdminCompanyKnowledgeJobs,
+  apiAdminCompanyKnowledgePreprocess,
+  apiAdminCompanyKnowledgePreprocessConfirm,
+  apiAdminCompanyKnowledgePreprocessSkip,
   apiAdminCompanyKnowledgePublish,
   apiAdminCompanyKnowledgeSource,
   apiAdminCompanyKnowledgeSources,
@@ -255,6 +288,8 @@ const indexing = ref(false)
 const runningValidation = ref(false)
 const confirmingValidation = ref(false)
 const sourceActing = ref(false)
+const preprocessing = ref(false)
+const preprocessReport = ref(null)
 const notice = ref(null)
 const manualQuestion = ref('')
 const expectedChunkId = ref('')
@@ -295,10 +330,10 @@ const canSaveEdit = computed(() => edit.value.id && edit.value.title.trim() && e
 function emptyUpload() { return { file: null, title: '', version: '', effective_at: '', expires_at: '', category: '', knowledge_type: 'policy' } }
 function emptyEdit() { return { id: '', title: '', version: '', effective_at: '', expires_at: '', category: '' } }
 function statusLabel(value) {
-  return ({ markdown_ready: '待切分', chunking: '切分草稿', chunk_ready: '待向量化', indexed: '待问答验证', validated: '待发布', indexing: '向量化中', published: '已发布', archived: '已下架', draft: '草稿', confirmed: '已确认', superseded: '已替换', failed: '失败', running: '进行中', succeeded: '成功', skipped: '未评估' }[value] || value)
+  return ({ markdown_ready: '待预处理', preprocessed: '待切分', chunking: '切分草稿', chunk_ready: '待向量化', indexed: '待问答验证', validated: '待发布', indexing: '向量化中', published: '已发布', archived: '已下架', draft: '草稿', confirmed: '已确认', superseded: '已替换', failed: '失败', running: '进行中', succeeded: '成功', skipped: '未评估' }[value] || value)
 }
 function statusClass(value) {
-  return ({ published: 'badge-moss', succeeded: 'badge-moss', pass: 'badge-moss', indexed: 'badge-gold', validated: 'badge-gold', markdown_ready: 'badge-gold', chunking: 'badge-gold', chunk_ready: 'badge-gold', indexing: 'badge-gold', running: 'badge-gold', skipped: 'badge-gold', failed: 'badge-berry', fail: 'badge-berry', archived: 'badge-berry' }[value] || '')
+  return ({ published: 'badge-moss', succeeded: 'badge-moss', pass: 'badge-moss', indexed: 'badge-gold', validated: 'badge-gold', markdown_ready: 'badge-gold', preprocessed: 'badge-gold', chunking: 'badge-gold', chunk_ready: 'badge-gold', indexing: 'badge-gold', running: 'badge-gold', skipped: 'badge-gold', failed: 'badge-berry', fail: 'badge-berry', archived: 'badge-berry' }[value] || '')
 }
 function modeLabel(value) { return ({ auto: '自动切分', manual: '手动切分', auto_then_manual: '自动后调优', legacy: '历史分片' }[value] || value) }
 function validationModeLabel() { return '人工验证' }
@@ -549,6 +584,44 @@ async function removeSource() {
   } catch (error) { showNotice(error.message || '删除失败', 'error') } finally { sourceActing.value = false }
 }
 
+async function runPreprocess() {
+  const source = detail.value?.source
+  if (!source || !sourceId.value) return
+  preprocessing.value = true
+  preprocessReport.value = null
+  try {
+    const res = await apiAdminCompanyKnowledgePreprocess(source.id)
+    if (!res.success) { showNotice(res.message || '数据预处理失败', 'error'); return }
+    preprocessReport.value = res.data.report
+    showNotice('清洗完成，请确认清洗结果。')
+  } catch (error) { showNotice(error.message || '数据预处理失败', 'error') } finally { preprocessing.value = false }
+}
+async function confirmPreprocess() {
+  const source = detail.value?.source
+  if (!source) return
+  preprocessing.value = true
+  try {
+    const res = await apiAdminCompanyKnowledgePreprocessConfirm(source.id)
+    if (!res.success) { showNotice(res.message || '确认失败', 'error'); return }
+    preprocessReport.value = null
+    await Promise.all([loadDetail(), loadSources()])
+    showNotice('已确认数据预处理结果，可以开始切分。')
+  } catch (error) { showNotice(error.message || '确认失败', 'error') } finally { preprocessing.value = false }
+}
+async function skipPreprocess() {
+  const source = detail.value?.source
+  if (!source) return
+  if (!confirm('跳过数据预处理？将使用原始 Markdown 直接切分。')) return
+  preprocessing.value = true
+  try {
+    const res = await apiAdminCompanyKnowledgePreprocessSkip(source.id)
+    if (!res.success) { showNotice(res.message || '跳过失败', 'error'); return }
+    preprocessReport.value = null
+    await Promise.all([loadDetail(), loadSources()])
+    showNotice('已跳过数据预处理，可以直接切分。')
+  } catch (error) { showNotice(error.message || '跳过失败', 'error') } finally { preprocessing.value = false }
+}
+
 async function createDraft() {
   if (!sourceId.value) return
   creating.value = true
@@ -718,6 +791,17 @@ onBeforeUnmount(() => stopValidationPolling({ clearPending: true }))
 .markdown-source pre { max-height:300px; overflow:auto; margin:0; padding:0 12px 12px; white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .controls { margin-bottom:18px; }
 .control-title { font-size:14px; font-weight:700; margin-bottom:10px; }
+.preprocess-card { padding:14px; }
+.preprocess-desc { color:var(--ink-soft); font-size:12px; line-height:1.6; margin:0 0 12px; }
+.preprocess-report { border:1px solid var(--line); border-radius:6px; background:var(--bg); padding:12px; margin-top:4px; }
+.preprocess-stats { display:flex; flex-wrap:wrap; gap:8px 16px; font-size:12px; color:var(--ink-soft); }
+.preprocess-stats b { color:var(--ink); }
+.preprocess-warnings { margin-top:10px; padding:8px 10px; border-left:3px solid var(--gold); background:var(--gold-soft); color:#8A6A1C; font-size:12px; }
+.preprocess-warnings p { margin:2px 0; }
+.preprocess-compare { margin-top:12px; }
+.preprocess-compare b { font-size:12px; color:var(--ink-soft); }
+.preprocess-compare pre { margin-top:6px; max-height:220px; overflow:auto; padding:10px; border:1px solid var(--line); border-radius:6px; background:var(--card); white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.preprocess-actions { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
 .mode-options { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
 .mode-option { display:flex; gap:8px; min-height:64px; padding:9px; border:1px solid var(--line); border-radius:6px; cursor:pointer; }
 .mode-option.selected { border-color:var(--gold); background:var(--gold-soft); }

@@ -26,6 +26,7 @@ from app.plugins.company_knowledge.prompts import (
     VALIDATION_EVALUATOR_SYSTEM_PROMPT,
     build_validation_evaluation_prompt,
 )
+from app.plugins.company_knowledge.preprocessor import preprocess_markdown
 from app.plugins.company_knowledge.registry import get_knowledge_type, is_import_enabled
 from app.plugins.company_knowledge.retriever import (
     MIN_SIMILARITY,
@@ -63,6 +64,9 @@ def source_to_dict(source: CompanyKnowledgeSource) -> dict:
         "markdown_version": source.markdown_version,
         "conversion_warnings": source.conversion_warnings or [],
         "active_chunk_set_id": str(source.active_chunk_set_id) if source.active_chunk_set_id else None,
+        "preprocessed_content": source.preprocessed_content,
+        "preprocess_warnings": source.preprocess_warnings or [],
+        "preprocessed_at": _format_datetime(source.preprocessed_at),
         "created_at": _format_datetime(source.created_at),
         "updated_at": _format_datetime(source.updated_at),
         "published_at": _format_datetime(source.published_at),
@@ -345,6 +349,73 @@ async def delete_archived_company_source(db: AsyncSession, source_id: str) -> No
     await db.commit()
 
 
+async def preprocess_company_source(db: AsyncSession, source_id: str, admin_id) -> tuple[CompanyKnowledgeSource, dict]:
+    """对已转换的 Markdown 正文执行数据清洗，返回清洗报告但不落库。
+
+    清洗结果需要管理员确认后调用 confirm_preprocess_company_source 落库。
+    """
+    source = await _get_source(db, source_id)
+    if source.status == "archived":
+        raise CompanyKnowledgeServiceError("已下架资料不能执行数据预处理")
+    if source.status not in {"markdown_ready", "preprocessed", "failed"}:
+        raise CompanyKnowledgeServiceError("只有待切分或已预处理的资料可以执行数据预处理")
+
+    result = preprocess_markdown(source.markdown_content or source.raw_content or "")
+    stats = {
+        "lines_before": result.stats.lines_before,
+        "lines_after": result.stats.lines_after,
+        "removed_blank_lines": result.stats.removed_blank_lines,
+        "removed_duplicate_lines": result.stats.removed_duplicate_lines,
+        "removed_header_footer_lines": result.stats.removed_header_footer_lines,
+        "removed_html_tags": result.stats.removed_html_tags,
+        "replaced_phone_count": result.stats.replaced_phone_count,
+        "replaced_id_card_count": result.stats.replaced_id_card_count,
+    }
+    report = {
+        "content": result.content,
+        "stats": stats,
+        "warnings": result.warnings,
+    }
+    return source, report
+
+
+async def confirm_preprocess_company_source(db: AsyncSession, source_id: str, admin_id) -> CompanyKnowledgeSource:
+    """确认清洗结果：写入 preprocessed_content 并将状态推进到 preprocessed。"""
+    source = await _get_source(db, source_id)
+    if source.status == "archived":
+        raise CompanyKnowledgeServiceError("已下架资料不能执行数据预处理")
+    if source.status not in {"markdown_ready", "preprocessed", "failed"}:
+        raise CompanyKnowledgeServiceError("只有待切分或已预处理的资料可以确认数据预处理")
+
+    result = preprocess_markdown(source.markdown_content or source.raw_content or "")
+    source.preprocessed_content = result.content
+    source.preprocess_warnings = result.warnings
+    source.preprocessed_at = datetime.now(timezone.utc)
+    source.preprocessed_by = admin_id
+    source.status = "preprocessed"
+    await db.commit()
+    await db.refresh(source)
+    return source
+
+
+async def skip_preprocess_company_source(db: AsyncSession, source_id: str, admin_id) -> CompanyKnowledgeSource:
+    """跳过数据预处理：不写入清洗结果，状态推进到 preprocessed（允许直接切分）。"""
+    source = await _get_source(db, source_id)
+    if source.status == "archived":
+        raise CompanyKnowledgeServiceError("已下架资料不能跳过数据预处理")
+    if source.status not in {"markdown_ready", "preprocessed", "failed"}:
+        raise CompanyKnowledgeServiceError("只有待切分或已预处理的资料可以跳过数据预处理")
+
+    source.preprocessed_content = None
+    source.preprocess_warnings = ["管理员选择跳过数据预处理，将使用原始 Markdown 直接切分"]
+    source.preprocessed_at = datetime.now(timezone.utc)
+    source.preprocessed_by = admin_id
+    source.status = "preprocessed"
+    await db.commit()
+    await db.refresh(source)
+    return source
+
+
 async def list_company_sources(
     db: AsyncSession,
     *,
@@ -515,13 +586,16 @@ async def create_chunk_set(
     source = await _get_source(db, source_id)
     if source.status == "archived":
         raise CompanyKnowledgeServiceError("已下架资料不能新建切分草稿")
+    if source.status not in {"preprocessed", "published", "failed"}:
+        raise CompanyKnowledgeServiceError("请先完成数据预处理，再生成分片草稿")
     if mode not in {"auto", "manual", "auto_then_manual"}:
         raise CompanyKnowledgeServiceError("不支持的切分方式")
 
     rule_snapshot = _normalize_chunk_rule(rule)
+    chunk_source = source.preprocessed_content or source.markdown_content or source.raw_content
     if mode in {"auto", "auto_then_manual"}:
         generated = chunk_text(
-            source.markdown_content or source.raw_content,
+            chunk_source,
             source_format="md",
             max_chars=rule_snapshot["max_chars"],
             overlap_chars=rule_snapshot["overlap_chars"],
@@ -531,7 +605,7 @@ async def create_chunk_set(
             for item in generated
         ]
     else:
-        chunk_items = chunks or [{"section_path": "", "content": source.markdown_content or source.raw_content}]
+        chunk_items = chunks or [{"section_path": "", "content": chunk_source}]
 
     normalized_chunks = _normalize_chunk_items(chunk_items)
     if not normalized_chunks:
@@ -870,8 +944,7 @@ async def _run_company_knowledge_validation_pipeline(
     run.evaluation_verdict = evaluation["verdict"]
     run.evaluation_reason = evaluation["reason"]
     snapshot["can_confirm"] = bool(
-        snapshot["question_match"]["expected_is_top"]
-        and answer_match["expected_is_top"]
+        answer_match["expected_is_top"]
         and run.evaluation_verdict == "pass"
     )
     run.retrieval_snapshot = snapshot
@@ -972,7 +1045,6 @@ async def confirm_company_knowledge_validation_run(
     snapshot = run.retrieval_snapshot or {}
     can_confirm = bool(
         run.expected_chunk_ids
-        and snapshot.get("question_match", {}).get("expected_is_top")
         and snapshot.get("answer_match", {}).get("expected_is_top")
         and run.evaluation_verdict == "pass"
     )
