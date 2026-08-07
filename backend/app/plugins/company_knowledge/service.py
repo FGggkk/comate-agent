@@ -944,8 +944,7 @@ async def _run_company_knowledge_validation_pipeline(
     run.evaluation_verdict = evaluation["verdict"]
     run.evaluation_reason = evaluation["reason"]
     snapshot["can_confirm"] = bool(
-        snapshot["question_match"]["expected_is_top"]
-        and answer_match["expected_is_top"]
+        answer_match["expected_is_top"]
         and run.evaluation_verdict == "pass"
     )
     run.retrieval_snapshot = snapshot
@@ -1046,7 +1045,6 @@ async def confirm_company_knowledge_validation_run(
     snapshot = run.retrieval_snapshot or {}
     can_confirm = bool(
         run.expected_chunk_ids
-        and snapshot.get("question_match", {}).get("expected_is_top")
         and snapshot.get("answer_match", {}).get("expected_is_top")
         and run.evaluation_verdict == "pass"
     )

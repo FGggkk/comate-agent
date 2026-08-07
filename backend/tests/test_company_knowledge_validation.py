@@ -209,6 +209,42 @@ class CompanyKnowledgeValidationServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run.status, "confirmed")
         validate.assert_awaited_once()
 
+    async def test_confirm_does_not_depend_on_question_match_top(self):
+        """回归：问题向量匹配非 Top-1 不应阻止确认（bug：can_confirm 误依赖 question_match）。"""
+        source = SimpleNamespace(id="source-1", status="indexed")
+        chunk_set = SimpleNamespace(id="chunk-set-1", status="indexed")
+        run = SimpleNamespace(
+            id="run-1",
+            source_id="source-1",
+            chunk_set_id="chunk-set-1",
+            status="succeeded",
+            expected_chunk_ids=["chunk-1"],
+            retrieval_snapshot={
+                "question_match": {"expected_is_top": False},  # 问题匹配未到 Top-1
+                "answer_match": {"expected_is_top": True},      # 回答匹配通过
+            },
+            evaluation_verdict="pass",
+            confirmed_by=None,
+            confirmed_at=None,
+        )
+        db = SimpleNamespace(get=AsyncMock(return_value=run), refresh=AsyncMock())
+        validated_set = SimpleNamespace(id="chunk-set-1", status="validated")
+
+        with (
+            patch.object(service, "_get_source", AsyncMock(return_value=source)),
+            patch.object(service, "_get_chunk_set", AsyncMock(return_value=chunk_set)),
+            patch.object(service, "validate_chunk_set", AsyncMock(return_value=validated_set)),
+        ):
+            result_run, _ = await service.confirm_company_knowledge_validation_run(
+                db,
+                source_id="source-1",
+                chunk_set_id="chunk-set-1",
+                run_id="run-1",
+                admin_id="admin-1",
+            )
+
+        self.assertEqual(result_run.status, "confirmed")
+
     async def test_publish_requires_retrieval_validation(self):
         source = SimpleNamespace(id="source-1", status="indexed")
         db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None)))
