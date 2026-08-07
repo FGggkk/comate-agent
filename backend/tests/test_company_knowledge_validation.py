@@ -725,7 +725,7 @@ class CompanyKnowledgePreprocessServiceTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(service, "_get_source", AsyncMock(return_value=source)),
             patch.object(service, "chunk_text", return_value=[]) as chunk_text_mock,
-            patch.object(service, "_normalize_chunk_rule", return_value={"max_chars": 650, "overlap_chars": 100}),
+            patch.object(service, "_normalize_chunk_rule", return_value={"max_chars": 500, "overlap_chars": 100}),
             patch.object(service, "_normalize_chunk_items", return_value=[]),
             patch.object(service, "_replace_chunk_items", AsyncMock()),
         ):

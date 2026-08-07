@@ -222,7 +222,7 @@ async def reindex_company_source(db: AsyncSession, source_id: str, admin_id) -> 
         db,
         source_id=source_id,
         mode="auto",
-        rule={"max_chars": 650, "overlap_chars": 100},
+        rule={"max_chars": 500, "overlap_chars": 100},
         chunks=None,
         admin_id=admin_id,
     )
@@ -1263,7 +1263,7 @@ async def _embed_chunks(chunks: list[CompanyKnowledgeChunk]) -> list[list[float]
 
 def _normalize_chunk_rule(rule: dict | None) -> dict:
     incoming = rule or {}
-    max_chars = int(incoming.get("max_chars", 650))
+    max_chars = int(incoming.get("max_chars", 500))
     overlap_chars = int(incoming.get("overlap_chars", 100))
     if max_chars < 120 or overlap_chars < 0 or overlap_chars >= max_chars:
         raise CompanyKnowledgeServiceError("切分长度或重叠长度不合法")
