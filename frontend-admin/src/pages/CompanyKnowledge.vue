@@ -60,7 +60,7 @@
     <div v-if="uploadOpen" class="modal-mask" @click.self="uploadOpen = false">
       <div class="modal upload-modal">
         <div class="modal-title"><b>上传资料</b><button class="modal-close" @click="uploadOpen = false">×</button></div>
-        <div class="file-field"><label>电子版文件 *</label><input type="file" accept=".txt,.md,.markdown,text/plain,text/markdown" @change="pickFile" /><span class="file-hint">仅支持 UTF-8 编码的 TXT 或 Markdown，最大 2MB</span><span v-if="upload.file" class="file-name">{{ upload.file.name }}</span></div>
+        <div class="file-field"><label>电子版文件 *</label><input type="file" accept=".txt,.md,.markdown,.pdf,.docx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" @change="pickFile" /><span class="file-hint">支持 UTF-8 TXT / Markdown、PDF、Word（.docx），最大 10MB</span><span v-if="upload.file" class="file-name">{{ upload.file.name }}</span></div>
         <div class="field"><label>资料名称 *</label><input v-model="upload.title" maxlength="255" placeholder="如：员工考勤与休假管理制度" /></div>
         <div class="form-row"><div class="field"><label>版本号 *</label><input v-model="upload.version" maxlength="64" placeholder="如：V1.0" /></div><div class="field"><label>生效日期 *</label><input v-model="upload.effective_at" type="date" /></div></div>
         <div class="form-row"><div class="field"><label>分类</label><input v-model="upload.category" maxlength="64" placeholder="如：人事行政" /></div><div class="field"><label>失效日期</label><input v-model="upload.expires_at" type="date" /></div></div>
