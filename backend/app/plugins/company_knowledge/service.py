@@ -6,7 +6,7 @@ import math
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -229,13 +229,14 @@ async def reindex_company_source(db: AsyncSession, source_id: str, admin_id) -> 
 
 async def publish_company_source(db: AsyncSession, source_id: str, admin_id) -> CompanyKnowledgeSource:
     source = await _get_source(db, source_id)
-    if source.status == "archived":
-        raise CompanyKnowledgeServiceError("已下架资料不能重新发布，请重新上传")
+    restoring = source.status == "archived"
+    # 已下架资料重新上架：直接复用已向量化且通过验证（或已发布过）的分片版本。
+    chunk_set_statuses = ("validated", "published") if restoring else ("validated",)
     validated = await db.execute(
         select(CompanyKnowledgeChunkSet)
         .where(
             CompanyKnowledgeChunkSet.source_id == source.id,
-            CompanyKnowledgeChunkSet.status == "validated",
+            CompanyKnowledgeChunkSet.status.in_(chunk_set_statuses),
         )
         .order_by(CompanyKnowledgeChunkSet.validated_at.desc())
         .limit(1)
@@ -254,6 +255,8 @@ async def publish_company_source(db: AsyncSession, source_id: str, admin_id) -> 
         .order_by(CompanyKnowledgeSource.published_at.desc())
     )
     previous = current_sources.scalars().all()
+    if restoring and previous:
+        raise CompanyKnowledgeServiceError("存在同名已发布版本，请先下架该版本再重新上架")
     if previous:
         source.replaced_source_id = previous[0].id
         for old_source in previous:
@@ -332,6 +335,12 @@ async def delete_archived_company_source(db: AsyncSession, source_id: str) -> No
     source = await _get_source(db, source_id)
     if source.status != "archived":
         raise CompanyKnowledgeServiceError("只能删除已下架资料")
+    # 解除其他版本对该旧版本的 replaced_source_id 引用，避免自引用外键阻止删除。
+    await db.execute(
+        update(CompanyKnowledgeSource)
+        .where(CompanyKnowledgeSource.replaced_source_id == source.id)
+        .values(replaced_source_id=None)
+    )
     await db.delete(source)
     await db.commit()
 

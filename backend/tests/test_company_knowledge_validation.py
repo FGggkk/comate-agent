@@ -265,6 +265,61 @@ class CompanyKnowledgeValidationServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(source.active_chunk_set_id, "chunk-set-1")
         self.assertEqual(chunk_set.status, "published")
 
+    async def test_publish_restores_archived_source_with_published_chunk_set(self):
+        source = SimpleNamespace(
+            id="source-1",
+            status="archived",
+            title="测试制度",
+            active_chunk_set_id=None,
+            replaced_source_id=None,
+            published_by=None,
+            published_at=None,
+        )
+        chunk_set = SimpleNamespace(id="chunk-set-1", status="published")
+        validated_result = SimpleNamespace(scalar_one_or_none=lambda: chunk_set)
+        previous_result = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
+        db = SimpleNamespace(
+            execute=AsyncMock(side_effect=[validated_result, previous_result]),
+            get=AsyncMock(),
+            commit=AsyncMock(),
+            refresh=AsyncMock(),
+        )
+
+        with patch.object(service, "_get_source", AsyncMock(return_value=source)):
+            result = await service.publish_company_source(db, "source-1", "admin-1")
+
+        self.assertIs(result, source)
+        self.assertEqual(source.status, "published")
+        self.assertEqual(source.active_chunk_set_id, "chunk-set-1")
+        self.assertEqual(chunk_set.status, "published")
+
+    async def test_publish_restore_archived_source_rejects_when_same_title_published(self):
+        source = SimpleNamespace(
+            id="source-1",
+            status="archived",
+            title="测试制度",
+            active_chunk_set_id=None,
+            replaced_source_id=None,
+            published_by=None,
+            published_at=None,
+        )
+        chunk_set = SimpleNamespace(id="chunk-set-1", status="published")
+        validated_result = SimpleNamespace(scalar_one_or_none=lambda: chunk_set)
+        other_source = SimpleNamespace(id="source-2", status="published")
+        previous_result = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [other_source]))
+        db = SimpleNamespace(
+            execute=AsyncMock(side_effect=[validated_result, previous_result]),
+            get=AsyncMock(),
+            commit=AsyncMock(),
+            refresh=AsyncMock(),
+        )
+
+        with patch.object(service, "_get_source", AsyncMock(return_value=source)):
+            with self.assertRaisesRegex(service.CompanyKnowledgeServiceError, "同名已发布版本"):
+                await service.publish_company_source(db, "source-1", "admin-1")
+
+        self.assertEqual(source.status, "archived")
+
     async def test_validation_keeps_already_published_source_online(self):
         source = SimpleNamespace(id="source-1", status="published")
         chunk_set = SimpleNamespace(status="indexed", validated_by=None, validated_at=None)
@@ -280,6 +335,36 @@ class CompanyKnowledgeValidationServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(chunk_set.status, "validated")
         self.assertEqual(source.status, "published")
+
+    async def test_delete_archived_source_clears_replaced_source_references(self):
+        source = SimpleNamespace(id="source-1", status="archived")
+        db = SimpleNamespace(
+            execute=AsyncMock(),
+            delete=AsyncMock(),
+            commit=AsyncMock(),
+            refresh=AsyncMock(),
+        )
+
+        with patch.object(service, "_get_source", AsyncMock(return_value=source)):
+            await service.delete_archived_company_source(db, "source-1")
+
+        db.execute.assert_awaited_once()
+        update_stmt = db.execute.await_args.args[0]
+        statement_text = str(update_stmt)
+        self.assertIn("replaced_source_id", statement_text)
+        db.delete.assert_awaited_once_with(source)
+        db.commit.assert_awaited_once()
+
+    async def test_delete_archived_source_rejects_non_archived(self):
+        source = SimpleNamespace(id="source-1", status="published")
+        db = SimpleNamespace(execute=AsyncMock(), delete=AsyncMock(), commit=AsyncMock())
+
+        with patch.object(service, "_get_source", AsyncMock(return_value=source)):
+            with self.assertRaisesRegex(service.CompanyKnowledgeServiceError, "只能删除已下架"):
+                await service.delete_archived_company_source(db, "source-1")
+
+        db.delete.assert_not_awaited()
+        db.commit.assert_not_awaited()
 
 
 class CompanyKnowledgeRetrieverTests(unittest.IsolatedAsyncioTestCase):
