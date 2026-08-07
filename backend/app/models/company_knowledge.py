@@ -42,6 +42,10 @@ class CompanyKnowledgeSource(Base):
     )
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     active_chunk_set_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    preprocessed_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preprocess_warnings: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    preprocessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    preprocessed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("admins.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

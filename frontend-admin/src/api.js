@@ -40,6 +40,9 @@ export const apiAdminCompanyKnowledgeDelete = (id) => request(`/company-knowledg
 export const apiAdminCompanyKnowledgePublish = (id) => request(`/company-knowledge/sources/${id}/publish`, { method: 'POST', body: '{}' })
 export const apiAdminCompanyKnowledgeArchive = (id) => request(`/company-knowledge/sources/${id}/archive`, { method: 'POST', body: '{}' })
 export const apiAdminCompanyKnowledgeReindex = (id) => request(`/company-knowledge/sources/${id}/reindex`, { method: 'POST', body: '{}' })
+export const apiAdminCompanyKnowledgePreprocess = (id) => request(`/company-knowledge/sources/${id}/preprocess`, { method: 'POST', body: '{}' })
+export const apiAdminCompanyKnowledgePreprocessConfirm = (id) => request(`/company-knowledge/sources/${id}/preprocess/confirm`, { method: 'POST', body: '{}' })
+export const apiAdminCompanyKnowledgePreprocessSkip = (id) => request(`/company-knowledge/sources/${id}/preprocess/skip`, { method: 'POST', body: '{}' })
 export const apiAdminCompanyKnowledgeCreateChunkSet = (id, data) =>
   request(`/company-knowledge/sources/${id}/chunk-sets`, { method: 'POST', body: JSON.stringify(data) })
 export const apiAdminCompanyKnowledgeUpdateChunkSet = (sourceId, chunkSetId, chunks) =>

@@ -23,6 +23,7 @@ from app.plugins.company_knowledge.service import (
     chunk_to_dict,
     confirm_company_knowledge_validation_run,
     confirm_chunk_set,
+    confirm_preprocess_company_source,
     create_company_knowledge_validation_run,
     create_chunk_set,
     delete_archived_company_source,
@@ -35,8 +36,10 @@ from app.plugins.company_knowledge.service import (
     list_company_jobs,
     list_company_knowledge_validation_runs,
     list_company_sources,
+    preprocess_company_source,
     publish_company_source,
     reindex_company_source,
+    skip_preprocess_company_source,
     source_to_dict,
     update_chunk_set,
     update_company_source_metadata,
@@ -138,7 +141,7 @@ async def list_sources(
 ):
     if not get_knowledge_type(knowledge_type):
         return fail("未知资料类型")
-    if status not in {"all", "markdown_ready", "chunking", "chunk_ready", "indexing", "indexed", "validated", "published", "failed", "archived"}:
+    if status not in {"all", "markdown_ready", "preprocessed", "chunking", "chunk_ready", "indexing", "indexed", "validated", "published", "failed", "archived"}:
         return fail("未知资料状态")
     items, total = await list_company_sources(
         db,
@@ -453,6 +456,45 @@ async def archive_source(
     except CompanyKnowledgeServiceError as exc:
         return fail(str(exc))
     return ok({"source": source_to_dict(source)}, "制度已下架")
+
+
+@router.post("/sources/{source_id}/preprocess")
+async def preprocess_source(
+    source_id: str,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        source, report = await preprocess_company_source(db, source_id, admin.id)
+    except CompanyKnowledgeServiceError as exc:
+        return fail(str(exc))
+    return ok({"source": source_to_dict(source), "report": report}, "数据预处理完成，请确认清洗结果")
+
+
+@router.post("/sources/{source_id}/preprocess/confirm")
+async def confirm_preprocess_source(
+    source_id: str,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        source = await confirm_preprocess_company_source(db, source_id, admin.id)
+    except CompanyKnowledgeServiceError as exc:
+        return fail(str(exc))
+    return ok({"source": source_to_dict(source)}, "已确认数据预处理结果")
+
+
+@router.post("/sources/{source_id}/preprocess/skip")
+async def skip_preprocess_source(
+    source_id: str,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        source = await skip_preprocess_company_source(db, source_id, admin.id)
+    except CompanyKnowledgeServiceError as exc:
+        return fail(str(exc))
+    return ok({"source": source_to_dict(source)}, "已跳过数据预处理")
 
 
 @router.post("/sources/{source_id}/reindex")

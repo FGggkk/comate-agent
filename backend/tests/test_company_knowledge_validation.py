@@ -513,5 +513,110 @@ class CompanyKnowledgeValidationApiTests(unittest.TestCase):
         self.assertEqual(payload["data"]["run"]["evaluation_verdict"], "pass")
 
 
+class CompanyKnowledgePreprocessServiceTests(unittest.IsolatedAsyncioTestCase):
+    def _source(self, status="markdown_ready"):
+        return SimpleNamespace(
+            id="source-1",
+            status=status,
+            markdown_content="联系电话：13812345678\n正文内容",
+            raw_content="联系电话：13812345678\n正文内容",
+            preprocessed_content=None,
+            preprocess_warnings=None,
+            preprocessed_at=None,
+            preprocessed_by=None,
+        )
+
+    async def test_preprocess_returns_report_without_persisting(self):
+        source = self._source()
+        db = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock())
+
+        with patch.object(service, "_get_source", AsyncMock(return_value=source)):
+            returned, report = await service.preprocess_company_source(db, "source-1", "admin-1")
+
+        self.assertIs(returned, source)
+        self.assertIn("【手机号已脱敏】", report["content"])
+        self.assertNotIn("13812345678", report["content"])
+        self.assertGreaterEqual(report["stats"]["replaced_phone_count"], 1)
+        self.assertIsNone(source.preprocessed_content)
+        self.assertEqual(source.status, "markdown_ready")
+        db.commit.assert_not_awaited()
+
+    async def test_confirm_preprocess_persists_and_advances_status(self):
+        source = self._source()
+        db = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock())
+
+        with patch.object(service, "_get_source", AsyncMock(return_value=source)):
+            result = await service.confirm_preprocess_company_source(db, "source-1", "admin-1")
+
+        self.assertIs(result, source)
+        self.assertNotIn("13812345678", source.preprocessed_content)
+        self.assertEqual(source.status, "preprocessed")
+        self.assertEqual(source.preprocessed_by, "admin-1")
+        self.assertIsNotNone(source.preprocessed_at)
+        db.commit.assert_awaited_once()
+
+    async def test_skip_preprocess_advances_status_without_cleaning(self):
+        source = self._source()
+        db = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock())
+
+        with patch.object(service, "_get_source", AsyncMock(return_value=source)):
+            result = await service.skip_preprocess_company_source(db, "source-1", "admin-1")
+
+        self.assertIs(result, source)
+        self.assertIsNone(source.preprocessed_content)
+        self.assertEqual(source.status, "preprocessed")
+        self.assertTrue(source.preprocess_warnings)
+        db.commit.assert_awaited_once()
+
+    async def test_preprocess_rejects_archived_source(self):
+        source = self._source(status="archived")
+        db = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock())
+
+        with patch.object(service, "_get_source", AsyncMock(return_value=source)):
+            with self.assertRaisesRegex(service.CompanyKnowledgeServiceError, "已下架"):
+                await service.preprocess_company_source(db, "source-1", "admin-1")
+
+    async def test_preprocess_rejects_published_source(self):
+        source = self._source(status="published")
+        db = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock())
+
+        with patch.object(service, "_get_source", AsyncMock(return_value=source)):
+            with self.assertRaisesRegex(service.CompanyKnowledgeServiceError, "只有待切分"):
+                await service.confirm_preprocess_company_source(db, "source-1", "admin-1")
+
+    async def test_create_chunk_set_prefers_preprocessed_content(self):
+        source = SimpleNamespace(
+            id="source-1",
+            status="preprocessed",
+            preprocessed_content="清洗后的制度正文",
+            markdown_content="原始 Markdown 正文",
+            raw_content="原始文本",
+            markdown_version=1,
+        )
+        db = SimpleNamespace(
+            add=Mock(),
+            add_all=Mock(),
+            execute=AsyncMock(),
+            flush=AsyncMock(),
+            commit=AsyncMock(),
+            refresh=AsyncMock(),
+        )
+
+        with (
+            patch.object(service, "_get_source", AsyncMock(return_value=source)),
+            patch.object(service, "chunk_text", return_value=[]) as chunk_text_mock,
+            patch.object(service, "_normalize_chunk_rule", return_value={"max_chars": 650, "overlap_chars": 100}),
+            patch.object(service, "_normalize_chunk_items", return_value=[]),
+            patch.object(service, "_replace_chunk_items", AsyncMock()),
+        ):
+            with self.assertRaises(service.CompanyKnowledgeServiceError):
+                await service.create_chunk_set(
+                    db, source_id="source-1", mode="auto", rule=None, chunks=None, admin_id="admin-1"
+                )
+
+        called_text = chunk_text_mock.call_args.args[0]
+        self.assertEqual(called_text, "清洗后的制度正文")
+
+
 if __name__ == "__main__":
     unittest.main()
