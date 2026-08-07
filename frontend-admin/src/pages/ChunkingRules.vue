@@ -19,6 +19,7 @@
       </select>
       <div v-if="detail" class="source-actions">
         <button v-if="detail.source.status !== 'published' && detail.source.status !== 'indexing'" class="row-btn" @click="openEdit">编辑</button>
+        <button v-if="detail.source.status === 'archived'" class="row-btn moss" :disabled="sourceActing" @click="restoreSource">上架</button>
         <button v-if="detail.source.status !== 'archived' && detail.source.status !== 'indexing'" class="row-btn danger" :disabled="sourceActing" @click="archiveSource">下架</button>
         <button v-if="detail.source.status === 'archived'" class="row-btn danger" :disabled="sourceActing" @click="removeSource">删除</button>
       </div>
@@ -103,7 +104,6 @@
           <label class="manual-question">验证问题<textarea v-model="manualQuestion" :disabled="runningValidation" rows="3" maxlength="2000" placeholder="如：员工年假如何申请？" @input="clearValidationInput" /></label>
           <div class="validation-actions">
             <button class="btn-gold" :disabled="runningValidation" @click="runAnswerValidation">{{ runningValidation ? '验证运行中…' : '执行问答验证' }}</button>
-            <button class="btn-ghost" :disabled="refreshingValidation" @click="refreshValidationResults">{{ refreshingValidation ? '刷新中…' : '刷新验证结果' }}</button>
             <span v-if="!runningValidation && activeValidationRun?.status === 'succeeded'" class="validation-complete">执行完成</span>
             <span v-else-if="!runningValidation && activeValidationRun?.status === 'failed'" class="validation-failed">执行失败</span>
             <button v-if="selectedSetDisplayStatus === 'indexed'" class="btn-ghost" :disabled="confirmingValidation || !canConfirmValidation" @click="confirmValidation">{{ confirmingValidation ? '确认中…' : '确认问答验证' }}</button>
@@ -114,27 +114,11 @@
             <p v-if="activeValidationRun.status === 'failed'" class="validation-summary is-miss">本次运行失败：{{ activeValidationRun.error_message || '请稍后重试。' }}</p>
             <template v-else>
               <div class="validation-question-result"><span>验证问题</span><b>{{ activeValidationRun.question }}</b></div>
-              <p :class="['validation-summary', !activeValidationRun.retrieval?.question_match?.expected_is_top || !activeValidationRun.retrieval?.answer_match?.expected_is_top ? 'is-miss' : '']">
-                生成回答前使用 {{ activeValidationRun.retrieval?.items?.length || 0 }} 条检索结果；所选切分段在问题匹配中为 Top {{ activeValidationRun.retrieval?.question_match?.expected_rank || '—' }}，在回答全量匹配中为 Top {{ activeValidationRun.retrieval?.answer_match?.expected_rank || '—' }}。
-              </p>
-              <div v-if="activeValidationRun.retrieval?.items?.length" class="retrieval-results">
-                <h3>生成回答的检索结果</h3>
-                <article v-for="(item, index) in activeValidationRun.retrieval.items" :key="item.chunk_id" :class="['retrieval-result', item.meets_minimum_similarity ? 'is-qualified' : 'is-low']">
-                  <div class="retrieval-result-head">
-                    <b>Top {{ index + 1 }} · {{ item.section_path || '未标注章节' }}</b>
-                    <span>{{ formatOptionalSimilarity(item.similarity) }}</span>
-                  </div>
-                  <p>{{ item.meets_minimum_similarity ? '达到最低相似度' : '低于最低相似度' }}<em v-if="activeValidationRun.expected_chunk_ids?.includes(item.chunk_id)">预期分片</em></p>
-                  <details><summary>查看分片正文</summary><pre>{{ item.content }}</pre></details>
-                </article>
-              </div>
               <section class="answer-evaluation">
                 <div class="answer-evaluation-head"><h3>RAG 回答</h3><span :class="['badge', statusClass(activeValidationRun.evaluation_verdict)]">{{ evaluationLabel(activeValidationRun.evaluation_verdict) }}</span></div>
                 <pre>{{ activeValidationRun.answer || '未生成回答。' }}</pre>
                 <div class="evaluation-metrics">
-                  <span>问题-所选切分段：<b>{{ formatOptionalSimilarity(activeValidationRun.retrieval?.question_match?.expected_similarity) }}</b></span>
                   <span>回答-所选切分段：<b>{{ formatOptionalSimilarity(activeValidationRun.retrieval?.answer_match?.expected_similarity) }}</b></span>
-                  <span>问题匹配排名：<b>Top {{ activeValidationRun.retrieval?.question_match?.expected_rank || '—' }}</b></span>
                   <span>回答匹配排名：<b>Top {{ activeValidationRun.retrieval?.answer_match?.expected_rank || '—' }}</b></span>
                   <span>正确性：<b>{{ formatOptionalSimilarity(activeValidationRun.correctness_score) }}</b></span>
                   <span>忠实性：<b>{{ formatOptionalSimilarity(activeValidationRun.faithfulness_score) }}</b></span>
@@ -269,7 +253,6 @@ const creating = ref(false)
 const saving = ref(false)
 const indexing = ref(false)
 const runningValidation = ref(false)
-const refreshingValidation = ref(false)
 const confirmingValidation = ref(false)
 const sourceActing = ref(false)
 const notice = ref(null)
@@ -391,37 +374,6 @@ async function pollValidationRun(runId, pollingSourceId, pollingChunkSetId) {
       stopValidationPolling({ clearPending: true })
       showNotice(error.message || '连续加载验证结果失败，请检查后端服务后重试。', 'error')
     }
-  }
-}
-async function refreshValidationResults() {
-  if (!selectedSet.value) return
-  refreshingValidation.value = true
-  try {
-    const runs = await loadValidationRuns({ notify: false, throwOnError: true })
-    const currentRun = runs.find((item) => item.id === pendingValidationRunId.value)
-      || runs.find((item) => item.id === selectedValidationRunId.value)
-      || runs[0]
-    if (!currentRun) {
-      runningValidation.value = false
-      stopValidationPolling({ clearPending: true })
-      showNotice('当前分片版本没有可显示的问答验证记录。', 'error')
-      return
-    }
-    selectedValidationRunId.value = currentRun.id
-    if (currentRun.status === 'running') {
-      runningValidation.value = true
-      startValidationPolling(currentRun.id, sourceId.value, selectedSet.value.id)
-      showNotice('后台仍在执行问答验证，正在继续等待结果。')
-      return
-    }
-    finishValidationRun(currentRun)
-    await loadDetail()
-  } catch (error) {
-    runningValidation.value = false
-    stopValidationPolling({ clearPending: true })
-    showNotice(error.message || '刷新验证结果失败，请检查后端服务。', 'error')
-  } finally {
-    refreshingValidation.value = false
   }
 }
 function startValidationPolling(runId, pollingSourceId, pollingChunkSetId) {
@@ -704,6 +656,17 @@ async function publishSource() {
     showNotice('资料已发布。')
   } catch (error) { showNotice(error.message || '发布失败', 'error') } finally { sourceActing.value = false }
 }
+async function restoreSource() {
+  const source = detail.value?.source
+  if (!source || !confirm(`上架「${source.title} ${source.version}」？恢复后该资料将重新参与新问答。`)) return
+  sourceActing.value = true
+  try {
+    const res = await apiAdminCompanyKnowledgePublish(source.id)
+    if (!res.success) { showNotice(res.message || '上架失败', 'error'); return }
+    await refreshSourceContext()
+    showNotice('资料已重新上架。')
+  } catch (error) { showNotice(error.message || '上架失败', 'error') } finally { sourceActing.value = false }
+}
 function canDeleteJob(job) { return !['queued', 'running'].includes(job.status) }
 async function removeJob(job) {
   if (!confirm(`删除「${jobLabel(job.job_type)}」处理任务记录？此操作不可恢复。`)) return
@@ -740,6 +703,7 @@ onBeforeUnmount(() => stopValidationPolling({ clearPending: true }))
 .source-picker select { min-width:280px; max-width:100%; padding:8px 10px; }
 .row-btn { border:1px solid var(--line); border-radius:6px; background:transparent; color:var(--ink-soft); padding:4px 8px; font-size:12px; }
 .row-btn:hover { border-color:var(--gold); color:var(--ink); }
+.row-btn.moss:hover { border-color:var(--moss); color:var(--moss); }
 .row-btn.danger:hover { border-color:var(--berry); color:var(--berry); }
 .row-btn:disabled { opacity:.5; cursor:not-allowed; }
 .notice { margin:12px 0; padding:9px 12px; border-radius:6px; font-size:13px; }
@@ -796,8 +760,6 @@ onBeforeUnmount(() => stopValidationPolling({ clearPending: true }))
 .retrieval-results, .chunk-list { display:grid; gap:8px; }
 .retrieval-results h3 { margin:4px 0 2px; font-size:13px; }
 .retrieval-result { padding:10px; border:1px solid var(--line); border-radius:6px; background:var(--card); }
-.retrieval-result.is-qualified { border-left:3px solid var(--moss); }
-.retrieval-result.is-low { border-left:3px solid var(--gold); }
 .retrieval-result-head b { font-size:13px; }
 .retrieval-result-head span { color:var(--moss); font:600 13px ui-monospace, SFMono-Regular, Consolas, monospace; }
 .retrieval-result p { margin-top:4px; color:var(--ink-soft); font-size:11px; }

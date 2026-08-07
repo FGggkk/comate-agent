@@ -38,9 +38,10 @@
             <td class="num dim">{{ formatDate(item.updated_at, true) }}</td>
             <td class="row-actions">
               <button class="row-btn" @click="showDetail(item)">查看</button>
-              <button v-if="item.status !== 'published' && item.status !== 'indexing'" class="row-btn" @click="openEdit(item)">编辑</button>
-              <button v-if="item.status !== 'archived'" class="row-btn" @click="openWorkflow(item)">编辑</button>
+              <button v-if="item.status !== 'published' && item.status !== 'indexing'" class="row-btn" @click="openEdit(item)">编辑信息</button>
+              <button v-if="item.status !== 'archived'" class="row-btn" @click="openWorkflow(item)">执行流程</button>
               <button v-if="item.status === 'validated' || item.status === 'published'" class="row-btn moss" :disabled="actingId === item.id" @click="publish(item)">{{ item.status === 'published' ? '切换索引' : '发布' }}</button>
+              <button v-if="item.status === 'archived'" class="row-btn moss" :disabled="actingId === item.id" @click="restore(item)">上架</button>
               <button v-if="item.status !== 'archived' && item.status !== 'indexing'" class="row-btn danger" :disabled="actingId === item.id" @click="archive(item)">下架</button>
               <button v-if="item.status === 'archived'" class="row-btn danger" :disabled="actingId === item.id" @click="removeArchived(item)">删除</button>
             </td>
@@ -161,6 +162,7 @@ async function submitEdit() {
 function openWorkflow(item) { router.push({ path: '/chunking-rules', query: { source: item.id } }) }
 async function publish(item) { if (confirm(`发布「${item.title} ${item.version}」？同名已发布版本会自动下架。`)) await runAction(item, apiAdminCompanyKnowledgePublish, '资料已发布') }
 async function archive(item) { if (confirm(`下架「${item.title} ${item.version}」？下架后不再参与新问答。`)) await runAction(item, apiAdminCompanyKnowledgeArchive, '资料已下架') }
+async function restore(item) { if (confirm(`上架「${item.title} ${item.version}」？恢复后该资料将重新参与新问答。`)) await runAction(item, apiAdminCompanyKnowledgePublish, '资料已重新上架') }
 async function removeArchived(item) { if (confirm(`删除已下架资料「${item.title} ${item.version}」？此操作不可恢复。`)) await runAction(item, apiAdminCompanyKnowledgeDelete, '已删除下架资料') }
 async function runAction(item, action, successText) {
   actingId.value = item.id

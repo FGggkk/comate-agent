@@ -2,6 +2,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, UploadFile
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import get_current_admin
@@ -234,6 +235,9 @@ async def delete_source(
         await delete_archived_company_source(db, source_id)
     except CompanyKnowledgeServiceError as exc:
         return fail(str(exc))
+    except IntegrityError:
+        await db.rollback()
+        return fail("资料存在关联引用，暂时无法删除")
     return ok({}, "已删除下架资料")
 
 

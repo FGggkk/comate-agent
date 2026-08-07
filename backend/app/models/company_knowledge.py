@@ -37,7 +37,7 @@ class CompanyKnowledgeSource(Base):
     published_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("admins.id"), nullable=True)
     replaced_source_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("company_knowledge_sources.id"),
+        ForeignKey("company_knowledge_sources.id", ondelete="SET NULL"),
         nullable=True,
     )
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
