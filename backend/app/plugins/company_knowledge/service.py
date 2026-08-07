@@ -938,6 +938,7 @@ async def _run_company_knowledge_validation_pipeline(
         run.answer,
         source,
         [expected_chunk],
+        matches,
     )
     run.correctness_score = evaluation["correctness_score"]
     run.faithfulness_score = evaluation["faithfulness_score"]
@@ -1098,12 +1099,28 @@ async def _evaluate_company_knowledge_answer(
     answer: str,
     source: CompanyKnowledgeSource,
     expected_chunks: list[CompanyKnowledgeChunk],
+    matches: list[RetrievedChunk],
 ) -> dict:
+    expected_evidence = [_chunk_to_evidence(source, chunk) for chunk in expected_chunks]
+    # 检索命中的其他切片也作为参考证据，避免回答引用检索结果却被判不忠实。
+    retrieved_evidence = []
+    for match in matches:
+        if str(match.chunk_id) in {str(chunk.id) for chunk in expected_chunks}:
+            continue
+        retrieved_evidence.append(
+            {
+                "title": match.title,
+                "version": match.version,
+                "section_path": match.section_path,
+                "content": match.content,
+            }
+        )
     response = await gateway.chat(
         build_validation_evaluation_prompt(
             question,
             answer,
-            [_chunk_to_evidence(source, chunk) for chunk in expected_chunks],
+            expected_evidence,
+            retrieved_evidence[:3],
         ),
         system=VALIDATION_EVALUATOR_SYSTEM_PROMPT,
     )

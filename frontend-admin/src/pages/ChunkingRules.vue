@@ -211,8 +211,8 @@
         <div class="modal-title"><b>上传资料</b><button class="modal-close" @click="uploadOpen = false">×</button></div>
         <div class="file-field">
           <label>电子版文件 *</label>
-          <input type="file" accept=".txt,.md,.markdown,text/plain,text/markdown" @change="pickFile" />
-          <span class="file-hint">仅支持 UTF-8 编码的 TXT 或 Markdown，最大 2MB</span>
+          <input type="file" accept=".txt,.md,.markdown,.pdf,.docx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" @change="pickFile" />
+          <span class="file-hint">支持 UTF-8 TXT / Markdown、PDF、Word（.docx），最大 10MB</span>
           <span v-if="upload.file" class="file-name">{{ upload.file.name }}</span>
         </div>
         <div class="field"><label>资料名称 *</label><input v-model="upload.title" maxlength="255" placeholder="如：员工考勤与休假管理制度" /></div>
@@ -464,8 +464,8 @@ async function loadDetail() {
   const targetChunkSetId = activeChunkSetId.value
   stopValidationPolling({ clearPending: true })
   runningValidation.value = false
-  detail.value = null
-  await nextTick()
+  // 保留旧 detail 直到新数据就绪，避免整页卸载导致滚动位置丢失（分片多时尤其明显）。
+  const previousScrollY = window.scrollY
   const res = await apiAdminCompanyKnowledgeSource(targetSourceId, targetChunkSetId)
   if (!res.success) { showNotice(res.message || '加载资料失败', 'error'); return }
   const nextDetail = res.data
@@ -496,6 +496,10 @@ async function loadDetail() {
   validationOpen.value = shouldOpenValidation
   // 先准备验证记录，再挂载详情区域，避免结果区以空记录状态首次渲染。
   detail.value = nextDetail
+  // 数据就绪后恢复滚动位置（若用户在验证区附近则保持原位，不跳转）。
+  window.requestAnimationFrame(() => {
+    window.scrollTo(0, previousScrollY)
+  })
   if (shouldOpenValidation) {
     resumeRunningValidation()
   }
@@ -507,6 +511,7 @@ async function refreshSourceContext() {
 function changeSource() {
   activeChunkSetId.value = ''
   replaceSourceQuery(sourceId.value)
+  window.scrollTo(0, 0)
   loadDetail()
 }
 
