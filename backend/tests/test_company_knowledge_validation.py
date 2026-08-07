@@ -394,6 +394,90 @@ class CompanyKnowledgeRetrieverTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(chunks[0].similarity, retriever.MIN_SIMILARITY)
         self.assertGreaterEqual(chunks[0].similarity, retriever.MIN_USER_QUERY_SIMILARITY)
 
+    async def test_hybrid_retrieval_includes_keyword_only_hit(self):
+        """关键词精确命中但向量相似度未知的分片也应进入结果（RRF 融合）。"""
+        candidate = {
+            "chunk_id": "chunk-1",
+            "chunk_set_id": "chunk-set-1",
+            "source_id": "source-1",
+            "title": "考勤制度",
+            "version": "1.0",
+            "effective_at": datetime(2026, 8, 4, tzinfo=timezone.utc),
+            "section_path": "年假",
+            "content": "员工年假应至少提前五个工作日申请。",
+        }
+        other = {
+            "chunk_id": "chunk-2",
+            "chunk_set_id": "chunk-set-1",
+            "source_id": "source-1",
+            "title": "考勤制度",
+            "version": "1.0",
+            "effective_at": datetime(2026, 8, 4, tzinfo=timezone.utc),
+            "section_path": "报销",
+            "content": "报销需要提交发票。",
+            "similarity": 0.6,
+        }
+
+        async def fake_execute(statement, params=None):
+            sql = str(statement)
+            if "LIMIT" in sql:
+                # 向量召回：只命中 chunk-2（相似度高于阈值）
+                return SimpleNamespace(mappings=lambda: SimpleNamespace(all=lambda: [other]))
+            return SimpleNamespace(
+                mappings=lambda: SimpleNamespace(all=lambda: [candidate, other])
+            )
+
+        db = SimpleNamespace(execute=fake_execute)
+
+        with patch.object(retriever, "get_embedding", AsyncMock(return_value=[0.1, 0.2])):
+            with patch.object(
+                retriever,
+                "_keyword_rank",
+                return_value=["chunk-1", "chunk-2"],
+            ):
+                chunks = await retriever.retrieve_company_knowledge(
+                    "年假提前几天申请", "policy", db, top_k=2
+                )
+
+        chunk_ids = [chunk.chunk_id for chunk in chunks]
+        self.assertIn("chunk-1", chunk_ids)
+        self.assertIn("chunk-2", chunk_ids)
+
+    async def test_hybrid_retrieval_drops_below_threshold_vector_hit(self):
+        """向量命中的分片若低于用户查询阈值，应从结果中剔除。"""
+        candidate = {
+            "chunk_id": "chunk-1",
+            "chunk_set_id": "chunk-set-1",
+            "source_id": "source-1",
+            "title": "考勤制度",
+            "version": "1.0",
+            "effective_at": datetime(2026, 8, 4, tzinfo=timezone.utc),
+            "section_path": "年假",
+            "content": "员工年假应至少提前五个工作日申请。",
+        }
+        low_similarity_row = {
+            "chunk_id": "chunk-1",
+            "similarity": 0.1,
+        }
+
+        async def fake_execute(statement, params=None):
+            sql = str(statement)
+            if "LIMIT" in sql:
+                return SimpleNamespace(mappings=lambda: SimpleNamespace(all=lambda: [low_similarity_row]))
+            return SimpleNamespace(
+                mappings=lambda: SimpleNamespace(all=lambda: [candidate])
+            )
+
+        db = SimpleNamespace(execute=fake_execute)
+
+        with patch.object(retriever, "get_embedding", AsyncMock(return_value=[0.1, 0.2])):
+            with patch.object(retriever, "_keyword_rank", return_value=[]):
+                chunks = await retriever.retrieve_company_knowledge(
+                    "年假提前几天申请", "policy", db, top_k=2
+                )
+
+        self.assertEqual(chunks, [])
+
 
 class CompanyKnowledgeValidationApiTests(unittest.TestCase):
     def setUp(self):

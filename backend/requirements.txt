@@ -16,3 +16,4 @@ alembic>=1.14
 tenacity>=9.0
 structlog>=25.1
 websockets>=14,<17
+jieba>=0.42
