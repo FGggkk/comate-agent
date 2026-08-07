@@ -38,6 +38,13 @@ class CompanyKnowledgePreprocessorTests(unittest.TestCase):
         self.assertNotIn("</p>", result.content)
         self.assertEqual(result.stats.removed_html_tags, 2)
 
+    def test_preserves_comparison_expressions(self):
+        source = "预算约束：成本 < 预算 > 利润\n如果 x < 10 则执行"
+        result = preprocess_markdown(source)
+        self.assertIn("成本 < 预算 > 利润", result.content)
+        self.assertIn("x < 10", result.content)
+        self.assertEqual(result.stats.removed_html_tags, 0)
+
     def test_deduplicates_identical_lines(self):
         source = "第一条规则\n第二条规则\n第一条规则"
         result = preprocess_markdown(source)

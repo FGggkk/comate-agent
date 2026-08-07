@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 _FULLWIDTH_RE = re.compile(r"[\uff01-\uff5e]")
 _FULLWIDTH_SPACE_RE = re.compile("\u3000")
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
-_HTML_TAG_RE = re.compile(r"<[^>]{1,512}>")
+_HTML_TAG_RE = re.compile(r"</?[a-zA-Z][a-zA-Z0-9-]*(?:\s+[a-zA-Z_:][-a-zA-Z0-9_:.]*(?:\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s\"'>]+))?)*\s*/?>")
 _HTML_ENTITY_RE = re.compile(r"&(?:#\d{1,6}|#x[0-9a-fA-F]{1,6}|[a-zA-Z]{2,8});")
 _GARBLED_RE = re.compile(r"[\ufffd]")
 _PAGE_FOOTER_RE = re.compile(r"^\s*(?:第\s*\d+\s*页|[-\u2014]{3,}|page\s*\d+)\s*$", re.IGNORECASE)

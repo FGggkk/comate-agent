@@ -357,7 +357,7 @@ async def preprocess_company_source(db: AsyncSession, source_id: str, admin_id) 
     source = await _get_source(db, source_id)
     if source.status == "archived":
         raise CompanyKnowledgeServiceError("已下架资料不能执行数据预处理")
-    if source.status not in {"markdown_ready", "preprocessed"}:
+    if source.status not in {"markdown_ready", "preprocessed", "failed"}:
         raise CompanyKnowledgeServiceError("只有待切分或已预处理的资料可以执行数据预处理")
 
     result = preprocess_markdown(source.markdown_content or source.raw_content or "")
@@ -384,7 +384,7 @@ async def confirm_preprocess_company_source(db: AsyncSession, source_id: str, ad
     source = await _get_source(db, source_id)
     if source.status == "archived":
         raise CompanyKnowledgeServiceError("已下架资料不能执行数据预处理")
-    if source.status not in {"markdown_ready", "preprocessed"}:
+    if source.status not in {"markdown_ready", "preprocessed", "failed"}:
         raise CompanyKnowledgeServiceError("只有待切分或已预处理的资料可以确认数据预处理")
 
     result = preprocess_markdown(source.markdown_content or source.raw_content or "")
@@ -403,7 +403,7 @@ async def skip_preprocess_company_source(db: AsyncSession, source_id: str, admin
     source = await _get_source(db, source_id)
     if source.status == "archived":
         raise CompanyKnowledgeServiceError("已下架资料不能跳过数据预处理")
-    if source.status not in {"markdown_ready", "preprocessed"}:
+    if source.status not in {"markdown_ready", "preprocessed", "failed"}:
         raise CompanyKnowledgeServiceError("只有待切分或已预处理的资料可以跳过数据预处理")
 
     source.preprocessed_content = None
@@ -586,7 +586,7 @@ async def create_chunk_set(
     source = await _get_source(db, source_id)
     if source.status == "archived":
         raise CompanyKnowledgeServiceError("已下架资料不能新建切分草稿")
-    if source.status not in {"preprocessed", "published"}:
+    if source.status not in {"preprocessed", "published", "failed"}:
         raise CompanyKnowledgeServiceError("请先完成数据预处理，再生成分片草稿")
     if mode not in {"auto", "manual", "auto_then_manual"}:
         raise CompanyKnowledgeServiceError("不支持的切分方式")

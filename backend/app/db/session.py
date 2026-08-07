@@ -123,6 +123,9 @@ MIGRATION_SQL = [
     "ALTER TABLE company_knowledge_sources ADD COLUMN IF NOT EXISTS preprocess_warnings JSONB",
     "ALTER TABLE company_knowledge_sources ADD COLUMN IF NOT EXISTS preprocessed_at TIMESTAMPTZ",
     "ALTER TABLE company_knowledge_sources ADD COLUMN IF NOT EXISTS preprocessed_by UUID REFERENCES admins(id)",
+    # 存量状态归一：引入 preprocessed 状态前，处于切分/向量化中间态的资料直接进入待切分，
+    # 避免新校验（仅 preprocessed/published 可新建切分草稿）卡死既有流程。
+    "UPDATE company_knowledge_sources SET status = 'preprocessed' WHERE status IN ('chunking', 'chunk_ready', 'indexing') AND knowledge_type = 'policy'",
     "UPDATE company_knowledge_sources SET markdown_content = raw_content WHERE markdown_content IS NULL OR markdown_content = ''",
     "UPDATE company_knowledge_sources SET markdown_hash = content_hash WHERE markdown_hash = ''",
     "CREATE TABLE IF NOT EXISTS company_knowledge_chunk_sets (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), source_id UUID NOT NULL REFERENCES company_knowledge_sources(id) ON DELETE CASCADE, markdown_version INTEGER NOT NULL DEFAULT 1, mode VARCHAR(24) NOT NULL, status VARCHAR(16) NOT NULL DEFAULT 'draft', rule_snapshot JSONB DEFAULT '{}', created_by UUID NOT NULL REFERENCES admins(id), confirmed_by UUID REFERENCES admins(id), total_chunks INTEGER DEFAULT 0, indexed_chunks INTEGER DEFAULT 0, error_message TEXT DEFAULT '', created_at TIMESTAMPTZ DEFAULT NOW(), confirmed_at TIMESTAMPTZ, indexed_at TIMESTAMPTZ)",

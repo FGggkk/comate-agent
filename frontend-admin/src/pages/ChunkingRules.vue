@@ -73,7 +73,7 @@
         <button v-if="detail.source.status === 'preprocessed'" class="btn-ghost" :disabled="preprocessing" @click="skipPreprocess" style="margin-left:8px">已预处理，仍可跳过</button>
       </section>
 
-      <section v-if="detail.source.status === 'preprocessed' || detail.source.status === 'published'" class="card controls">
+      <section v-if="detail.source.status === 'preprocessed' || detail.source.status === 'published' || detail.source.status === 'failed'" class="card controls">
         <div class="control-title">生成分片草稿</div>
         <div class="mode-options" role="radiogroup" aria-label="切分方式">
           <label v-for="item in modes" :key="item.key" :class="['mode-option', mode === item.key ? 'selected' : '']">
