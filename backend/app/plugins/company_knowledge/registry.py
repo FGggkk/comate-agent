@@ -13,6 +13,8 @@ class KnowledgeTypeDefinition:
     query_enabled: bool
     user_visible: bool
     required_metadata: tuple[str, ...] = ()
+    # B4 图谱增强检索开关：命中后沿已确认关系扩展关联来源（默认关，可按类型灰度）
+    graph_expansion_enabled: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -24,6 +26,7 @@ class KnowledgeTypeDefinition:
             "query_enabled": self.query_enabled,
             "user_visible": self.user_visible,
             "required_metadata": list(self.required_metadata),
+            "graph_expansion_enabled": self.graph_expansion_enabled,
         }
 
 
@@ -37,6 +40,7 @@ KNOWLEDGE_TYPES = (
         query_enabled=True,
         user_visible=True,
         required_metadata=("version", "effective_at"),
+        graph_expansion_enabled=True,
     ),
     KnowledgeTypeDefinition(
         key="faq",

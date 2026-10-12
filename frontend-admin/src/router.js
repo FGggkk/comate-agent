@@ -19,6 +19,7 @@ export const router = createRouter({
         { path: 'roles', component: () => import('./pages/Roles.vue'), meta: { title: '角色管理' } },
         { path: 'company-knowledge', component: () => import('./pages/CompanyKnowledge.vue'), meta: { title: 'RAG 知识库' } },
         { path: 'chunking-rules', component: () => import('./pages/ChunkingRules.vue'), meta: { title: 'RAG 执行流程' } },
+        { path: 'rag-graph', component: () => import('./pages/KnowledgeGraph.vue'), meta: { title: '知识图谱' } },
       ],
     },
   ],

@@ -1,13 +1,27 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, UploadFile
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_auth import get_current_admin
 from app.api.response import fail, ok
-from app.db.session import get_db
+from app.db.session import async_session_factory, get_db
 from app.models.billing import Admin
+from app.plugins.company_knowledge.graph_service import (
+    GraphServiceError,
+    build_graph,
+    create_relation,
+    delete_relation,
+    enqueue_graph_relation_extraction,
+    enqueue_graph_relation_extractions_for_published_sources,
+    execute_graph_relation_extraction_job,
+    list_graph_relation_extraction_jobs,
+    list_relations,
+    relation_to_dict,
+    update_relation_status,
+)
 from app.plugins.company_knowledge.importer import SourceImportError
 from app.plugins.company_knowledge.retriever import (
     MIN_SIMILARITY,
@@ -20,26 +34,53 @@ from app.plugins.company_knowledge.service import (
     archive_company_source,
     chunk_set_to_dict,
     chunk_to_dict,
+    confirm_company_knowledge_validation_run,
     confirm_chunk_set,
+    confirm_preprocess_company_source,
+    contextualize_chunk_set,
+    create_company_knowledge_validation_run,
     create_chunk_set,
     delete_archived_company_source,
     delete_company_job,
+    execute_company_knowledge_validation_run,
     get_company_source_detail,
     import_company_source,
     index_chunk_set,
     job_to_dict,
     list_company_jobs,
+    list_company_knowledge_validation_runs,
     list_company_sources,
+    preprocess_company_source,
     publish_company_source,
     reindex_company_source,
+    skip_preprocess_company_source,
     source_to_dict,
     update_chunk_set,
     update_company_source_metadata,
     validate_chunk_set,
+    validation_run_to_dict,
 )
 
 
 router = APIRouter(prefix="/api/admin/company-knowledge", tags=["admin"])
+
+
+async def _execute_validation_run_in_background(run_id: str) -> None:
+    """使用独立会话运行耗时的模型与向量验证，避免占用管理端 HTTP 请求。"""
+    async with async_session_factory() as task_db:
+        await execute_company_knowledge_validation_run(task_db, run_id=run_id)
+
+
+async def _execute_graph_relation_extraction_in_background(job_id: str) -> None:
+    """使用独立会话执行 LLM 关系草稿抽取，避免阻塞管理端请求。"""
+    async with async_session_factory() as task_db:
+        await execute_graph_relation_extraction_job(task_db, job_id=job_id)
+
+
+async def _execute_graph_relation_extractions_in_background(job_ids: list[str]) -> None:
+    """批量补齐时按顺序执行，避免一次并发调用大量模型请求。"""
+    for job_id in job_ids:
+        await _execute_graph_relation_extraction_in_background(job_id)
 
 
 class ChunkInput(BaseModel):
@@ -69,6 +110,11 @@ class RetrievalPreviewRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     top_k: int = Field(default=6, ge=1, le=10)
     expected_chunk_ids: list[str] = Field(default_factory=list, max_length=10)
+
+
+class AnswerValidationRunRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+    expected_chunk_id: str = Field(min_length=1, max_length=64)
 
 
 async def _run_retrieval_preview(
@@ -121,7 +167,7 @@ async def list_sources(
 ):
     if not get_knowledge_type(knowledge_type):
         return fail("未知资料类型")
-    if status not in {"all", "markdown_ready", "chunking", "chunk_ready", "indexing", "indexed", "validated", "published", "failed", "archived"}:
+    if status not in {"all", "markdown_ready", "preprocessed", "chunking", "chunk_ready", "indexing", "indexed", "validated", "published", "failed", "archived"}:
         return fail("未知资料状态")
     items, total = await list_company_sources(
         db,
@@ -218,6 +264,9 @@ async def delete_source(
         await delete_archived_company_source(db, source_id)
     except CompanyKnowledgeServiceError as exc:
         return fail(str(exc))
+    except IntegrityError:
+        await db.rollback()
+        return fail("资料存在关联引用，暂时无法删除")
     return ok({}, "已删除下架资料")
 
 
@@ -276,6 +325,22 @@ async def confirm_source_chunk_set(
     except CompanyKnowledgeServiceError as exc:
         return fail(str(exc))
     return ok({"chunk_set": chunk_set_to_dict(chunk_set)}, "分片已确认，可以向量化")
+
+
+@router.post("/sources/{source_id}/chunk-sets/{chunk_set_id}/contextualize")
+async def contextualize_source_chunk_set(
+    source_id: str,
+    chunk_set_id: str,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        chunk_set = await contextualize_chunk_set(
+            db, source_id=source_id, chunk_set_id=chunk_set_id, admin_id=admin.id
+        )
+    except CompanyKnowledgeServiceError as exc:
+        return fail(str(exc))
+    return ok({"chunk_set": chunk_set_to_dict(chunk_set)}, "上下文描述已生成")
 
 
 @router.post("/sources/{source_id}/chunk-sets/{chunk_set_id}/index")
@@ -339,17 +404,102 @@ async def validate_source_chunk_set(
     )
 
 
+@router.get("/sources/{source_id}/chunk-sets/{chunk_set_id}/validation-runs")
+async def list_source_chunk_set_validation_runs(
+    source_id: str,
+    chunk_set_id: str,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        runs = await list_company_knowledge_validation_runs(
+            db,
+            source_id=source_id,
+            chunk_set_id=chunk_set_id,
+        )
+    except CompanyKnowledgeServiceError as exc:
+        return fail(str(exc))
+    return ok({"items": [validation_run_to_dict(item) for item in runs]})
+
+
+@router.post("/sources/{source_id}/chunk-sets/{chunk_set_id}/validation-runs")
+async def create_source_chunk_set_validation_run(
+    source_id: str,
+    chunk_set_id: str,
+    req: AnswerValidationRunRequest,
+    background_tasks: BackgroundTasks,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        run = await create_company_knowledge_validation_run(
+            db,
+            source_id=source_id,
+            chunk_set_id=chunk_set_id,
+            question=req.question,
+            expected_chunk_id=req.expected_chunk_id,
+            admin_id=admin.id,
+        )
+    except CompanyKnowledgeServiceError as exc:
+        return fail(str(exc))
+    if getattr(run, "_starts_background_task", True):
+        background_tasks.add_task(_execute_validation_run_in_background, str(run.id))
+        message = "问答验证已提交，正在后台运行"
+    else:
+        message = "已有一条问答验证正在运行，已为你恢复该任务"
+    return ok({"run": validation_run_to_dict(run)}, message)
+
+
+@router.post("/sources/{source_id}/chunk-sets/{chunk_set_id}/validation-runs/{run_id}/confirm")
+async def confirm_source_chunk_set_validation_run(
+    source_id: str,
+    chunk_set_id: str,
+    run_id: str,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        run, chunk_set = await confirm_company_knowledge_validation_run(
+            db,
+            source_id=source_id,
+            chunk_set_id=chunk_set_id,
+            run_id=run_id,
+            admin_id=admin.id,
+        )
+    except CompanyKnowledgeServiceError as exc:
+        return fail(str(exc))
+    return ok(
+        {"run": validation_run_to_dict(run), "chunk_set": chunk_set_to_dict(chunk_set)},
+        "问答验证已确认，可以发布",
+    )
+
+
 @router.post("/sources/{source_id}/publish")
 async def publish_source(
     source_id: str,
+    background_tasks: BackgroundTasks,
     admin: Admin = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     try:
         source = await publish_company_source(db, source_id, admin.id)
+        graph_job, created = await enqueue_graph_relation_extraction(
+            db,
+            source_id=str(source.id),
+            admin_id=admin.id,
+            trigger="publish",
+        )
     except CompanyKnowledgeServiceError as exc:
         return fail(str(exc))
-    return ok({"source": source_to_dict(source)}, "制度已发布")
+    except GraphServiceError as exc:
+        return fail(f"资料已发布，但关系草稿任务创建失败：{exc}")
+    if created or graph_job.status == "queued":
+        background_tasks.add_task(_execute_graph_relation_extraction_in_background, str(graph_job.id))
+    message = "制度已发布，正在后台生成关系草稿" if created else "制度已发布，关系草稿任务已在处理中"
+    return ok(
+        {"source": source_to_dict(source), "graph_extraction_job": job_to_dict(graph_job)},
+        message,
+    )
 
 
 @router.post("/sources/{source_id}/archive")
@@ -363,6 +513,45 @@ async def archive_source(
     except CompanyKnowledgeServiceError as exc:
         return fail(str(exc))
     return ok({"source": source_to_dict(source)}, "制度已下架")
+
+
+@router.post("/sources/{source_id}/preprocess")
+async def preprocess_source(
+    source_id: str,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        source, report = await preprocess_company_source(db, source_id, admin.id)
+    except CompanyKnowledgeServiceError as exc:
+        return fail(str(exc))
+    return ok({"source": source_to_dict(source), "report": report}, "数据预处理完成，请确认清洗结果")
+
+
+@router.post("/sources/{source_id}/preprocess/confirm")
+async def confirm_preprocess_source(
+    source_id: str,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        source = await confirm_preprocess_company_source(db, source_id, admin.id)
+    except CompanyKnowledgeServiceError as exc:
+        return fail(str(exc))
+    return ok({"source": source_to_dict(source)}, "已确认数据预处理结果")
+
+
+@router.post("/sources/{source_id}/preprocess/skip")
+async def skip_preprocess_source(
+    source_id: str,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        source = await skip_preprocess_company_source(db, source_id, admin.id)
+    except CompanyKnowledgeServiceError as exc:
+        return fail(str(exc))
+    return ok({"source": source_to_dict(source)}, "已跳过数据预处理")
 
 
 @router.post("/sources/{source_id}/reindex")
@@ -400,3 +589,157 @@ async def delete_job(
     except CompanyKnowledgeServiceError as exc:
         return fail(str(exc))
     return ok({}, "处理任务记录已删除")
+
+
+class CreateRelationRequest(BaseModel):
+    source_id: str
+    target_source_id: str
+    relation_type: str
+    direction: str = "undirected"
+    evidence: str = ""
+    origin: str = "manual"
+
+
+class UpdateRelationStatusRequest(BaseModel):
+    status: str
+
+
+@router.get("/graph")
+async def company_knowledge_graph(
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        graph = await build_graph(db)
+    except GraphServiceError as exc:
+        return fail(str(exc))
+    return ok(graph, "图谱数据已加载")
+
+
+@router.get("/relations")
+async def company_knowledge_relations(
+    source_id: str | None = None,
+    status: str | None = None,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        relations = await list_relations(db, source_id=source_id, status=status)
+    except GraphServiceError as exc:
+        return fail(str(exc))
+    return ok({"relations": [relation_to_dict(rel) for rel in relations]}, "关系列表已加载")
+
+
+@router.post("/relations")
+async def company_knowledge_create_relation(
+    req: CreateRelationRequest,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        relation = await create_relation(
+            db,
+            source_id=req.source_id,
+            target_source_id=req.target_source_id,
+            relation_type=req.relation_type,
+            direction=req.direction,
+            evidence=req.evidence,
+            origin=req.origin,
+            admin_id=admin.id,
+        )
+    except GraphServiceError as exc:
+        return fail(str(exc))
+    return ok({"relation": relation_to_dict(relation)}, "关系已创建（待确认）")
+
+
+@router.put("/relations/{relation_id}")
+async def company_knowledge_update_relation_status(
+    relation_id: str,
+    req: UpdateRelationStatusRequest,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        relation = await update_relation_status(
+            db, relation_id=relation_id, status=req.status, admin_id=admin.id
+        )
+    except GraphServiceError as exc:
+        return fail(str(exc))
+    return ok({"relation": relation_to_dict(relation)}, "关系状态已更新")
+
+
+@router.post("/sources/{source_id}/relations/extract")
+async def company_knowledge_extract_relations(
+    source_id: str,
+    background_tasks: BackgroundTasks,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        job, created = await enqueue_graph_relation_extraction(
+            db,
+            source_id=source_id,
+            admin_id=admin.id,
+            trigger="manual",
+            force=True,
+        )
+    except GraphServiceError as exc:
+        return fail(str(exc))
+    if created or job.status == "queued":
+        background_tasks.add_task(_execute_graph_relation_extraction_in_background, str(job.id))
+    message = "关系草稿任务已提交，完成后请刷新图谱" if created else "该资料的关系草稿任务正在处理中"
+    return ok({"job": job_to_dict(job), "queued": created}, message)
+
+
+@router.post("/graph/extraction-jobs")
+async def queue_graph_relation_extractions(
+    background_tasks: BackgroundTasks,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """为存量已发布资料批量补齐关系草稿；不自动确认任何关系。"""
+    try:
+        jobs, skipped = await enqueue_graph_relation_extractions_for_published_sources(
+            db,
+            admin_id=admin.id,
+        )
+    except GraphServiceError as exc:
+        return fail(str(exc))
+    if jobs:
+        background_tasks.add_task(
+            _execute_graph_relation_extractions_in_background,
+            [str(job.id) for job in jobs],
+        )
+    return ok(
+        {
+            "queued": len(jobs),
+            "skipped": skipped,
+            "jobs": [job_to_dict(job) for job in jobs],
+        },
+        "已提交存量资料关系草稿任务" if jobs else "没有需要提交的资料，现有任务仍在处理中",
+    )
+
+
+@router.get("/graph/extraction-jobs")
+async def list_graph_relation_extraction_jobs_endpoint(
+    limit: int = Query(default=12, ge=1, le=50),
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """查看近期自动关系草稿任务，便于管理员判断生成进度和失败原因。"""
+    del admin
+    jobs = await list_graph_relation_extraction_jobs(db, limit=limit)
+    return ok({"jobs": jobs})
+
+
+@router.delete("/relations/{relation_id}")
+async def company_knowledge_delete_relation(
+    relation_id: str,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        await delete_relation(db, relation_id=relation_id)
+    except GraphServiceError as exc:
+        return fail(str(exc))
+    return ok({}, "关系已删除")

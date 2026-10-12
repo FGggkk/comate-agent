@@ -95,6 +95,8 @@ class CompanyKnowledgeContractTests(unittest.TestCase):
         self.assertIn("uq_company_knowledge_source_active_title_version", migration_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS company_knowledge_chunks", migration_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS company_knowledge_chunk_sets", migration_sql)
+        self.assertIn("CREATE TABLE IF NOT EXISTS company_knowledge_validation_runs", migration_sql)
+        self.assertIn("idx_company_knowledge_validation_runs_chunk_set", migration_sql)
         self.assertIn("ALTER TABLE company_knowledge_chunk_sets ADD COLUMN IF NOT EXISTS validated_by", migration_sql)
         self.assertIn("ALTER TABLE company_knowledge_chunk_sets ADD COLUMN IF NOT EXISTS validated_at", migration_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS company_knowledge_jobs", migration_sql)

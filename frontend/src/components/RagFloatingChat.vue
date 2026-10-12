@@ -86,6 +86,15 @@
               </p>
             </div>
           </section>
+          <section v-if="message.role === 'agent' && message.relatedSources?.length" class="rag-citations rag-related">
+            <div class="rag-related-title">关联制度</div>
+            <div class="rag-related-list">
+              <span v-for="(rel, index) in message.relatedSources" :key="`${message.localId}-rel-${index}`" class="rag-related-item">
+                <b>{{ rel.title }}</b>
+                <i>{{ rel.relation_label }}</i>
+              </span>
+            </div>
+          </section>
         </article>
 
         <div v-if="isSubmitting" class="rag-typing"><i></i><i></i><i></i></div>
@@ -274,6 +283,7 @@ async function loadHistory() {
       role: item.role,
       content: item.content,
       citations: item.metadata?.company_knowledge?.citations || [],
+      relatedSources: item.metadata?.company_knowledge?.related_sources || [],
     }))
     scrollToBottom()
   } catch {
@@ -353,6 +363,8 @@ async function consumeStream(response, userMessage, agentMessage) {
           target.localId = target.id || target.localId
         } else if (event.type === 'sources') {
           agentMessage.citations = event.data?.items || []
+        } else if (event.type === 'related_sources') {
+          agentMessage.relatedSources = event.data?.items || []
         } else if (event.type === 'text_chunk') {
           agentMessage.content += event.data?.text || ''
         } else if (event.type === 'error') {
@@ -367,7 +379,7 @@ async function consumeStream(response, userMessage, agentMessage) {
 }
 
 function createMessage(role, content) {
-  return { localId: `${role}-${Date.now()}-${Math.random().toString(16).slice(2)}`, role, content, citations: [] }
+  return { localId: `${role}-${Date.now()}-${Math.random().toString(16).slice(2)}`, role, content, citations: [], relatedSources: [] }
 }
 
 function handleApiFailure(result) {
@@ -535,6 +547,12 @@ defineExpose({ applyVoiceTranscript, setVoiceHint, clearPersistedState, loadHist
 .rag-message-copy :deep(p + p) { margin-top:6px; }
 .rag-message-copy :deep(ul), .rag-message-copy :deep(ol) { margin:5px 0; padding-left:18px; }
 .rag-citations { margin-top:9px; padding-top:7px; border-top:1px solid #E1EBE4; }
+.rag-related { margin-top:5px; padding-top:6px; }
+.rag-related-title { color:#B8860B; font-size:11px; font-weight:700; margin-bottom:4px; }
+.rag-related-list { display:flex; flex-wrap:wrap; gap:6px; }
+.rag-related-item { display:inline-flex; align-items:center; gap:5px; font-size:11px; background:#FFF8E6; border:1px solid #F0DFB4; border-radius:10px; padding:2px 9px; }
+.rag-related-item b { color:#8A6D1F; font-weight:600; }
+.rag-related-item i { color:#C99A2E; font-style:normal; font-size:10px; }
 .rag-sources-toggle { display:flex; align-items:center; justify-content:space-between; width:100%; padding:1px 0; color:#2F745B; font-size:11px; text-align:left; }
 .rag-sources-toggle i { color:#5C8E78; font-size:10px; font-style:normal; }
 .rag-citation-list { margin-top:6px; border-top:1px solid #EAF1EC; }

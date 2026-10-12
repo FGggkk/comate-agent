@@ -52,6 +52,7 @@ const navs = [
   { to: '/roles', label: '角色管理', icon: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="8" r="3"/><path d="M4 17c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>' },
   { to: '/company-knowledge', label: 'RAG 知识库', icon: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 3.5h9.5a2.5 2.5 0 012.5 2.5v10.5H6.5A2.5 2.5 0 014 14V3.5z"/><path d="M7 6h6M7 9h6M7 12h4"/></svg>' },
   { to: '/chunking-rules', label: 'RAG 执行流程', icon: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 4h12M4 10h12M4 16h12"/><path d="M7 2v4M13 8v4M9 14v4"/></svg>' },
+  { to: '/rag-graph', label: '知识图谱', icon: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="2"/><circle cx="14" cy="5" r="2"/><circle cx="11" cy="13" r="2"/><circle cx="5" cy="15" r="2"/><path d="M7.8 7.2l4.4-1M13 7l-1.4 4.6M9 13l-2.6 0.6M6.8 8l-0.4 5"/></svg>' },
   { to: '/stats', label: '数据统计', icon: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 16V9M9 16V4M14 16v-5"/></svg>' },
   { to: '/settings', label: '系统设置', icon: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="2.5"/><path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.5 4.5l1.4 1.4M14.1 14.1l1.4 1.4M4.5 15.5l1.4-1.4M14.1 5.9l1.4-1.4"/></svg>' },
 ]

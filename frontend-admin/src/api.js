@@ -40,18 +40,44 @@ export const apiAdminCompanyKnowledgeDelete = (id) => request(`/company-knowledg
 export const apiAdminCompanyKnowledgePublish = (id) => request(`/company-knowledge/sources/${id}/publish`, { method: 'POST', body: '{}' })
 export const apiAdminCompanyKnowledgeArchive = (id) => request(`/company-knowledge/sources/${id}/archive`, { method: 'POST', body: '{}' })
 export const apiAdminCompanyKnowledgeReindex = (id) => request(`/company-knowledge/sources/${id}/reindex`, { method: 'POST', body: '{}' })
+export const apiAdminCompanyKnowledgePreprocess = (id) => request(`/company-knowledge/sources/${id}/preprocess`, { method: 'POST', body: '{}' })
+export const apiAdminCompanyKnowledgePreprocessConfirm = (id) => request(`/company-knowledge/sources/${id}/preprocess/confirm`, { method: 'POST', body: '{}' })
+export const apiAdminCompanyKnowledgePreprocessSkip = (id) => request(`/company-knowledge/sources/${id}/preprocess/skip`, { method: 'POST', body: '{}' })
 export const apiAdminCompanyKnowledgeCreateChunkSet = (id, data) =>
   request(`/company-knowledge/sources/${id}/chunk-sets`, { method: 'POST', body: JSON.stringify(data) })
 export const apiAdminCompanyKnowledgeUpdateChunkSet = (sourceId, chunkSetId, chunks) =>
   request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}`, { method: 'PUT', body: JSON.stringify({ chunks }) })
 export const apiAdminCompanyKnowledgeConfirmChunkSet = (sourceId, chunkSetId) =>
   request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}/confirm`, { method: 'POST', body: '{}' })
+export const apiAdminCompanyKnowledgeContextualizeChunkSet = (sourceId, chunkSetId) =>
+  request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}/contextualize`, { method: 'POST', body: '{}' })
 export const apiAdminCompanyKnowledgeIndexChunkSet = (sourceId, chunkSetId) =>
   request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}/index`, { method: 'POST', body: '{}' })
 export const apiAdminCompanyKnowledgePreviewChunkSet = (sourceId, chunkSetId, data) =>
   request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}/retrieval-preview`, { method: 'POST', body: JSON.stringify(data) })
 export const apiAdminCompanyKnowledgeValidateChunkSet = (sourceId, chunkSetId, data) =>
   request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}/validate`, { method: 'POST', body: JSON.stringify(data) })
+export const apiAdminCompanyKnowledgeValidationRuns = (sourceId, chunkSetId) =>
+  request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}/validation-runs?refresh=${Date.now()}`, { cache: 'no-store' })
+export const apiAdminCompanyKnowledgeGraph = () => request(`/company-knowledge/graph`)
+export const apiAdminCompanyKnowledgeRelations = (sourceId = '', status = '') =>
+  request(`/company-knowledge/relations?source_id=${encodeURIComponent(sourceId)}&status=${encodeURIComponent(status)}`)
+export const apiAdminCompanyKnowledgeCreateRelation = (data) =>
+  request('/company-knowledge/relations', { method: 'POST', body: JSON.stringify(data) })
+export const apiAdminCompanyKnowledgeUpdateRelation = (relationId, status) =>
+  request(`/company-knowledge/relations/${relationId}`, { method: 'PUT', body: JSON.stringify({ status }) })
+export const apiAdminCompanyKnowledgeDeleteRelation = (relationId) =>
+  request(`/company-knowledge/relations/${relationId}`, { method: 'DELETE', body: '{}' })
+export const apiAdminCompanyKnowledgeQueueGraphExtractionJobs = () =>
+  request('/company-knowledge/graph/extraction-jobs', { method: 'POST', body: '{}' })
+export const apiAdminCompanyKnowledgeGraphExtractionJobs = (limit = 12) =>
+  request(`/company-knowledge/graph/extraction-jobs?limit=${encodeURIComponent(limit)}`)
+export const apiAdminCompanyKnowledgeExtractRelations = (sourceId) =>
+  request(`/company-knowledge/sources/${sourceId}/relations/extract`, { method: 'POST', body: '{}' })
+export const apiAdminCompanyKnowledgeCreateValidationRun = (sourceId, chunkSetId, data) =>
+  request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}/validation-runs`, { method: 'POST', body: JSON.stringify(data) })
+export const apiAdminCompanyKnowledgeConfirmValidationRun = (sourceId, chunkSetId, runId) =>
+  request(`/company-knowledge/sources/${sourceId}/chunk-sets/${chunkSetId}/validation-runs/${runId}/confirm`, { method: 'POST', body: '{}' })
 export const apiAdminCompanyKnowledgeJobs = (page = 1, size = 30) =>
   request(`/company-knowledge/jobs?page=${page}&size=${size}`)
 export const apiAdminCompanyKnowledgeDeleteJob = (id) => request(`/company-knowledge/jobs/${id}`, { method: 'DELETE' })

@@ -37,8 +37,11 @@ class CompanyKnowledgePipelineTests(unittest.TestCase):
         self.assertTrue(warnings)
 
     def test_import_rejects_non_text_format_and_non_utf8_content(self):
-        with self.assertRaisesRegex(SourceImportError, "TXT 或 Markdown"):
+        # PDF 现在走解析器，坏文件应报解析失败
+        with self.assertRaisesRegex(SourceImportError, "解析失败"):
             read_text_source("制度.pdf", b"not-a-pdf")
+        with self.assertRaisesRegex(SourceImportError, "支持的格式"):
+            read_text_source("制度.xlsx", b"not-a-format")
         with self.assertRaisesRegex(SourceImportError, "UTF-8"):
             read_text_source("制度.txt", b"\xff\xfe\x00")
 
@@ -74,6 +77,63 @@ class CompanyKnowledgePipelineTests(unittest.TestCase):
         self.assertIn("员工应提前三个工作日提交年假申请。", prompt)
         self.assertIn("版本 V1.2", prompt)
         self.assertIn("只能依据本次提供的公司资料片段", COMPANY_KNOWLEDGE_SYSTEM_PROMPT)
+
+
+class CompanyKnowledgeSemanticChunkTests(unittest.TestCase):
+    def test_paragraphs_are_kept_whole_when_fitting(self):
+        body = "\n\n".join([f"第{i}段：员工应提前提交申请并说明原因。" for i in range(3)])
+        chunks = chunk_text(body, source_format="txt", max_chars=200)
+        # 三个短段落聚合在一个块内，段落不跨块
+        self.assertEqual(len(chunks), 1)
+        self.assertIn("第0段", chunks[0].content)
+        self.assertIn("第2段", chunks[0].content)
+
+    def test_paragraph_boundary_split_when_exceeding(self):
+        body = "\n\n".join([f"第{i}段：" + "长内容" * 30 for i in range(3)])
+        chunks = chunk_text(body, source_format="txt", max_chars=200)
+        self.assertGreater(len(chunks), 1)
+        for chunk in chunks:
+            # 每个块内容应包含完整段落（段内不跨块）
+            self.assertIn("段：", chunk.content)
+
+    def test_sentences_are_split_within_long_paragraph(self):
+        paragraph = "第一句话说明申请流程。" + "第二句话说明审批时限。" + "第三句话说明材料要求。" * 20
+        chunks = chunk_text(paragraph, source_format="txt", max_chars=200)
+        self.assertGreater(len(chunks), 1)
+        for chunk in chunks:
+            # 句子不应被切断：每块应以句子结束标点（。！？）结尾
+            self.assertTrue(chunk.content.endswith(("。", "！", "？")))
+
+    def test_overlap_ratio_defaults_to_20_percent(self):
+        body = "年假申请应提前提交。" * 50
+        chunks = chunk_text(body, source_format="txt", max_chars=200)
+        if len(chunks) > 1:
+            # 相邻块应有重叠内容（默认 20% 重叠）
+            overlap = chunks[0].content[-20:] in chunks[1].content
+            self.assertTrue(overlap)
+            self.assertLessEqual(len(chunks[0].content), 200)
+
+    def test_hard_split_for_extremely_long_sentence(self):
+        long_sentence = "无标点超长内容" * 100  # 2000 字符，无标点
+        chunks = chunk_text(long_sentence, source_format="txt", max_chars=200)
+        self.assertGreater(len(chunks), 1)
+        for chunk in chunks:
+            self.assertLessEqual(len(chunk.content), 200)
+
+    def test_default_chunk_size_is_500(self):
+        body = "默认切分长度测试。" * 200
+        chunks = chunk_text(body, source_format="txt")
+        for chunk in chunks:
+            self.assertLessEqual(len(chunk.content), 500)
+
+    def test_english_sentence_spaces_are_preserved(self):
+        paragraph = "Apply for annual leave. Submit the form. HR reviews within 5 days. " * 20
+        chunks = chunk_text(paragraph, source_format="txt", max_chars=200)
+        self.assertGreater(len(chunks), 1)
+        for chunk in chunks:
+            self.assertNotIn(".Submit", chunk.content)
+            self.assertNotIn(".HR", chunk.content)
+            self.assertNotIn(".days", chunk.content)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 import json
+import uuid
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -8,11 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.api.response import fail, ok
 from app.db.session import get_db
+from app.models.company_knowledge import CompanyKnowledgeSource
 from app.models.conversation import Message, Session
 from app.models.user import User
 from app.plugins.company_knowledge.answer_service import NO_EVIDENCE_REPLY, stream_company_knowledge_answer
+from app.plugins.company_knowledge.graph_service import get_confirmed_relations
 from app.plugins.company_knowledge.registry import get_knowledge_type, is_query_enabled, list_knowledge_types
-from app.plugins.company_knowledge.retriever import RetrievalError, retrieve_company_knowledge
+from app.plugins.company_knowledge.retriever import RetrievalError, retrieve_company_knowledge, RetrievedChunk
 from app.plugins.company_knowledge.schemas import CompanyKnowledgeQueryRequest
 from app.plugins.company_knowledge.service import (
     CompanyKnowledgeServiceError,
@@ -33,6 +36,61 @@ def _sse(event_type: str, data: dict) -> str:
 async def is_rag_enabled(db: AsyncSession, user_id: str) -> bool:
     user = await db.get(User, user_id)
     return bool(user and user.status == "active" and user.rag_enabled)
+
+
+async def _build_related_sources(
+    db: AsyncSession,
+    chunks: list[RetrievedChunk],
+    knowledge_type: str,
+) -> list[dict]:
+    """B4：命中分片所属文档沿已确认关系扩展 1 跳，组装关联来源推荐。
+
+    仅返回与命中文档直接关联、且本身未被命中的文档；开关关闭时返回空。
+    """
+    kt = get_knowledge_type(knowledge_type)
+    if not kt or not kt.graph_expansion_enabled:
+        return []
+    source_ids = sorted({chunk.source_id for chunk in chunks})
+    if not source_ids:
+        return []
+    relations = await get_confirmed_relations(db, source_ids)
+    if not relations:
+        return []
+
+    neighbor_ids: set[str] = set()
+    by_neighbor: dict[str, list[dict]] = {}
+    for rel in relations:
+        if rel["source_id"] in source_ids:
+            neighbor = rel["target_source_id"]
+        else:
+            neighbor = rel["source_id"]
+        if neighbor in source_ids:
+            continue
+        neighbor_ids.add(neighbor)
+        by_neighbor.setdefault(neighbor, []).append(rel)
+    if not neighbor_ids:
+        return []
+
+    rows = await db.execute(
+        select(CompanyKnowledgeSource.id, CompanyKnowledgeSource.title).where(
+            CompanyKnowledgeSource.id.in_([uuid.UUID(item) for item in neighbor_ids])
+        )
+    )
+    titles = {str(row[0]): row[1] for row in rows.all()}
+
+    related: list[dict] = []
+    for neighbor in sorted(neighbor_ids):
+        for rel in by_neighbor[neighbor]:
+            related.append(
+                {
+                    "source_id": neighbor,
+                    "title": titles.get(neighbor, "未知文档"),
+                    "relation_type": rel["relation_type"],
+                    "relation_label": rel["relation_label"],
+                    "direction": rel["direction"],
+                }
+            )
+    return related
 
 
 def _message_to_dict(message: Message) -> dict:
@@ -123,6 +181,7 @@ async def query_company_knowledge(
             {"role": "user", "id": str(user_message.id), "session_id": str(session.id)},
         )
         citations: list[dict] = []
+        related_sources: list[dict] = []
         answer = ""
         try:
             chunks = await retrieve_company_knowledge(question, req.knowledge_type, db)
@@ -137,6 +196,9 @@ async def query_company_knowledge(
                 yield _sse("text_chunk", {"text": answer})
             else:
                 yield _sse("sources", {"items": citations})
+                related_sources = await _build_related_sources(db, chunks, req.knowledge_type)
+                if related_sources:
+                    yield _sse("related_sources", {"items": related_sources})
                 try:
                     async for text in stream_company_knowledge_answer(question, chunks):
                         answer += text
@@ -157,6 +219,7 @@ async def query_company_knowledge(
                 answer=answer,
                 knowledge_type=req.knowledge_type,
                 citations=citations,
+                related_sources=related_sources,
             )
             yield _sse(
                 "message_saved",
@@ -165,7 +228,10 @@ async def query_company_knowledge(
             schedule_tacit_refresh(user_id, str(session.id))
         except Exception:
             yield _sse("error", {"message": "回答已生成，但保存会话失败。", "code": "knowledge_save_failed"})
-        yield _sse("done", {"session_id": str(session.id), "citations": citations})
+        yield _sse(
+            "done",
+            {"session_id": str(session.id), "citations": citations, "related_sources": related_sources},
+        )
 
     return StreamingResponse(
         event_stream(),

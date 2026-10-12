@@ -38,9 +38,10 @@
             <td class="num dim">{{ formatDate(item.updated_at, true) }}</td>
             <td class="row-actions">
               <button class="row-btn" @click="showDetail(item)">查看</button>
-              <button v-if="item.status !== 'published' && item.status !== 'indexing'" class="row-btn" @click="openEdit(item)">编辑</button>
-              <button v-if="item.status !== 'archived'" class="row-btn" @click="openWorkflow(item)">编辑</button>
+              <button v-if="item.status !== 'published' && item.status !== 'indexing'" class="row-btn" @click="openEdit(item)">编辑信息</button>
+              <button v-if="item.status !== 'archived'" class="row-btn" @click="openWorkflow(item)">执行流程</button>
               <button v-if="item.status === 'validated' || item.status === 'published'" class="row-btn moss" :disabled="actingId === item.id" @click="publish(item)">{{ item.status === 'published' ? '切换索引' : '发布' }}</button>
+              <button v-if="item.status === 'archived'" class="row-btn moss" :disabled="actingId === item.id" @click="restore(item)">上架</button>
               <button v-if="item.status !== 'archived' && item.status !== 'indexing'" class="row-btn danger" :disabled="actingId === item.id" @click="archive(item)">下架</button>
               <button v-if="item.status === 'archived'" class="row-btn danger" :disabled="actingId === item.id" @click="removeArchived(item)">删除</button>
             </td>
@@ -59,7 +60,7 @@
     <div v-if="uploadOpen" class="modal-mask" @click.self="uploadOpen = false">
       <div class="modal upload-modal">
         <div class="modal-title"><b>上传资料</b><button class="modal-close" @click="uploadOpen = false">×</button></div>
-        <div class="file-field"><label>电子版文件 *</label><input type="file" accept=".txt,.md,.markdown,text/plain,text/markdown" @change="pickFile" /><span class="file-hint">仅支持 UTF-8 编码的 TXT 或 Markdown，最大 2MB</span><span v-if="upload.file" class="file-name">{{ upload.file.name }}</span></div>
+        <div class="file-field"><label>电子版文件 *</label><input type="file" accept=".txt,.md,.markdown,.pdf,.docx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" @change="pickFile" /><span class="file-hint">支持 UTF-8 TXT / Markdown、PDF、Word（.docx），最大 10MB</span><span v-if="upload.file" class="file-name">{{ upload.file.name }}</span></div>
         <div class="field"><label>资料名称 *</label><input v-model="upload.title" maxlength="255" placeholder="如：员工考勤与休假管理制度" /></div>
         <div class="form-row"><div class="field"><label>版本号 *</label><input v-model="upload.version" maxlength="64" placeholder="如：V1.0" /></div><div class="field"><label>生效日期 *</label><input v-model="upload.effective_at" type="date" /></div></div>
         <div class="form-row"><div class="field"><label>分类</label><input v-model="upload.category" maxlength="64" placeholder="如：人事行政" /></div><div class="field"><label>失效日期</label><input v-model="upload.expires_at" type="date" /></div></div>
@@ -104,7 +105,7 @@ import {
 
 const router = useRouter()
 const statusTabs = [
-  { key: 'all', label: '全部' }, { key: 'markdown_ready', label: '待切分' }, { key: 'chunk_ready', label: '待向量化' }, { key: 'indexed', label: '待验证' }, { key: 'validated', label: '待发布' }, { key: 'published', label: '已发布' }, { key: 'indexing', label: '向量化中' }, { key: 'failed', label: '失败' }, { key: 'archived', label: '已下架' },
+  { key: 'all', label: '全部' }, { key: 'markdown_ready', label: '待预处理' }, { key: 'preprocessed', label: '待切分' }, { key: 'chunk_ready', label: '待向量化' }, { key: 'indexed', label: '待验证' }, { key: 'validated', label: '待发布' }, { key: 'published', label: '已发布' }, { key: 'indexing', label: '向量化中' }, { key: 'failed', label: '失败' }, { key: 'archived', label: '已下架' },
 ]
 const status = ref('all')
 const items = ref([])
@@ -126,8 +127,8 @@ const canSaveEdit = computed(() => edit.value.id && edit.value.title.trim() && e
 
 function emptyUpload() { return { file: null, title: '', version: '', effective_at: '', expires_at: '', category: '', knowledge_type: 'policy' } }
 function emptyEdit() { return { id: '', title: '', version: '', effective_at: '', expires_at: '', category: '' } }
-function statusLabel(value) { return ({ markdown_ready: '待切分', chunking: '切分草稿', chunk_ready: '待向量化', indexed: '待检索验证', validated: '待发布', published: '已发布', indexing: '向量化中', failed: '失败', archived: '已下架', running: '进行中', succeeded: '成功' }[value] || value) }
-function statusClass(value) { return ({ published: 'badge-moss', succeeded: 'badge-moss', indexed: 'badge-gold', validated: 'badge-gold', markdown_ready: 'badge-gold', chunking: 'badge-gold', chunk_ready: 'badge-gold', indexing: 'badge-gold', running: 'badge-gold', failed: 'badge-berry', archived: 'badge-berry' }[value] || '') }
+function statusLabel(value) { return ({ markdown_ready: '待预处理', preprocessed: '待切分', chunking: '切分草稿', chunk_ready: '待向量化', indexed: '待检索验证', validated: '待发布', published: '已发布', indexing: '向量化中', failed: '失败', archived: '已下架', running: '进行中', succeeded: '成功' }[value] || value) }
+function statusClass(value) { return ({ published: 'badge-moss', succeeded: 'badge-moss', indexed: 'badge-gold', validated: 'badge-gold', markdown_ready: 'badge-gold', preprocessed: 'badge-gold', chunking: 'badge-gold', chunk_ready: 'badge-gold', indexing: 'badge-gold', running: 'badge-gold', failed: 'badge-berry', archived: 'badge-berry' }[value] || '') }
 function formatDate(value, withTime = false) { if (!value) return '—'; const date = new Date(value); if (Number.isNaN(date.getTime())) return value.slice(0, withTime ? 16 : 10); return withTime ? date.toLocaleString('zh-CN', { hour12: false }) : date.toLocaleDateString('zh-CN') }
 function showNotice(text, type = 'success') { notice.value = { text, type }; window.setTimeout(() => { if (notice.value?.text === text) notice.value = null }, 3500) }
 async function load() {
@@ -161,6 +162,7 @@ async function submitEdit() {
 function openWorkflow(item) { router.push({ path: '/chunking-rules', query: { source: item.id } }) }
 async function publish(item) { if (confirm(`发布「${item.title} ${item.version}」？同名已发布版本会自动下架。`)) await runAction(item, apiAdminCompanyKnowledgePublish, '资料已发布') }
 async function archive(item) { if (confirm(`下架「${item.title} ${item.version}」？下架后不再参与新问答。`)) await runAction(item, apiAdminCompanyKnowledgeArchive, '资料已下架') }
+async function restore(item) { if (confirm(`上架「${item.title} ${item.version}」？恢复后该资料将重新参与新问答。`)) await runAction(item, apiAdminCompanyKnowledgePublish, '资料已重新上架') }
 async function removeArchived(item) { if (confirm(`删除已下架资料「${item.title} ${item.version}」？此操作不可恢复。`)) await runAction(item, apiAdminCompanyKnowledgeDelete, '已删除下架资料') }
 async function runAction(item, action, successText) {
   actingId.value = item.id

@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -37,11 +37,15 @@ class CompanyKnowledgeSource(Base):
     published_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("admins.id"), nullable=True)
     replaced_source_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("company_knowledge_sources.id"),
+        ForeignKey("company_knowledge_sources.id", ondelete="SET NULL"),
         nullable=True,
     )
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     active_chunk_set_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    preprocessed_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preprocess_warnings: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    preprocessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    preprocessed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("admins.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -138,3 +142,88 @@ class CompanyKnowledgeJob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class CompanyKnowledgeRelation(Base):
+    """文档级关系图谱的边：引用/替代/上下位/关联。
+
+    status: draft(待确认) / confirmed(已确认，参与检索) / rejected(已拒绝)。
+    origin: llm(大模型抽取) / manual(人工维护) / system(系统规则，如版本替代)。
+    """
+
+    __tablename__ = "company_knowledge_relations"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_id",
+            "target_source_id",
+            "relation_type",
+            name="uq_company_knowledge_relation_pair",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("company_knowledge_sources.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    target_source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("company_knowledge_sources.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    relation_type: Mapped[str] = mapped_column(String(16), nullable=False)  # cite / supersede / parent / related
+    direction: Mapped[str] = mapped_column(String(10), nullable=False, default="undirected")
+    evidence: Mapped[str] = mapped_column(Text, default="")
+    origin: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft", index=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("admins.id"), nullable=False
+    )
+    confirmed_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("admins.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class CompanyKnowledgeValidationRun(Base):
+    """一次可复核的发布前问答验证运行。"""
+
+    __tablename__ = "company_knowledge_validation_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("company_knowledge_sources.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    chunk_set_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("company_knowledge_chunk_sets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    expected_chunk_ids: Mapped[list] = mapped_column(JSONB, default=list)
+    top_k: Mapped[int] = mapped_column(Integer, nullable=False, default=6)
+    retrieval_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict)
+    answer: Mapped[str] = mapped_column(Text, default="")
+    answer_similarity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    correctness_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    faithfulness_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    evaluation_verdict: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    evaluation_reason: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="running", index=True)
+    error_message: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("admins.id"), nullable=False)
+    confirmed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("admins.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
